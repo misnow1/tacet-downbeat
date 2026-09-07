@@ -1,0 +1,52 @@
+# tacet-downbeat
+
+Automates the marching band microphone DCA on a Yamaha DM7C during home football
+games. The band mics feed a PA separate from the main stadium PA and are
+currently ridden by hand from an iPad.
+
+The system does not decide whether the band *may* play — the band director is
+the compliance layer and is bound by the same rule. It only tracks whether the
+band **is** playing, and amplifies accordingly.
+
+## Status
+
+**Phase 0 / 1. The detector drives nothing.**
+
+| Phase | | |
+|---|---|---|
+| 0 | Wired OSC control path + web UI | Standalone value; ships regardless |
+| 1 | Shadow mode — compute everything, log everything, drive nothing | Captures the labeled answer key |
+| 2 | Assisted — detector drives the DCA, operator supervises | Not yet declared |
+| 3 | Refinement from accumulated logs | |
+
+## Why not a gate
+
+The stadium holds ~60,000 people and level is the one dimension in which the
+crowd competes directly with the band. An amplitude threshold sees crowd and
+band as the same thing. Discrimination comes from structure — onset
+simultaneity, harmonic coherence, inter-channel behavior. A gate and an expander
+have both been tried.
+
+The detector is **causal**, with no lookahead beyond ~15 ms: the band PA is
+aligned to the acoustic band a few feet behind it, so added delay becomes
+slapback and drags the band's tempo.
+
+## Layout
+
+```
+docs/design.md   the design document — read this first
+audio/           multitrack sources for offline analysis (gitignored)
+```
+
+## Data
+
+**Recordings never go in git.** A 14-channel 24-bit/48 kHz multitrack is roughly
+7 GB/hour. They live on the home lab NAS; the repo references paths, not
+contents. `audio/` is gitignored apart from its README.
+
+## Start here
+
+`docs/design.md` carries the reasoning behind every constraint. Several of them
+contradict what would otherwise be sensible defaults — the play clock is not a
+mute interlock, the fade must hold open through a diminuendo, the close is
+always reactive — and they look arbitrary without it.

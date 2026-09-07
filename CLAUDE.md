@@ -113,7 +113,7 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 
 **Recordings never go in git.** A 14-channel 24-bit/48 kHz multitrack is roughly
 7 GB/hour. Store on the home lab NAS; the repo references paths, not contents.
-`data/` is gitignored.
+`audio/` is gitignored.
 
 Phase 1 captures four aligned streams, all on a common clock:
 
