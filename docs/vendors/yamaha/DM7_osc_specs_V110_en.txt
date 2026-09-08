@@ -1,0 +1,1057 @@
+DM7 Series OSC Specifications — Version 1.1.0 (Yamaha, Jul. 1 2025)
+===================================================================
+Text extracted from DM7_osc_specs_V110_en.pdf for grep-ability.
+The PDF is authoritative; this is a convenience artifact.
+
+Extraction notes:
+  - The PDF is AES-128 encrypted with an empty user password (owner
+    restrictions only). Streams were decrypted and text pulled with
+    per-font ToUnicode CMaps.
+  - Layout is reconstructed from glyph coordinates. Rows are correct;
+    multi-column tables interleave their columns on a shared line, and
+    "  |  " marks a horizontal gap. Verify any table row against the PDF
+    before relying on it.
+
+
+==============================================================================
+===== PAGE 1 =====
+==============================================================================
+DM7 Series
+OSC Specifications
+Version 1.1.0
+
+==============================================================================
+===== PAGE 2 =====
+==============================================================================
+0.Revision History
+VersionDateSectionDescription
+V1.0.0Nov. 1, 2023-Initial version
+V1.1.0Jul. 1, 20251.4Added configuration examples.
+2.1Corrected values for PEQ Band Gain.
+Added Cue/Monitor/5.1 Surround Parameters
+Table of contents
+0.Revision History....................................................................................2
+1.Setup......................................................................................................3
+1.1.Connection Procedure..............................................................................................3
+1.2.DM7 Series Configuration.........................................................................................3
+1.3.Configuring the Remote Controller...........................................................................3
+1.4.Configuration Examples K   |  ...........................................................................................3
+1.4.1.OSC address format pattern........................................................................3
+1.4.2.Parameter setting examples........................................................................4
+OSC (Open Sound Control) is a protocol for transmitting control information of electronic musical
+instruments / audio equipment, etc. via a network. This protocol can be used to remotely control the
+DM7 series. This document describes the connection and setup procedure for remote control using
+this protocol and lists the necessary parameter information.
+2.Parameter...............................................................................................9
+2.1.Parameter List...........................................................................................................9
+2.2.Parameter Value Detail...........................................................................................17
+DM7 Series OSC Specifications Version 1.1.0  |  2
+
+==============================================================================
+===== PAGE 3 =====
+==============================================================================
+1.Setup
+1.1.Connection Procedure  |  1.3.Configuring the Remote Controller
+Connect the remote controller to the network terminal of each device as shown below. The   |  DM7 series can be controlled from an external device via Ethernet (NETWORK terminal).
+device to be controlled is specified by its IP address. Connect DM7 Series to the Network PC   |  The settings on the remote controller side for each connection are as follows -
+terminal (computer connection terminal for external control) via the Network port on the rear   |  IP Address: Specify the IP address of For Mixer Control of the DM7 Series to be controlled.
+panel. Up to four OSC remote controllers can be connected to one DM7 Series console.  |  IP Port No.: UDP 49900
+1.4.Configuration Examples
+DM7 Series
+Up to 4 Ethernet
+Remote   |  Below are several example commands set using an OSC Controller, in this case with the QLab
+Controllers  |  application. QLab does not require type tags to be added to the command. A type tag may be
+required depending on the OSC Controller application, please check this for the OSC controller
+DM7 Editor  |  to be used.
+EthernetNetwork Ethernet
+Switch
+EthernetNetwork Port
+1.4.1.OSC address format pattern
+OSC address format pattern for parameters:
+/yosc:req/<Action>/<Parameter ID>/<X>/<Y> <value>
+FormatCommand Notes
+/yosc:req/yosc:req"yosc:req" is a Yamaha identifier
+Action/set
+Parameter ID/MIXER:Current/parameter1/parameter2/parameter3
+X index/X  |  i.e channel number
+Y index/Y  |  Y index is not always required, it depends
+on the paramaterID. It can be omitted
+when not needed.
+argument valuevalue (integer or string)value must always be seperated from
+address or other value by a space
+1.2.DM7 Series Configuration
+IP address setting:  |  OSC address format pattern for direct scene recall:
+Uses the same IP address as Editor and StageMix.  |  /yosc:req/<Action> <type tag> <Parameter ID> <value>
+Open the NETWORK window from SETUP in the menubar, and select “For Mixer Control”.
+FormatCommand Notes
+/yosc:req/yosc:req"yosc:req" is a Yamaha identifier
+Action/ssrecallt_ex
+Parameter IDscene_a or scene_bscene list A or B. Must be a space between address and value
+argument valuescene numberIf using Qlab or Companion, scene number must be "x.xx", if
+using Toush OSC omit "".
+①①①
+②②
+②
+OSC address format for scene recall inc/dec:
+/yosc:req/event <Parameter ID>
+Format CommandNotes
+/yosc:req/yosc:req"yosc:req" is a Yamaha identifier
+Action /event
+Parameter IDMIXER:Lib/Scene/RecallInc scene_ascene list A or B
+MIXER:Lib/Scene/RecallDec scene_a
+MIXER:Lib/Scene/RecallInc scene_b
+MIXER:Lib/Scene/RecallDec scene_b
+1) Select “Static IP”.
+2) Specify the IP address and subnet mask.
+DM7 Series OSC Specifications Version 1.1.0  |  3
+
+==============================================================================
+===== PAGE 4 =====
+==============================================================================
+1. Setup
+1.4.2.Parameter setting examples
+Recall Scene List A 4.00
+OSC command: /yosc:req/ssrecallt_ex scene_a “4.00”
+CategoryParameter Description<Action><Parameter ID><value>value
+minmaxscalingunit
+SceneRecall Scene_Assrecallt_exscene_a1.00 499.99------------
+CategoryParameter <Action><Parameter ID><value>value
+Descriptionminmaxscalingunit
+Input ChannelFader OnsetMIXER:Current/InCh/Fader/On0 1
+Note: Scene number must use “x.xx” if using Qlab or Companion, if using Touch OSC remove “”.
+Inc Recall Scene List A
+OSC command: /yosc:req/event MIXER:Lib/Scene/RecallInc scene_a
+Note: 1: ON, 0: OFF
+Set Input Channel Fader Level
+Ch 61 to 0 dB
+OSC command: /yosc:req/set/MIXER:Current/InCh/Fader/Level/61 0
+-20 dBCh 61 to
+OSC command: /yosc:req/set/MIXER:Current/InCh/Fader/Level/61 -2000
+Ch 61 to -inf
+OSC command: /yosc:req/set/MIXER:Current/InCh/Fader/Level/61 -32768
+CategoryParameter Description<Parameter ID>
+SceneInc Recall Current Scene ListMIXER:Lib/Scene/RecallInc scene_a
+Dec Recall Scene List A
+OSC command: /yosc:req/event MIXER:Lib/Scene/Recalldec scene_a
+CategoryParameter Description<Parameter ID>
+SceneDec Recall Current Scene ListMIXER:Lib/Scene/RecallDec scene_a
+Set Input Channel Name
+Name Ch 25 ‘Lead Vox’
+OSC command: /yosc:req/set/MIXER:Current/InCh/Label/Name/25 LeadVox
+Name Ch 66 ‘REVERB’
+OSC command: /yosc:req/set/MIXER:Current/InCh/Label/Name/25 REVERB
+CategoryParameter <Action><Parameter ID><value>value
+Descriptionminmaxscalingunit
+Input ChannelFader LevelsetMIXER:Current/InCh/Fader/Level-327681000100dB
+ of the OSC Specifications document for the full list of fader level values.Note: Refer to Table 1
+Set Input Channel Stereo PAN
+Ch 15 to Right 63
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToSt/Pan/15 63
+Ch 15 to Centre
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToSt/Pan/15 0
+Ch 15 to Left 35
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToSt/Pan/15 -35
+CategoryParameter Description<Action><Parameter ID>
+Input ChannelLabel NamesetMIXER:Current/InCh/Label/Name
+Note: The maximum number of characters is 8.
+Set Input Channel Color
+Ch 8 to ‘green’
+OSC command: /yosc:req/set/MIXER:Current/InCh/Label/Color/8 Green
+Ch 8 to no color
+OSC command: /yosc:req/set/MIXER:Current/InCh/Label/Color/8 Off
+Set Input Channel ON/OFF
+Ch1 ON
+OSC command: /yosc:req/set/MIXER:Current/InCh/Fader/On/1 1
+Ch 1 OFF
+OSC command: /yosc:req/set/MIXER:Current/InCh/Fader/On/1 0  |  Input ChannelTo Stereo setMIXER:Current/InCh/ToSt/Pan-6363
+Pan
+CategoryParameter Description<Action><Parameter ID>
+Input ChannelLabel ColorsetMIXER:Current/InCh/Label/Color
+ of the OSC Specifications document for the full list of pan values.Note: Refer to Table 2
+Note: Values: Blue/Green/Orange/Pink/Purple/Red/SkyBlue/Yellow/Cyan/Magenta/Off
+DM7 Series OSC Specifications Version 1.1.0  |  4
+
+==============================================================================
+===== PAGE 5 =====
+==============================================================================
+1. Setup
+Set Input Channel to Mix Send ON/OFF
+Ch 8/Mix 10 ON
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/On/8/10 1
+Ch 8/Mix 10 OFF
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/On/8/10 0
+Parameter  <value>value  |  Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit  |  CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Input ChannelTo Mix OnsetMIXER:Current/InCh/ToMix/On0 1  |  Input ChannelTo Matrix OnsetMIXER:Current/InCh/ToMtrx/On0 1
+Note: 1: ON, 0: OFF  |  Note: 1: ON, 0: OFF
+Set Input Channel to Mix Send Level  |  Set Input Channel to Matrix Send Level
+Ch 16/Mix 32 to 0 dB  |  Ch 45/Mtrx 2 to 0 dB
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/Level/16/32 0  |  OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/Level/45/2 0
+Ch 16/Mix 32 to -20 dB  |  Ch 45/Mtrx 2 to -20 dB
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/Level/16/32 -2000  |  OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/Level/45/2 -2000
+Ch 16/Mix 32 to -Inf  |  Ch 45/Mtrx 2 to -Inf
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/Level/16/32 -32768  |  OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/Level/45/2 -32768
+Parameter  <value>value  |  Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit  |  CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Input ChannelTo Mix LevelsetMIXER:Current/InCh/ToMix/Level-32768 1000100dB  |  Input ChannelTo Matrix setMIXER:Current/InCh/ToMtrx/Level-327681000100dB
+Level
+ of the OSC Specifications document for the full list of fader level values.Note: Refer to Table 1
+Set Input Channel to Mix Send Pan
+Ch 71/Mix 41 to Right 63
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/Pan/71/41 63
+Ch 71/Mix 41 to Centre  |   of the OSC Specifications document for the full list of fader level values.Note: Refer to Table 1
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/Pan/71/41 0
+Set Input Channel to Matrix Send Pan
+Ch 71/Mix 41 to Left 35  |  Ch 33/Mtrx 11 to Right 63
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMix/Pan/71/41 -35  |  OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/Pan/33/11 63
+Ch 33/Mtrx 11 to Centre
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/Pan/33/11 0
+Ch 33/Mtrx 11 to Left 35
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/Pan/33/11 -35
+Set Input Channel to Matrix Send ON/OFF
+Ch 28/Mtrx 7 ON
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/On/28/7 1
+Ch 28/Mtrx 7 OFF
+OSC command: /yosc:req/set/MIXER:Current/InCh/ToMtrx/On/28/7 0
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>
+minmaxscalingunit
+Input ChannelTo Mix PansetMIXER:Current/InCh/ToMix/Pan-6363  |  Input ChannelTo Matrix setMIXER:Current/InCh/ToMtrx/Pan-6363
+Pan
+ of the OSC Specifications document for the full list of pan values.Note: Refer to Table 2
+ of the OSC Specifications document for the full list of pan values.Note: Refer to Table 2
+DM7 Series OSC Specifications Version 1.1.0  |  5
+
+==============================================================================
+===== PAGE 6 =====
+==============================================================================
+1. Setup
+Set Input Channel DCA assignment
+Assign Ch 17 to DCA 8
+OSC command: /yosc:req/set/MIXER:Current/InCh/DCA/Assign/17/8 1
+Unassign Ch17 from DCA 8
+OSC command: /yosc:req/set/MIXER:Current/InCh/DCA/Assign/17/8 0
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Input ChannelDCA Group setMIXER:Current/InCh/DCA/Assign0 1
+Assign
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Mix ChannelFader LevelsetMIXER:Current/Mix/Fader/Level-327681000100dB
+Note: 1: assigned, 0: unassigned
+Set Mix Channel Name
+Name Mix 5 ‘WEDGE’
+OSC command: /yosc:req/set/MIXER:Current/Mix/Label/Name/5 WEDGE
+ of the OSC Specifications document for the full list of fader level values.Note: Refer to Table 1
+Set Mix to Matrix Send ON/OFF
+Mix 19/Mtrx 2 ON
+OSC command: /yosc:req/set/MIXER:Current/Mix/ToMtrx/On/19/2 1
+Mix 19/Mtrx 2 OFF
+OSC command: /yosc:req/set/MIXER:Current/Mix/ToMtrx/On/19/2 0
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Mix ChannelLabel NamesetMIXER:Current/Mix/Label/Name
+Note: The maximum number of characters is 8.
+Set Mix Channel Color
+Mix19 to ‘Blue’
+OSC command: /yosc:req/set/MIXER:Current/Mix/Label/Color/19 Blue
+Mix19 to no color
+OSC command: /yosc:req/set/MIXER:Current/Mix/Label/Color/19 Off
+Mix ChannelTo Matrix OnsetMIXER:Current/Mix/ToMtrx/On0 1
+Note: 1: ON, 0: OFF
+Set Mix to Matrix Send Level
+Mix 47/Mtrx 10 to 0 dB
+OSC command: /yosc:req/set/MIXER:Current/Mix/ToMtrx/Level/47/10 0
+Mix 47/Mtrx 10 to -20 dB
+OSC command: /yosc:req/set/MIXER:Current/Mix/ToMtrx/Level/47/10 -2000
+Mix 47/Mtrx 10 to -inf
+OSC command: /yosc:req/set/MIXER:Current/Mix/ToMtrx/Level/47/10 -33768
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>
+minmaxscalingunit
+Mix ChannelLabel ColorsetMIXER:Current/Mix/Label/Color
+Note: Values: Blue/Green/Orange/Pink/Purple/Red/SkyBlue/Yellow/Cyan/Magenta/Off
+Set Mix Channel ON/OFF
+Mix 1 ON
+OSC command: /yosc:req/set/MIXER:Current/Mix/Fader/On/1 1
+Mix 1 OFF
+OSC command: /yosc:req/set/MIXER:Current/Mix/Fader/On/1 0
+Mix ChannelTo Matrix setMIXER:Current/Mix/ToMtrx/Level-327681000100dB
+Level
+Note: Refer to Table 2 in the full OSC Protocol document for full list of send values.
+Set Mix Channel Fader Level
+Mix 32 to 0 dB
+OSC command: /yosc:req/set/MIXER:Current/Mix/Fader/Level/34 0
+Mix 32 to -20 dB
+OSC command: /yosc:req/set/MIXER:Current/Mix/Fader/Level/34 -2000
+Mix 32 to -inf
+OSC command: /yosc:req/set/MIXER:Current/Mix/Fader/Level/34 -32768
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>
+minmaxscalingunit
+Mix ChannelFader OnsetMIXER:Current/Mix/Fader/On0 1
+Note: 1: ON, 0: OFF
+DM7 Series OSC Specifications Version 1.1.0  |  6
+
+==============================================================================
+===== PAGE 7 =====
+==============================================================================
+1. Setup
+Set Matrix Channel Name
+Name Mtrx 7 ‘SUB’
+OSC command:/yosc:req/set/MIXER:Current/Mtrx/Label/Name/7 SUB
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Matrix Label NamesetMIXER:Current/Mtrx/Label/Name
+Channell
+Note: The maximum number of characters is 8.
+Set Matrix Channel Color
+Mtrx 19 to ‘Pink’
+OSC command:/yosc:req/set/MIXER:Current/Mtrx/Label/Color/19 Pink
+Mtrx 19 to no color
+OSC command:/yosc:req/set/MIXER:Current/Mtrx/Label/Color/19 Off
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Matrix Fader LevelsetMIXER:Current/Mtrx/Fader/Level-327681000100dB
+Channell
+ of the OSC Specifications document for the full list of fader level values.Note: Refer to Table 1
+Set DCA Channel Name
+Name DCA 1 ‘DRUMS’
+OSC command: /yosc:req/set/MIXER:Current/DCA/Label/Name/1 DRUMS
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Matrix Label ColorsetMIXER:Current/Mtrx/Label/Color
+Channell
+DCA GroupLabel NamesetMIXER:Current/DCA/Label/Name
+Note: Values: Blue/Green/Orange/Pink/Purple/Red/SkyBlue/Yellow/Cyan/Magenta/Off
+Set Matrix Channel ON/OFF
+Mtrx 1 ON
+OSC command: /yosc:req/set/MIXER:Current/Mtrx/Fader/On/1 1
+Mtrx 1 OFF
+OSC command: /yosc:req/set/MIXER:Current/Mtrx/Fader/On/1 0
+Note: The maximum number of characters is 8.
+Set DCA Channel Color
+DCA 9 to ‘Red’
+OSC command: /yosc:req/set/MIXER:Current/DCA/Label/Color/8 Red
+DCA 9 to no color
+OSC command: /yosc:req/set/MIXER:Current/DCA/Label/Color/8 Off
+Set Matrix Channel Fader Level
+Mtrx 7 to 0 dB
+Parameter  <value>OSC command: /yosc:req/set/MIXER:Current/Mtrx/Fader/Level/7 0value
+CategoryDescription<Action><Parameter ID>
+minmaxscalingunit
+Matrix Fader OnsetMIXER:Current/Mtrx/Fader/On0 1Mtrx 7 to -20 dB
+Channell  |  OSC command: /yosc:req/set/MIXER:Current/Mtrx/Fader/Level/7 -2000
+Mtrx 7 to -inf
+OSC command: /yosc:req/set/MIXER:Current/Mtrx/Fader/Level/7 -32768
+DCA GroupLabel ColorsetMIXER:Current/DCA/Label/Color
+Note: Values: Blue/Green/Orange/Pink/Purple/Red/SkyBlue/Yellow/Cyan/Magenta/Off
+Set DCA Channel ON/OFF
+DCA 12 ON
+OSC command: /yosc:req/set/MIXER:Current/DCA/Fader/On/12 1
+DCA 12 OFF
+OSC command: /yosc:req/set/MIXER:Current/DCA/Fader/On/12 0
+Note: 1: ON, 0: OFF
+DCA GroupFader OnsetMIXER:Current/DCA/Fader/On0 1
+Note: 1: ON, 0: OFF
+DM7 Series OSC Specifications Version 1.1.0  |  7
+
+==============================================================================
+===== PAGE 8 =====
+==============================================================================
+1. Setup
+Set DCA Channel Fader Level
+DCA 2 to 0 dB
+OSC command: /yosc:req/set/MIXER:Current/DCA/Fader/Level/2 0
+DCA 2 to -20 dB
+OSC command: /yosc:req/set/MIXER:Current/DCA/Fader/Level/2 -2000
+DCA 2 to -inf
+OSC command: /yosc:req/set/MIXER:Current/DCA/Fader/Level/2 -32768
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+DCA GroupFader LevelsetMIXER:Current/DCA/Fader/Level-327681000100dB
+ of the OSC Specifications document for the full list of fader level values.Note: Refer to Table 1
+Set Mute Group ON/OFF
+Mute Group 8 ON (muted)
+OSC command: /yosc:req/set/MIXER:Current/MuteGrpCtrl/On/8 1
+Mute Group 8 Off (unmuted)
+OSC command: /yosc:req/set/MIXER:Current/MuteGrpCtrl/On/8 0
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>minmaxscalingunit
+Mute Group On setMIXER:Current/MuteGrpCtrl/On0 1
+Control
+Note: Values: 1: ON, 0: OFF
+Set Mute Group Name
+Name Mute Group 2 ‘Vocals’
+OSC command: /yosc:req/set/MIXER:Current/MuteGrpCtrl/Label/Name/2 Vocals
+Parameter  <value>value
+CategoryDescription<Action><Parameter ID>
+minmaxscalingunit
+Mute Group Label NamesetMIXER:Current/MuteGrpCtrl/Label/
+ControlName
+Note: The maximum number of characters is 8.
+DM7 Series OSC Specifications Version 1.1.0  |  8
+
+==============================================================================
+===== PAGE 9 =====
+==============================================================================
+2.þÿ 	 Parameter
+2.1.þÿ 	 Parameter List
+OSC address: /yosc:req/<Action>/<Parameter ID>/<X>/<Y> <value>
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Input ChannelFader LevelsetMIXER:Current/InCh/Fader/Level
+1 - Input Channel Num  |  Input Channel1  |  – i:integer  |  -32768  |  1000100dB  |  See Table 1
+Input ChannelFader OnsetMIXER:Current/InCh/Fader/On  |  1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input ChannelTo Stereo PansetMIXER:Current/InCh/ToSt/Pan
+1 - Input Channel Num  |  Input Channel1  |  – i:integer-6363  |  See Table 2
+Input ChannelTo Stereo OnsetMIXER:Current/InCh/ToSt/On  |  1 - Input Channel Num  |  Input Channel1 - Stereo Channel Stereo i:integer01  |  0: OFF, 1: ON
+Num Channel
+Input ChannelHA Port GainsetMIXER:Current/InCh/Port/HA/Gain
+1 - Input Channel Num  |  Input Channel1  |  – i:integer-6006600  |  100  |  dBSee Table 5
+Input ChannelLabel NamesetMIXER:Current/InCh/Label/Name
+1 - Input Channel Num  |  Input Channel1  |  – s:string Maximum length: 8
+characters.
+Input ChannelLabel ColorsetMIXER:Current/InCh/Label/Color
+1 - Input Channel Num  |  Input Channel1  |  – s:string See Table 3
+Input ChannelLabel IconsetMIXER:Current/InCh/Label/Icon
+1 - Input Channel Num  |  Input Channel1  |  – s:string See Table 4
+Input ChannelHPF OnsetMIXER:Current/InCh/HPF/On
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input ChannelHPF FrequencysetMIXER:Current/InCh/HPF/Freq
+1 - Input Channel Num  |  Input Channel1  |  – i:integer200  |  200000  |  10  |  Hz
+Input ChannelHPF SlopesetMIXER:Current/InCh/HPF/Slope
+1 - Input Channel Num  |  Input Channel1  |  – i:integer624 dB/oct
+Input ChannelLPF OnsetMIXER:Current/InCh/LPF/On
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input ChannelLPF FrequencysetMIXER:Current/InCh/LPF/Freq
+1 - Input Channel Num  |  Input Channel1  |  – i:integer200  |  200000  |  10  |  Hz20Hz - 20kHz
+Input ChannelLPF SlopesetMIXER:Current/InCh/LPF/Slope
+1 - Input Channel Num  |  Input Channel1  |  – i:integer612 dB/oct
+Input ChannelPEQ Bank SelectsetMIXER:Current/InCh/PEQ/BankSelect
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: Bank A, 1: Bank B
+Input ChannelPEQ OnsetMIXER:Current/InCh/PEQ/On
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input ChannelPEQ TypesetMIXER:Current/InCh/PEQ/Type
+1 - Input Channel Num  |  Input Channel1  |  – s:string “PRECISE”,
+“AGGRESSIVE”,
+“SMOOTH”,
+“LEGACY”
+Input ChannelPEQ Band BypasssetMIXER:Current/InCh/PEQ/Band/Bypass
+1 - Input Channel Num  |  Input Channel1 - PEQ Inch Band PEQ Inch i:integer01  |  0: OFF, 1: ON
+Num Band
+Input ChannelPEQ Band FrequencysetMIXER:Current/InCh/PEQ/Band/Freq
+1 - Input Channel Num  |  Input Channel1 - PEQ Inch Band PEQ Inch i:integer200  |  200000  |  10
+Num Band
+Input ChannelPEQ Band Gain setMIXER:Current/InCh/PEQ/Band/Gain  |  1 - Input Channel Num  |  Input Channel1 - PEQ Inch Band PEQ Inch i:integer-18001800  |  10
+Num Band
+Input ChannelPEQ Band QsetMIXER:Current/InCh/PEQ/Band/Q  |  1 - Input Channel Num  |  Input Channel1 - PEQ Inch Band PEQ Inch i:integer10016000  |  1000
+Num Band
+Input ChannelPEQ High Shelving OnsetMIXER:Current/InCh/PEQ/HighShelving/On  |  1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input ChannelPEQ Low Shelving OnsetMIXER:Current/InCh/PEQ/LowShelving/On
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input ChannelTo Mix LevelsetMIXER:Current/InCh/ToMix/Level
+1 - Input Channel Num  |  Input Channel1 - Mix Channel NumMix Channeli:integer  |  -32768  |  1000  |  100  |  dB
+Input ChannelTo Mix OnsetMIXER:Current/InCh/ToMix/On
+1 - Input Channel Num  |  Input Channel1 - Mix Channel NumMix Channeli:integer01  |  0: OFF, 1: ON
+Input ChannelTo Mix PansetMIXER:Current/InCh/ToMix/Pan
+1 - Input Channel Num  |  Input Channel1 - Mix Channel NumMix Channeli:integer-6363  |  See Table 2
+Input ChannelTo Mix Pre PostsetMIXER:Current/InCh/ToMix/PrePost  |  1 - Input Channel Num  |  Input Channel1 - Mix Channel NumMix Channeli:integer01  |  0: OFF, 1: ON
+Input ChannelTo Matrix LevelsetMIXER:Current/InCh/ToMtrx/Level
+1 - Input Channel Num  |  Input Channel1 - Matrix Channel Matrix i:integer  |  -32768  |  1000  |  100  |  dB
+Num Channel
+Input ChannelTo Matrix OnsetMIXER:Current/InCh/ToMtrx/On  |  1 - Input Channel Num  |  Input Channel1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Num Channel
+Input ChannelTo Matrix PansetMIXER:Current/InCh/ToMtrx/Pan
+1 - Input Channel Num  |  Input Channel1 - Matrix Channel Matrix i:integer-6363  |  See Table 2
+Num Channel
+Input ChannelTo Matrix Pre PostsetMIXER:Current/InCh/ToMtrx/PrePost  |  1 - Input Channel Num  |  Input Channel1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Num Channel
+DM7 Series OSC Specifications Version 1.1.0  |  9
+
+==============================================================================
+===== PAGE 10 =====
+==============================================================================
+2. Parameter
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Input ChannelDCA Group AssignsetMIXER:Current/InCh/DCA/Assign
+1 - Input Channel Num  |  Input Channel1 - DCA Group NumDCA Groupi:integer01  |  0: OFF, 1: ON
+Input ChannelPatch SelectsetMIXER:Current/InCh/PatchSelect
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: A, 1: B
+Input Channel5.1 Surround LR PansetMIXER:Current/InCh/Surr/LRPan
+1 - Input Channel Num  |  Input Channel1  |  – i:integer-6363
+Input Channel5.1 Surround FR PansetMIXER:Current/InCh/Surr/FRPan
+1 - Input Channel Num  |  Input Channel1  |  – i:integer-6363
+Input Channel5.1 Surround DivergencesetMIXER:Current/InCh/Surr/Div
+1 - Input Channel Num  |  Input Channel1  |  – i:integer0100  |  1
+Input Channel5.1 Surround L OnsetMIXER:Current/InCh/Surr/LOn  |  1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input Channel5.1 Surround R OnsetMIXER:Current/InCh/Surr/ROn
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input Channel5.1 Surround C OnsetMIXER:Current/InCh/Surr/COn
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input Channel5.1 Surround LFE OnsetMIXER:Current/InCh/Surr/LFEOn
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input Channel5.1 Surround Ls OnsetMIXER:Current/InCh/Surr/LsOn
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input Channel5.1 Surround Rs OnsetMIXER:Current/InCh/Surr/RsOn
+1 - Input Channel Num  |  Input Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Input Channel5.1 Surround LFE LevelsetMIXER:Current/InCh/Surr/LFELevel
+1 - Input Channel Num  |  Input Channel1  |  – i:integer  |  -32768  |  1000  |  100  |  dB
+Input ChannelCue Input Channel OnsetMIXER:Current/Cue/InCh/On
+1 - Input Channel Num  |  Input Channel1 - Cue A/B Numi:integer01  |  0: OFF, 1: ON
+Input ChannelInput Channel Link AssignsetMIXER:Current/InputChLink/InCh/Assign
+1 - Input Channel Num  |  Input Channel1  |  – i:integer052  |  0: NONE, 1: A, …
+52: z
+Mix ChannelFader LevelsetMIXER:Current/Mix/Fader/Level1 - Mix Channel NumMix Channel1  |  – i:integer
+-32768  |  1000  |  100  |  dB  |  See Table 1
+Mix ChannelFader OnsetMIXER:Current/Mix/Fader/On1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelPan LinksetMIXER:Current/Mix/PanLink1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelTo Stereo PansetMIXER:Current/Mix/ToSt/Pan1 - Mix Channel NumMix Channel1  |  – i:integer-6363
+See Table 2
+Mix ChannelTo Stereo OnsetMIXER:Current/Mix/ToSt/On1 - Mix Channel NumMix Channel1 - Stereo Channel Stereo i:integer01  |  0: OFF, 1: ON
+Num Channel
+Mix ChannelOutput BalancesetMIXER:Current/Mix/Out/Balance1 - Mix Channel NumMix Channel1  |  – i:integer-6363
+Mix ChannelLabel NamesetMIXER:Current/Mix/Label/Name1 - Mix Channel NumMix Channel1  |  – s:string Maximum length: 8
+characters.
+Mix ChannelLabel ColorsetMIXER:Current/Mix/Label/Color1 - Mix Channel NumMix Channel1  |  – s:string See Table 3
+Mix ChannelLabel IconsetMIXER:Current/Mix/Label/Icon1 - Mix Channel NumMix Channel1  |  – s:string See Table 4
+Mix ChannelHPF OnsetMIXER:Current/Mix/HPF/On1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelHPF FrequencysetMIXER:Current/Mix/HPF/Freq1 - Mix Channel NumMix Channel1  |  – i:integer200
+200000  |  10  |  Hz
+Mix ChannelHPF SlopesetMIXER:Current/Mix/HPF/Slope1 - Mix Channel NumMix Channel1  |  – i:integer624 dB/oct
+Mix ChannelLPF OnsetMIXER:Current/Mix/LPF/On1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelLPF FrequencysetMIXER:Current/Mix/LPF/Freq1 - Mix Channel NumMix Channel1  |  – i:integer200
+200000  |  10  |  Hz20Hz - 20kHz
+Mix ChannelLPF SlopesetMIXER:Current/Mix/LPF/Slope1 - Mix Channel NumMix Channel1  |  – i:integer612 dB/oct
+Mix ChannelPEQ Bank SelectsetMIXER:Current/Mix/PEQ/BankSelect
+1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: Bank A, 1: Bank B
+Mix ChannelPEQ OnsetMIXER:Current/Mix/PEQ/On1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelPEQ TypesetMIXER:Current/Mix/PEQ/Type1 - Mix Channel NumMix Channel1  |  – s:string “PRECISE”,
+“AGGRESSIVE”,
+“SMOOTH”,
+“LEGACY”
+Mix ChannelPEQ Band BypasssetMIXER:Current/Mix/PEQ/Band/Bypass1 - Mix Channel NumMix Channel1 - PEQ Mix Band PEQ Mix Bandi:integer01  |  0: OFF, 1: ON
+Num
+Mix ChannelPEQ Band FrequencysetMIXER:Current/Mix/PEQ/Band/Freq1 - Mix Channel NumMix Channel1 - PEQ Mix Band PEQ Mix Bandi:integer200
+Num
+200000  |  10
+Mix ChannelPEQ Band Gain setMIXER:Current/Mix/PEQ/Band/Gain1 - Mix Channel NumMix Channel1 - PEQ Mix Band PEQ Mix Bandi:integer-18001800  |  10
+Num
+DM7 Series OSC Specifications Version 1.1.0  |  10
+
+==============================================================================
+===== PAGE 11 =====
+==============================================================================
+2. Parameter
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Mix ChannelPEQ Band QsetMIXER:Current/Mix/PEQ/Band/Q1 - Mix Channel NumMix Channel1 - PEQ Mix Band PEQ Mix Bandi:integer10016000
+Num
+1000
+Mix ChannelPEQ High Shelving OnsetMIXER:Current/Mix/PEQ/HighShelving/On1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelPEQ Low Shelving OnsetMIXER:Current/Mix/PEQ/LowShelving/On1 - Mix Channel NumMix Channel1  |  – i:integer01  |  0: OFF, 1: ON
+Mix ChannelMix MinussetMIXER:Current/Mix/MixMinus/Owner/InputChannel1 - Mix Channel NumMix Channel
+1 - Input Channel Num  |  Input Channeli:integer01  |  0: OFF, 1: ON
+Mix ChannelTo Matrix LevelsetMIXER:Current/Mix/ToMtrx/Level1 - Mix Channel NumMix Channel1 - Matrix Channel Matrix i:integer
+Num Channel
+-32768  |  1000  |  100  |  dB
+Mix ChannelTo Matrix OnsetMIXER:Current/Mix/ToMtrx/On1 - Mix Channel NumMix Channel1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Num Channel
+Mix ChannelTo Matrix PansetMIXER:Current/Mix/ToMtrx/Pan1 - Mix Channel NumMix Channel1 - Matrix Channel Matrix i:integer-6363
+Num Channel
+See Table 2
+Mix ChannelTo Matrix Pre PostsetMIXER:Current/Mix/ToMtrx/PrePost1 - Mix Channel NumMix Channel1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Num Channel
+Mix ChannelDCA Group AssignsetMIXER:Current/Mix/DCA/Assign1 - Mix Channel NumMix Channel1 - DCA Group NumDCA Groupi:integer01  |  0: OFF, 1: ON
+Mix ChannelCue Mix Channel OnsetMIXER:Current/Cue/Mix/On1 - Mix Channel NumMix Channel1 - Cue A/B Num-  |  i:integer01  |  0: OFF, 1: ON
+Mix ChannelOutput Channel Link AssignsetMIXER:Current/OutputChLink/Mix/Assign1 - Mix Channel NumMix Channel1  |  – i:integer052  |  0: NONE, 1: A, …
+52: z
+Stereo ChannelFader LevelsetMIXER:Current/St/Fader/Level1 - Stereo Channel Stereo 1  |  – i:integer
+Num Channel
+-32768  |  1000  |  100  |  dB  |  See Table 1
+Stereo ChannelFader OnsetMIXER:Current/St/Fader/On1 - Stereo Channel Stereo 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Stereo ChannelOutput BalancesetMIXER:Current/St/Out/Balance1 - Stereo Channel Stereo 1  |  – i:integer-6363
+Num Channel
+Stereo ChannelLabel NamesetMIXER:Current/St/Label/Name1 - Stereo Channel Stereo 1  |  – s:string Maximum length: 8
+Num Channel  |  characters.
+Stereo ChannelLabel ColorsetMIXER:Current/St/Label/Color1 - Stereo Channel Stereo 1  |  – s:string See Table 3
+Num Channel
+Stereo ChannelLabel IconsetMIXER:Current/St/Label/Icon1 - Stereo Channel Stereo 1  |  – s:string See Table 4
+Num Channel
+Stereo ChannelTo Matrix LevelsetMIXER:Current/St/ToMtrx/Level1 - Stereo Channel Stereo 1 - Matrix Channel Matrix i:integer
+Num ChannelNum Channel
+-32768  |  1000  |  100  |  dB
+Stereo ChannelTo Matrix OnsetMIXER:Current/St/ToMtrx/On1 - Stereo Channel Stereo 1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Num ChannelNum Channel
+Stereo ChannelTo Matrix PansetMIXER:Current/St/ToMtrx/Pan1 - Stereo Channel Stereo 1 - Matrix Channel Matrix i:integer-6363
+Num ChannelNum Channel
+See Table 2
+Stereo ChannelTo Matrix Pre PostsetMIXER:Current/St/ToMtrx/PrePost1 - Stereo Channel Stereo 1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Num ChannelNum Channel
+Stereo ChannelDCA Group AssignsetMIXER:Current/St/DCA/Assign1 - Stereo Channel Stereo 1 - DCA Group NumDCA Groupi:integer01  |  0: OFF, 1: ON
+Num Channel
+Stereo ChannelCue Stereo Channel OnsetMIXER:Current/Cue/St/On1 - Stereo Channel Stereo 1 - Cue A/B Num-  |  i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelFader LevelsetMIXER:Current/Mtrx/Fader/Level1 - Matrix Channel Matrix 1  |  – i:integer
+Num Channel
+-32768  |  1000  |  100  |  dB  |  See Table 1
+Matrix ChannelFader OnsetMIXER:Current/Mtrx/Fader/On1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelLabel NamesetMIXER:Current/Mtrx/Label/Name1 - Matrix Channel Matrix 1  |  –
+Num Channel
+s:string Maximum length: 8
+characters.
+Matrix ChannelLabel ColorsetMIXER:Current/Mtrx/Label/Color1 - Matrix Channel Matrix 1  |  – s:string See Table 3
+Num Channel
+Matrix ChannelLabel IconsetMIXER:Current/Mtrx/Label/Icon1 - Matrix Channel Matrix 1  |  – s:string See Table 4
+Num Channel
+DM7 Series OSC Specifications Version 1.1.0  |  11
+
+==============================================================================
+===== PAGE 12 =====
+==============================================================================
+2. Parameter
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Matrix ChannelHPF OnsetMIXER:Current/Mtrx/HPF/On1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelHPF FrequencysetMIXER:Current/Mtrx/HPF/Freq1 - Matrix Channel Matrix 1  |  – i:integer200
+Num Channel
+200000  |  10  |  Hz
+Matrix ChannelHPF SlopesetMIXER:Current/Mtrx/HPF/Slope1 - Matrix Channel Matrix 1  |  – i:integer624 dB/oct
+Num Channel
+Matrix ChannelLPF OnsetMIXER:Current/Mtrx/LPF/On1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelLPF FrequencysetMIXER:Current/Mtrx/LPF/Freq1 - Matrix Channel Matrix 1  |  – i:integer200
+Num Channel
+200000  |  10  |  Hz20Hz - 20kHz
+Matrix ChannelLPF SlopesetMIXER:Current/Mtrx/LPF/Slope1 - Matrix Channel Matrix 1  |  – i:integer612 dB/oct
+Num Channel
+Matrix ChannelPEQ Bank SelectsetMIXER:Current/Mtrx/PEQ/BankSelect1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: Bank A, 1: Bank B
+Num Channel
+Matrix ChannelPEQ OnsetMIXER:Current/Mtrx/PEQ/On1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelPEQ TypesetMIXER:Current/Mtrx/PEQ/Type1 - Matrix Channel Matrix 1  |  – s:string “PRECISE”,
+Num Channel  |  “AGGRESSIVE”,
+“SMOOTH”,
+“LEGACY”
+Matrix ChannelPEQ Band BypasssetMIXER:Current/Mtrx/PEQ/Band/Bypass1 - Matrix Channel Matrix 1 - PEQ Matrix Band PEQ Matrix i:integer01  |  0: OFF, 1: ON
+Num ChannelNum Band
+Matrix ChannelPEQ Band FrequencysetMIXER:Current/Mtrx/PEQ/Band/Freq1 - Matrix Channel Matrix 1 - PEQ Matrix Band PEQ Matrix i:integer200
+Num ChannelNum Band
+200000  |  10
+Matrix ChannelPEQ Band Gain setMIXER:Current/Mtrx/PEQ/Band/Gain1 - Matrix Channel Matrix 1 - PEQ Matrix Band PEQ Matrix i:integer-18001800  |  10
+Num ChannelNum Band
+Matrix ChannelPEQ Band QsetMIXER:Current/Mtrx/PEQ/Band/Q1 - Matrix Channel Matrix 1 - PEQ Matrix Band PEQ Matrix i:integer10016000  |  1000
+Num ChannelNum Band
+Matrix ChannelPEQ High Shelving OnsetMIXER:Current/Mtrx/PEQ/HighShelving/On1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelPEQ Low Shelving OnsetMIXER:Current/Mtrx/PEQ/LowShelving/On1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelPan LinksetMIXER:Current/Mtrx/PanLink1 - Matrix Channel Matrix 1  |  – i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelOutput BalancesetMIXER:Current/Mtrx/Out/Balance1 - Matrix Channel Matrix 1  |  – i:integer-6363
+Num Channel
+Matrix ChannelDCA Group AssignsetMIXER:Current/Mtrx/DCA/Assign1 - Matrix Channel Matrix 1 - DCA Group NumDCA Groupi:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelCue Matrix Channel OnsetMIXER:Current/Cue/Mtrx/On1 - Matrix Channel Matrix 1 - Cue A/B Num-  |  i:integer01  |  0: OFF, 1: ON
+Num Channel
+Matrix ChannelOutput Channel Link AssignsetMIXER:Current/OutputChLink/Mtrx/Assign1 - Matrix Channel Matrix 1  |  – i:integer052  |  0: NONE, 1: A, …
+Num Channel  |  52: z
+DCA GroupFader LevelsetMIXER:Current/DCA/Fader/Level1 - DCA Group NumDCA Group1  |  – i:integer
+-32768  |  1000  |  100  |  dB  |  See Table 1
+DCA GroupFader OnsetMIXER:Current/DCA/Fader/On1 - DCA Group NumDCA Group1  |  – i:integer01  |  0: OFF, 1: ON
+DCA GroupLabel NamesetMIXER:Current/DCA/Label/Name1 - DCA Group NumDCA Group1  |  – s:string Maximum length: 8
+characters.
+DCA GroupLabel ColorsetMIXER:Current/DCA/Label/Color1 - DCA Group NumDCA Group1  |  – s:string See Table 3
+DCA GroupLabel IconsetMIXER:Current/DCA/Label/Icon1 - DCA Group NumDCA Group1  |  – s:string See Table 4
+DCA GroupCue DCA Group OnsetMIXER:Current/Cue/DCA/On1 - DCA Group NumDCA Group1 - Cue A/B Num
+-  |  i:integer01  |  0: OFF, 1: ON
+Mute Group ControlOn  |  setMIXER:Current/MuteGrpCtrl/On1 - Mute Group NumMute Group1  |  – i:integer01  |  0: OFF, 1: ON
+Mute Group ControlLabel NamesetMIXER:Current/MuteGrpCtrl/Label/Name1 - Mute Group NumMute Group1  |  – s:string Maximum length: 8
+characters.
+DM7 Series OSC Specifications Version 1.1.0  |  12
+
+==============================================================================
+===== PAGE 13 =====
+==============================================================================
+2. Parameter
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Input Channel LinkLink Param EQsetMIXER:Current/InputChLink/LinkParams/EQ1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param InsertsetMIXER:Current/InputChLink/LinkParams/Insert1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param FadersetMIXER:Current/InputChLink/LinkParams/Fader1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Channel OnsetMIXER:Current/InputChLink/LinkParams/ChOn1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param To StereosetMIXER:Current/InputChLink/LinkParams/ToSt1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param DCAsetMIXER:Current/InputChLink/LinkParams/DCA1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param MutesetMIXER:Current/InputChLink/LinkParams/Mute1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Matrix SendsetMIXER:Current/InputChLink/LinkParams/MtrxSend1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Matrix Send OnsetMIXER:Current/InputChLink/LinkParams/1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+MtrxSendOnLink Num
+Input Channel LinkLink Param HAsetMIXER:Current/InputChLink/LinkParams/HA1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param HPFsetMIXER:Current/InputChLink/LinkParams/HPF1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Digital GainsetMIXER:Current/InputChLink/LinkParams/1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+DigitalGainLink Num
+Input Channel LinkLink Param Direct OutsetMIXER:Current/InputChLink/LinkParams/DirectOut1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Mix SendsetMIXER:Current/InputChLink/LinkParams/MixSend1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Mix Send OnsetMIXER:Current/InputChLink/LinkParams/1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+MixSendOnLink Num
+Input Channel LinkLink Param DelaysetMIXER:Current/InputChLink/LinkParams/Delay1 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Dynamics1setMIXER:Current/InputChLink/LinkParams/Dyna11 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param Dynamics2setMIXER:Current/InputChLink/LinkParams/Dyna21 - Input Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param To MixsetMIXER:Current/InputChLink/SendParams/ToMix1 - Input Channel Link Group1 - Mix Channel NumMix Channeli:integer01  |  0: OFF, 1: ON
+Link Num
+Input Channel LinkLink Param To MatrixsetMIXER:Current/InputChLink/SendParams/ToMtrx1 - Input Channel Link Group1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Link NumNum Channel
+Output Channel LinkLink Param EQsetMIXER:Current/OutputChLink/LinkParams/EQ1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param InsertsetMIXER:Current/OutputChLink/LinkParams/Insert1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param FadersetMIXER:Current/OutputChLink/LinkParams/Fader1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param Channel OnsetMIXER:Current/OutputChLink/LinkParams/ChOn1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param To StereosetMIXER:Current/OutputChLink/LinkParams/ToSt1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param DCAsetMIXER:Current/OutputChLink/LinkParams/DCA1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param MutesetMIXER:Current/OutputChLink/LinkParams/Mute1 - Output Channel Link Group1  |  – i:integer0
+Link Group Num
+1  |  0: OFF, 1: ON
+DM7 Series OSC Specifications Version 1.1.0  |  13
+
+==============================================================================
+===== PAGE 14 =====
+==============================================================================
+2. Parameter
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Output Channel LinkLink Param Matrix SendsetMIXER:Current/OutputChLink/LinkParams/1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+MtrxSend Link Group Num
+Output Channel LinkLink Param Matrix Send OnsetMIXER:Current/OutputChLink/LinkParams/1 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+MtrxSendOnLink Group Num
+Output Channel LinkLink Param Dynamics1setMIXER:Current/OutputChLink/LinkParams/Dyna11 - Output Channel Link Group1  |  – i:integer01  |  0: OFF, 1: ON
+Link Group Num
+Output Channel LinkLink Param To MatrixsetMIXER:Current/OutputChLink/SendParams/ToMtrx1 - Output Channel Link Group1 - Matrix Channel Matrix i:integer01  |  0: OFF, 1: ON
+Link Group NumNum Channel
+Monitor5.1 Surround Monitor Solo setMIXER:Current/Monitor/Surr/SoloMode1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Mode
+Monitor5.1 Surround Monitor L OnsetMIXER:Current/Monitor/Surr/LOn1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Monitor5.1 Surround Monitor R OnsetMIXER:Current/Monitor/Surr/ROn1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Monitor5.1 Surround Monitor C OnsetMIXER:Current/Monitor/Surr/COn1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Monitor5.1 Surround Monitor LFE setMIXER:Current/Monitor/Surr/LFEOn1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+On
+Monitor5.1 Surround Monitor Ls OnsetMIXER:Current/Monitor/Surr/LsOn1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Monitor5.1 Surround Monitor Rs OnsetMIXER:Current/Monitor/Surr/RsOn1  |  1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/Surr/SourceSelect1  |  1  |  -  |  s:string See Table 7
+Source Select
+Known issues on DM7
+V1.60.
+1. The monitor
+sources “Define 1” to
+“Define 8” cannot be
+set externally.
+2. When the monitor
+source “Define 1” to
+“Define 8” is selected,
+“Define” is notified.”
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/Type1  |  1  |  -  |  s:string “Stereo”, “Mono”
+Downmix Type
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LToLOn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix L to L OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/RToLOn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix R to L OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/CToLOn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix C to L OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LFEToLOn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix LFE to L OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LsToLOn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix Ls to L OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/RsToLOn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix Rs to L OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LToROn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix L to R OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/RToROn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix R to R OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/CToROn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix C to R OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LFEToROn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix LFE to R OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LsToROn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix Ls to R OnNum
+DM7 Series OSC Specifications Version 1.1.0  |  14
+
+==============================================================================
+===== PAGE 15 =====
+==============================================================================
+2. Parameter
+<value>value
+CategoryParameter Description<Action><Parameter ID>  |  <X>  |  X name<Y>Y name<type type   |  Comment
+tag>tag
+minmaxscaling  |  unit
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/RsToROn1 - Downmix A/B 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Downmix Rs to R OnNum
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LToLRLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix L to LR LevelNum
+-32768  |  0  |  100  |  dB
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/RToLRLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix R to LR LevelNum
+-32768  |  0  |  100  |  dB
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/CToLRLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix C to LR LevelNum
+-32768  |  0  |  100  |  dB
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LFEToLRLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix LFE to LR LevelNum
+-32768  |  0  |  100  |  dB
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/LsToLRLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix Ls to LR LevelNum
+-32768  |  0  |  100  |  dB
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/RsToLRLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix Rs to LR LevelNum
+-32768  |  0  |  100  |  dB
+Monitor5.1 Surround Monitor setMIXER:Current/Monitor/DownMix/MainLevel1 - Downmix A/B 1  |  -  |  i:integer
+Downmix Main LevelNum
+-32768  |  0  |  100  |  dB
+MonitorMonitor OnsetMIXER:Current/Monitor/On1 - Monitor A/B Num1  |  -  |  i:integer01  |  0: OFF, 1: ON
+MonitorMonitor Dimmer OnsetMIXER:Current/Monitor/DimmerOn1 - Monitor Dimmer 1  |  -  |  i:integer01  |  0: OFF, 1: ON
+A/B Num
+MonitorMonitor Phones Level LinksetMIXER:Current/Monitor/PhonesLevelLink1 - Monitor A/B Num1  |  -  |  i:integer01  |  0: OFF, 1: ON
+MonitorMonitor Cue InterruptionsetMIXER:Current/Monitor/CueInterruption1 - Monitor A/B Num1  |  -  |  i:integer01  |  0: OFF, 1: ON
+MonitorMonitor Fader LevelsetMIXER:Current/Monitor/Fader/Level1 - Monitor A/B Num1  |  -  |  i:integer
+-32768  |  0  |  100  |  dB
+MonitorMonitor Stereo Source setMIXER:Current/Monitor/St/SourceSelect1 - Monitor A/B Num1  |  -  |  i:integer07  |  Monitor Source
+Select  |  No.1…7
+Cue 5.1 Surround Cue ModesetMIXER:Current/Cue/Surr/CueMode1  |  1  |  -  |  s:string “LAST”, “MIX”
+Cue Cue Out OnsetMIXER:Current/Cue/Out/On1 - Cue A/B Num1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Cue Cue ModesetMIXER:Current/Cue/CueMode1 - Cue A/B Num1  |  -  |  s:string “LAST”, “MIX”
+Cue Cue Input Channel PointsetMIXER:Current/Cue/InCh/Point1 - Cue A/B Num1  |  -  |  s:string “PFL PRE FILTER”,
+“PFL PRE FADER”,
+“AFL”, “POST PAN”
+Cue Cue Output Channel PointsetMIXER:Current/Cue/OutCh/Point1 - Cue A/B Num1  |  -  |  s:string “PFL”, “AFL”
+Cue Cue DCA PointsetMIXER:Current/Cue/DCA/Point1 - Cue A/B Num1  |  -  |  s:string “PRE PAN”, “POST
+PAN”
+Cue Cue DCA UnitysetMIXER:Current/Cue/DCA/Unity1 - Cue A/B Num1  |  -  |  i:integer01  |  0: OFF, 1: ON
+Cue Cue Out LevelsetMIXER:Current/Cue/Out/Level1 - Cue A/B Num1  |  -  |  i:integer
+-32768  |  0  |  100  |  dB
+DM7 Series OSC Specifications Version 1.1.0  |  15
+
+==============================================================================
+===== PAGE 16 =====
+==============================================================================
+2. Parameter
+Snapshot
+OSC address: /yosc:req/<Action> <type tag> <Parameter ID> <value>
+CategoryParameter Description<Action><Parameter ID><type tag>type tag<value>valuecomment
+minmaxscalingunit
+SceneRecall Scene_Assrecallt_ex scene_as:, s:,string,string0 499
+SceneGet Current Scene_A Numbersscurrentt_ex scene_as: string
+SceneRecall Scene_Bssrecallt_ex scene_bs:, s:,string,string0 499  |  split mode only.
+SceneGet Current Scene_B Numbersscurrentt_ex scene_bs: string  |  split mode only.
+Event
+OSC address: yosc:req/event <type tag> <Parameter ID>
+CategoryParameter Description<Parameter ID><type tag>type tagcomment
+SceneInc Recall Current Scene ListMIXER:Lib/Scene/RecallInc scene_as:, s:string,string
+SceneDec Recall Current Scene ListMIXER:Lib/Scene/RecallDec scene_as:, s:string,string
+SceneInc Recall Current Scene ListMIXER:Lib/Scene/RecallInc scene_bs:, s:string,stringsplit mode only.
+SceneDec Recall Current Scene ListMIXER:Lib/Scene/RecallDec scene_bs:, s:string,stringsplit mode only.
+DM7 Series OSC Specifications Version 1.1.0  |  16
+
+==============================================================================
+===== PAGE 17 =====
+==============================================================================
+2. Parameter
+2.2.þÿ 	 Parameter Value Detail  |  Table 2 Pan/Balance
+Table No.Parameter ValueParameter String
+0 -63“L63”
+1 -60“L60”
+2 -55“L55”
+3 -50“L50”
+4 -45“L45”
+5 -40“L40”
+6 -35“L35”
+7 -30“L30”
+8 -25“L25”
+9 -20“L20”
+Table 1 Fader Level
+10-15“L15”
+Table No.Parameter ValueParameter StringTable No.Parameter ValueParameter String
+11-10“L10”
+0 -32768“-∞”22 -1000“-10.00”
+12-5 “L5”
+1 -13800“-138.0”23 -900“-9.00”
+130  |  “C”
+2 -12000“-120.0”24 -800“-8.00”
+145  |  “R5”
+3 -10500“-105.0”25 -700“-7.00”
+1510 “R10”
+4 -9000“-90.00”26 -600“-6.00”
+1615 “R15”
+5 -7000“-70.00”27 -500“-5.00”
+1720 “R20”
+6 -6000“-60.00”28 -400“-4.00”
+1825 “R25”
+7 -5500“-55.00”29 -300“-3.00”
+1930 “R30”
+8 -5000“-50.00”30 -200“-2.00”
+2035 “R35”
+9 -4500“-45.00”31 -100“-1.00”
+2140 “R40”
+10-4000“-40.00”32 0  |  “0.00”
+2245 “R45”
+11-3500“-35.00”33 100“1.00”
+2350 “R50”
+12-3000“-30.00”34 200“2.00”
+2455 “R55”
+13-2800“-28.00”35 300“3.00”
+2560 “R60”
+14-2600“-26.00”36 400“4.00”
+2663 “R63”
+15-2400“-24.00”37 500“5.00”
+16-2200“-22.00”38 600“6.00”
+17-2000“-20.00”39 700“7.00”
+18-1800“-18.00”40 800“8.00”
+19-1600“-16.00”41 900“9.00”
+20-1400“-14.00”42 1000“10.00”
+21-1200“-12.00”
+DM7 Series OSC Specifications Version 1.1.0  |  17
+
+==============================================================================
+===== PAGE 18 =====
+==============================================================================
+2. Parameter
+Table 3 Channel Color  |  Table 5 HA Gain
+"Blue"  |  Table No.Parameter ValueParameter StringTable No.Parameter ValueParameter String
+"Green"  |  0 -600“-6”37 3100“+31”
+"Orange"  |  1 -500“-5”38 3200“+32”
+"Pink"  |  2 -400“-4”39 3300“+33”
+"Purple"  |  3 -300“-3”40 3400“+34”
+"Red"  |  4 -200“-2”41 3500“+35”
+"SkyBlue"  |  5 -100“-1”42 3600“+36”
+"Yellow"  |  6 0  |  “0”43 3700“+37”
+"Cyan"  |  7 100“+1”44 3800“+38”
+"Magenta"  |  8 200“+2”45 3900“+39”
+"Off"  |  9 300“+3”46 4000“+40”
+10400“+4”47 4100“+41”
+11500“+5”48 4200“+42”
+12600“+6”49 4300“+43”
+13700“+7”50 4400“+44”
+14800“+8”51 4500“+45”
+15900“+9”52 4600“+46”
+161000“+10”53 4700“+47”
+171100“+11”54 4800“+48”
+181200“+12”55 4900“+49”
+191300“+13”56 5000“+50”
+201400“+14”57 5100“+51”
+211500“+15”58 5200“+52”
+221600“+16”59 5300“+53”
+231700“+17”60 5400“+54”
+241800“+18”61 5500“+55”
+251900“+19”62 5600“+56”
+262000“+20”63 5700“+57”
+272100“+21”64 5800“+58”
+282200“+22”65 5900“+59”
+292300“+23”66 6000“+60”
+302400“+24”67 6100“+61”
+312500“+25”68 6200“+62”
+322600“+26”69 6300“+63”
+332700“+27”70 6400“+64”
+342800“+28”71 6500“+65”
+352900“+29”72 6600“+66”
+363000“+30”
+Table 4 Channel Icon
+“Kick”“Strings”“Monitor”
+“Snare”“Piano”“Effect”
+“Hi-Hat”“Organ”“Processor”
+“TomTom”“Keyboard”“Media1”
+“FloorTom”“Male”“Media2”
+“Cymbal”“Female”“Media3”
+“Drumkit”“Choir”“Video”
+“Perc.”“DynamicMic”“Mixer”
+“Mallets”“CondenserMic”“PC”
+“A.Bass”“InstMic”“Audience”
+“E.Bass”“WirelessMic”“ArrowLeft”
+“BassAmp”“Headset”“ArrowRight”
+“A.Guitar”“SpeechMic”“Exclamation”
+“E.Guitar”“DirectBox”“Smile”
+“GuitarAmp”“Foh”“Money”
+“Trumpet”“Speaker”“Star1”
+“Trombone”“SubWoofer”“Star2”
+“Saxophone”“Wedge”“Blank”
+“Flute”“In-Ear”
+DM7 Series OSC Specifications Version 1.1.0  |  18
+
+==============================================================================
+===== PAGE 19 =====
+==============================================================================
+2. Parameter
+Table 6 Link Group  |  DM7/DM7 CompactMax Channel Numbers
+1: A  |  Input ChannelDM7: 120
+...  |  DM7 Compact: 72
+26: Z  |  Stereo Input Channel0
+27: a  |  Fx Return Channel0
+...  |  Mix Channel48
+52: z  |  Stereo Channel4
+Matrix Channel12
+Fx Channel0
+Mute Group12
+Input Channel Link53
+Input Channel Link Group52
+Local Input16
+Stereo Bus2
+DCA Group24
+Output Channel Link53
+Output Channel Link Group52
+PEQ Inch Band4
+PEQ Mix Band8
+PEQ Matrix Band8
+Split Side2
+Prmnum Result153
+Downmix A/B2
+Cue A/B2
+Monitor A/B2
+Monitor Dimmer A/B2
+Table 7 Surround Monitor Source
+Select
+"Surr A"
+"Surr B"
+"Downmix A"
+"Downmix B"
+"Ext Surr5.1 1"
+"Ext Surr5.1 2"
+"Ext Surr5.1 3"
+"Ext Surr5.1 4"
+"Ext St 1"
+"Ext St 2"
+"Ext St 3"
+"Ext St 4"
+"Define"
+DM7 Series OSC Specifications Version 1.1.0  |  19

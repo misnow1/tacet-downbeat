@@ -34,12 +34,16 @@ rather than working around it.
   has already been tried and does not work.
 - **Play clock running is NOT a mute interlock.** The play clock runs 40 seconds
   from ready-for-play; most of that is legal band time. Interlocking on it would
-  mute the band for nearly the entire play cycle. RTD is context, not gate. See
+  silence the band for nearly the entire play cycle. RTD is context, not gate. See
   design.md §2.
 - **Must hold open through a diminuendo.** After a touchdown the band plays
   loud, drops quiet under the PAT, then returns loud. It does not stop. Any
   measure that reads the quiet section as a stop is wrong, and that section is
   where amplification matters most.
+- **Faders only, never mutes.** The band mics feed other mixes pre-fader and
+  post-mute. Muting the channels or the DCA would pull the band out of those
+  mixes too. Move `MIXER:Current/DCA/Fader/Level` and nothing else — `-32768`
+  (−∞) is a complete close, so the mute is never needed. See design.md §5.3.
 - **Fast open, ~2 s fade close.** Asymmetric by design. A missed downbeat is
   unrecoverable; a slightly late close is absorbed by the fade.
 - **Never classify why the music stopped.** End of song, breath mark, missed
@@ -66,9 +70,10 @@ rather than working around it.
 
 Full detail in design.md §5.
 
-- **Console** — Yamaha DM7C, press box. Control via **OSC** (Yamaha publishes a
-  DM7-specific spec). Bidirectional: subscribe to real DCA state rather than
-  assuming it, so iPad and web UI never fight.
+- **Console** — Yamaha DM7C, press box. Control via **OSC**, UDP 49900. The
+  protocol is **write-only** — no get, no subscribe, no notify — so the box
+  cannot read DCA state or see iPad moves. The UI shows commanded, not
+  confirmed. Spec and extracted text in `docs/vendors/yamaha/`.
 - **Audio** — 14 band mics via Dante. **Tap pre-delay**; console alignment
   delays serve the mix, but detection wants earliest arrival. Re-apply known
   offsets in software where time-coherence is needed.
@@ -118,7 +123,9 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 Phase 1 captures four aligned streams, all on a common clock:
 
 1. DVS multitrack, 14 channels
-2. OSC subscription — actual operator fader moves (**the ground truth labels**)
+2. Post-DCA reference channel — one Dante channel of the band PA feed. Compared
+   against the pre-fader mics it recovers actual operator fader moves (**the
+   ground truth labels**). OSC cannot supply these; it is write-only.
 3. RTD stream
 4. Live operator annotations — the portion that **cannot be reconstructed
    afterward**

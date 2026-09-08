@@ -3,7 +3,7 @@
 **Status:** Draft / pre-implementation
 **Venue:** Home football stadium, ACC
 **Author:** Michael
-**Last updated:** 2026-09-06
+**Last updated:** 2026-09-07
 
 ---
 
@@ -13,7 +13,7 @@ During home football games, ~14 microphones are placed among the marching band
 in the stands. These feed the **band PA** (also "hype PA"), a system separate
 from the main stadium PA.
 
-The mics must be muted while the ball is in play, and generally whenever the
+The mics must be silenced while the ball is in play, and generally whenever the
 band is not playing. Today this is done manually: an operator rides a single DCA
 containing all band mics from an iPad connected to the console.
 
@@ -75,7 +75,7 @@ scrimmage.
 The play clock starts at ready-for-play and runs 40 seconds. Most of that
 window — huddle, substitution, walking up — is legal band time. The prohibited
 window is roughly the last 10–15 seconds. **A hard interlock on "play clock
-running" would mute the band for nearly the entire play cycle** and would be
+running" would silence the band for nearly the entire play cycle** and would be
 substantially worse than current manual operation.
 
 ---
@@ -207,6 +207,9 @@ is attractive for simplicity, but the detector needs per-channel access for
 onset simultaneity and inter-channel consensus. Plan for individual channels, or
 purpose-built sub-mixes, not a single sum.
 
+Phase 1 additionally needs one **post-DCA reference channel** carrying the
+band PA feed (§9). Budget 14 + 1.
+
 **Tap pre-delay.** The console's alignment delays exist to serve the mix. For
 detection, earliest arrival wins, since there is no lookahead available. Tapping
 pre-delay recovers roughly 7 ms on the bass drum. The detector can re-apply the
@@ -215,17 +218,63 @@ known offsets in software for measures that need time-coherent channels.
 ### 5.3 Console control
 
 The DM7 supports MIDI and OSC, and Yamaha publishes a DM7-specific spec — *DM7
-Series OSC Specifications*, most recently updated July 2025 — covering
-connection setup and the full parameter list. Console GPIO is therefore not
-required.
+Series OSC Specifications*, V1.1.0, July 2025 — covering connection setup and
+the full parameter list. A copy, with an extracted text version for grep, is in
+`docs/vendors/yamaha/`. Console GPIO is therefore not required.
 
-OSC is **bidirectional**. The box subscribes to the DCA's actual state rather
-than assuming it, so:
+Transport: **UDP port 49900**, addressed to the console's *For Mixer Control*
+IP. Up to **four** OSC remote controllers may be connected to one console, so
+the box and the iPad coexist without displacing each other.
 
-- iPad moves appear in the box's UI
-- Box moves appear on the iPad
-- The log records the true console value regardless of origin
-- No contention over authority
+Address format, and the only control this system needs:
+
+```
+/yosc:req/<Action>/<Parameter ID>/<X>/<Y> <value>
+/yosc:req/set/MIXER:Current/DCA/Fader/Level/<dca> <value>
+```
+
+`<value>` is an integer in hundredths of a dB — `0` = 0 dB, `-2000` = −20 dB,
+`-32768` = −∞. Range −32768…1000. There are 24 DCA groups.
+
+#### Faders only, never mutes
+
+**The band mics feed other mixes pre-fader and post-mute.** Muting — either the
+channel ON key or the DCA ON key — sits upstream of the pre-fader send tap, and
+would pull the band out of those other mixes as well. A fader does not: sends
+tap ahead of the fader, and a DCA only scales the channel fader.
+
+So this system moves **`DCA/Fader/Level` and nothing else.** Never
+`DCA/Fader/On`, never `InCh/Fader/On`, never `InCh/Fader/Level`. The constraint
+costs nothing, because `-32768` (−∞) is a complete close on its own — the mute
+was never needed.
+
+It also contains the failure mode. If the box dies mid-fade and parks the DCA at
+an intermediate level, only the band PA is affected. Every pre-fader send to the
+other mixes is untouched, and the operator still has the DCA on the iPad.
+
+#### OSC is write-only
+
+**This corrects an earlier assumption in this document.** V1.1.0 defines only
+`set`, plus `event` and `ssrecallt_ex` for scene recall. There is no `get`, no
+subscribe, no notify, and nothing describing the console transmitting anything.
+All 169 parameter rows in §2.1 of the spec are `set`.
+
+The box therefore cannot:
+
+- read back the DCA's actual level
+- see iPad fader moves
+- confirm that the console acted on a command
+
+Consequences are handled in §5.5 — the UI shows *commanded*, not *confirmed* —
+and in §9, where Phase 1 ground truth comes from a post-DCA reference channel
+rather than from OSC. There is no contention over authority only in the weak
+sense that the console accepts the last write from any controller; nothing
+arbitrates, and neither side can see the other.
+
+The DM7 also speaks MIDI, and Yamaha consoles have historically emitted
+parameter changes as SysEx. Whether the DM7 does, and whether it would give
+readback, is unverified — it needs the MIDI data format document, which is not
+the OSC spec. See §7.
 
 ### 5.4 Game data (RTD)
 
@@ -251,7 +300,9 @@ phone, or laptop; nothing to install, nothing extra to maintain.
 
 Minimum during-game requirements:
 
-- Current DCA level, read back from the console via OSC
+- Current DCA level as **last commanded by the box**, labelled as commanded
+  rather than confirmed. There is no readback, and an iPad move will not
+  appear here (§5.3)
 - **Open** and **fade out** buttons
 - Plain-language "why" line — what state the machine is in and what put it there
 
@@ -482,6 +533,14 @@ confirms the band is in the stands.
 - **Confirm the 10–20 ms delay is inaudible** in the live room, and whether hype
   and band paths need independent delay.
 - **Confirm the band whistle's fundamental** from multitrack.
+- **Confirm DCA fader granularity.** The spec gives `min -32768 / max 1000 /
+  scaling 100`, implying arbitrary hundredths of a dB, but the parameter notes
+  point at Table 1 — a 43-entry list whose steps are 1 dB near unity, 2 dB from
+  −10 to −30, 5 dB below that. If only Table 1 values are accepted, a 2 s close
+  from 0 dB to −∞ is 32 steps, ~62 ms apart. Send `-1550` and see whether the
+  console lands on −15.50 or snaps to −16.
+- **Whether MIDI offers state readback**, which OSC does not (§5.3). Needs the
+  DM7 MIDI data format document.
 - Obtain ACC-specific amplification guidance if it exists.
 
 ---
@@ -547,8 +606,13 @@ it is today.
 Captured per game:
 
 - DVS multitrack of all 14 channels (license already owned)
-- OSC subscription capturing actual operator fader moves — **this is the ground
-  truth label set**
+- A **post-DCA reference channel** — one additional Dante channel carrying the
+  band PA feed, recorded alongside the 14 mics. Compared against the pre-fader
+  mics it recovers the operator's fader moves, and **this is the ground truth
+  label set**. It replaces the OSC subscription originally planned here, which
+  the protocol does not support (§5.3). It is also the better measurement: it
+  captures gain as actually applied to the PA, and it is the only available
+  confirmation that a command reached the console at all.
 - RTD stream, timestamped
 - Every detector decision the box would have made
 - **Live operator annotations** (§5.6) — the portion of ground truth that cannot
@@ -592,3 +656,5 @@ data is impossible and building the viewer later is easy.
 4. **Never classify why the music stopped.** Fade the same way for all of them.
 5. **Announce, don't surprise.** Mode changes prompt; they don't happen silently.
 6. **Structure, not level.** Level is the one dimension where the crowd wins.
+7. **Faders, never mutes.** The mics feed other mixes pre-fader, post-mute.
+   Muting would take the band out of those mixes too.
