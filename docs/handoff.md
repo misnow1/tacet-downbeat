@@ -153,12 +153,17 @@ the page itself as unproven.
 ```
 tacet-serve --console-host 127.0.0.1 --dca 3 \
     --log /tmp/tacet/game.jsonl --queue /tmp/tacet/queue.tsv \
-    --reaper-host 127.0.0.1 --listen 127.0.0.1 --http-port 8080
+    --reaper-host 127.0.0.1 --listen 0.0.0.0 --http-port 8080
 ```
 
 Pointing `--console-host` at loopback is deliberate for a first run: UDP goes
 nowhere and nothing moves a real fader. Open `http://127.0.0.1:8080` on the
 laptop, then on the iPad against the machine's real address.
+
+`--listen` is the bind address, and it governs the HTTP site and the Reaper
+feedback socket together. `--listen 127.0.0.1` reaches the UI from the machine
+itself and **from nowhere else**, so the iPad cannot see it; that looks like a
+firewall problem and is not one. Use `0.0.0.0` for anything off-box.
 
 Worth checking:
 
