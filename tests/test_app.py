@@ -1,3 +1,4 @@
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -47,7 +48,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         self.console_sender = FakeSender()
         self.reaper_sender = FakeSender()
 
-    def build(self, *, console_sender=None, fade=0.05):
+    def build(self, *, console_sender=None, fade=0.05, monotonic=None):
         self.log = ann.AnnotationLog(self.root / "game.jsonl")
         self.log.open()
         self.addCleanup(self.log.close)
@@ -57,12 +58,14 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             sender=console_sender or self.console_sender,
             tick_hz=200.0,
         )
-        self.reaper = reaper.ReaperClient(sender=self.reaper_sender)
+        clock = monotonic if monotonic is not None else time.monotonic
+        self.reaper = reaper.ReaperClient(sender=self.reaper_sender, monotonic=clock)
         return tacet_app.App(
             console=self.console,
             log=self.log,
             recorder=self.reaper,
             fade_seconds=fade,
+            monotonic=clock,
         )
 
     def entries(self):
@@ -207,6 +210,45 @@ class TestSnapshot(AppTestCase):
         self.assertTrue(recording["known"])
         self.assertTrue(recording["recording"])
         self.assertTrue(recording["confirmed"])
+
+    async def test_a_parked_reaper_still_reports_stopped_not_unknown(self):
+        """Reaper is silent whenever it is parked (measured 2026-09-08).
+
+        Reading that silence as a lost link put the UI into "no feedback" for
+        the whole pre-game window, which is where the operator most wants to
+        know the recorder is there.
+        """
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        app.handle_recorder_packet(osc.encode_message("/play", 0.0))
+
+        clock[0] += 60.0  # a minute of Reaper sitting there saying nothing
+        recording = app.snapshot()["recording"]
+        self.assertEqual(recording["liveness"], "quiet")
+        self.assertTrue(recording["known"])
+        self.assertFalse(recording["recording"])
+
+    async def test_reaper_dying_mid_recording_is_a_visible_fault(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        self.assertTrue(app.snapshot()["recording"]["recording"])
+
+        clock[0] += 60.0  # the /time stream should have been arriving
+        recording = app.snapshot()["recording"]
+        self.assertEqual(recording["liveness"], "lost")
+        self.assertFalse(recording["known"])
+        self.assertFalse(recording["confirmed"])
+
+    async def test_a_stale_reading_never_claims_reaper_is_rolling(self):
+        # The property that makes believing a parked reading safe at all.
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        clock[0] += 60.0
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["known"] and recording["recording"])
 
     async def test_the_snapshot_carries_the_why_line(self):
         app = self.build()

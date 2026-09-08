@@ -53,6 +53,63 @@ class TestTransportState(unittest.TestCase):
         self.assertFalse(state.is_fresh(now=103.0, timeout=2.0))
 
 
+class TestLiveness(unittest.TestCase):
+    """Reaper only talks while the transport moves.
+
+    Measured 2026-09-08: about 11 Hz of `/time` while rolling, one burst per
+    transport change, and complete silence when parked. So silence only carries
+    information when we were expecting a stream.
+    """
+
+    def test_never_heard_from_is_unknown(self):
+        got = reaper.TransportState().liveness(now=0.0)
+        self.assertIs(got, reaper.Liveness.UNKNOWN)
+
+    def test_recent_traffic_is_live(self):
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        self.assertIs(state.liveness(now=100.5, timeout=2.0), reaper.Liveness.LIVE)
+
+    def test_silence_while_rolling_is_lost(self):
+        # Reaper was streaming /time and stopped mid-sentence. That is a fault
+        # and the operator has to see it.
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        self.assertIs(state.liveness(now=103.0, timeout=2.0), reaper.Liveness.LOST)
+
+    def test_silence_while_stopped_is_quiet(self):
+        # The old code called this a lost link. It is just Reaper sitting there.
+        state = feed(reaper.TransportState(), "/record", 0.0, now=100.0)
+        state = feed(state, "/play", 0.0, now=100.0)
+        self.assertIs(state.liveness(now=103.0, timeout=2.0), reaper.Liveness.QUIET)
+
+    def test_silence_after_traffic_that_never_said_what_it_was_doing(self):
+        # A position with no transport state leaves us unable to say whether
+        # silence is expected. Unknown, not a fault, and not reassurance.
+        state = feed(reaper.TransportState(), "/time", 4.0, now=100.0)
+        self.assertIs(state.liveness(now=103.0, timeout=2.0), reaper.Liveness.UNKNOWN)
+
+    def test_quiet_can_never_assert_that_reaper_is_rolling(self):
+        """The safety property that makes trusting a stale reading acceptable.
+
+        QUIET is only reachable when the last thing Reaper said was that it had
+        stopped, so a believed-but-stale reading can only ever under-claim. If
+        Reaper dies while parked we keep showing "stopped", which stays true;
+        there is no path on which we show ROLLING at a dead recorder.
+        """
+        for recording in (True, None):
+            for playing in (True, None):
+                state = reaper.TransportState(recording=recording, playing=playing, last_packet=100.0)
+                if state.liveness(now=103.0, timeout=2.0) is reaper.Liveness.QUIET:
+                    self.assertNotEqual(state.recording, True)
+
+    def test_is_fresh_still_means_live(self):
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        for now in (100.5, 103.0):
+            self.assertEqual(
+                state.is_fresh(now=now, timeout=2.0),
+                state.liveness(now=now, timeout=2.0) is reaper.Liveness.LIVE,
+            )
+
+
 class TestFeedback(unittest.TestCase):
     def test_record_on_and_off(self):
         state = feed(reaper.TransportState(), "/record", 1.0)

@@ -312,11 +312,21 @@ function render(next) {
   $("level").textContent = fader.db === null ? "-\\u221E dB" : fader.db.toFixed(2) + " dB";
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
 
+  // Reaper is silent whenever it is parked, so silence alone is not a fault.
+  // "quiet" is a believed reading from a stopped Reaper; "lost" is silence
+  // where the /time stream should have been, and that one is a fault.
   const rec = next.recording;
-  $("rec").textContent = !rec.confirmed ? "unknown" : (rec.recording ? "ROLLING" : "stopped");
+  const REC_TAG = {
+    live: ["confirmed", "confirmed"],
+    quiet: ["confirmed", "confirmed (idle)"],
+    lost: ["unknown", "LINK LOST"],
+    unknown: ["unknown", "no feedback"],
+  };
+  const [recClass, recLabel] = REC_TAG[rec.liveness] || REC_TAG.unknown;
+  $("rec").textContent = !rec.known ? "unknown" : (rec.recording ? "ROLLING" : "stopped");
   const tag = $("rec-tag");
-  tag.textContent = rec.confirmed ? "confirmed" : "no feedback";
-  tag.className = "tag " + (rec.confirmed ? "confirmed" : "unknown");
+  tag.textContent = recLabel;
+  tag.className = "tag " + recClass;
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + rec.position.toFixed(1) + "s" : "";
 

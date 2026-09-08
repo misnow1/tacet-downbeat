@@ -25,6 +25,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from enum import StrEnum
 
 from . import osc
 from .net import Sender, TransportError, UdpSender
@@ -36,14 +37,13 @@ DEFAULT_SEND_PORT = 8000
 #: The port Reaper sends feedback to: its "device port".
 DEFAULT_RECEIVE_PORT = 9000
 
-#: How long a transport reading stays trustworthy.
+#: How long we wait for the `/time` stream before calling the link lost.
 #:
-#: Note that Reaper only feeds back while the transport is *moving* - about
-#: 11 Hz of `/time` while rolling, and a single burst on each transport
-#: change. Parked and stopped it sends nothing at all, so a reading goes
-#: stale within this window whenever Reaper is merely idle. Staleness
-#: therefore means "no longer known", which is not the same as "the link is
-#: gone"; the two are indistinguishable over a write-only silence.
+#: Reaper only feeds back while the transport is *moving* - about 11 Hz of
+#: `/time` while rolling, and a single burst on each transport change. Parked
+#: and stopped it sends nothing at all. So this is not a general staleness
+#: timeout: it only means anything while Reaper should be streaming. See
+#: `Liveness`.
 DEFAULT_FEEDBACK_TIMEOUT = 2.0
 
 _ACTION_PREFIX = "/action"
@@ -68,6 +68,31 @@ class AddressMap:
 DEFAULT_ADDRESSES = AddressMap()
 
 
+class Liveness(StrEnum):
+    """What silence from Reaper means right now.
+
+    Reaper's OSC feedback is edge-driven: it streams `/time` while the
+    transport moves, sends one burst per transport change, and is otherwise
+    completely silent. There is no heartbeat and no way to ask - probing
+    `/device/track/count` draws a reply only when the value actually changes,
+    so it cannot be used as a ping (measured 2026-09-08).
+
+    That makes a single "is it fresh" flag wrong in both directions. Silence
+    while Reaper should be streaming is a fault; the same silence while it sits
+    parked is just Reaper sitting parked. Interpreting the second as a fault is
+    what made the UI cry wolf through the whole pre-game window.
+    """
+
+    #: Reaper has never said anything, or has never said what it was doing.
+    UNKNOWN = "unknown"
+    #: Heard from within the timeout. The reading is current.
+    LIVE = "live"
+    #: Silent, but the last thing it said was that it had stopped. Expected.
+    QUIET = "quiet"
+    #: Silent while it should have been streaming `/time`. The link is gone.
+    LOST = "lost"
+
+
 @dataclass(frozen=True)
 class TransportState:
     """What Reaper last told us.
@@ -84,10 +109,33 @@ class TransportState:
     last_packet: float | None = None
 
     def is_fresh(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
-        """Whether this reading can still be believed."""
+        """Whether Reaper has spoken within the timeout.
+
+        Says nothing about whether the link is healthy: Reaper is silent
+        whenever it is parked. Use `liveness` to tell those apart.
+        """
         if self.last_packet is None:
             return False
         return (now - self.last_packet) <= timeout
+
+    def liveness(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> Liveness:
+        """Read silence in the light of what Reaper was last doing.
+
+        The safety property: QUIET is only reachable when the last thing heard
+        was that the transport had stopped, so believing a stale reading can
+        only ever under-claim. A recorder that dies while parked keeps
+        rendering as "stopped", which remains true. Nothing here can render a
+        dead recorder as rolling - that path is LOST.
+        """
+        if self.last_packet is None:
+            return Liveness.UNKNOWN
+        if (now - self.last_packet) <= timeout:
+            return Liveness.LIVE
+        if self.playing or self.recording:
+            return Liveness.LOST
+        if self.playing is None and self.recording is None:
+            return Liveness.UNKNOWN
+        return Liveness.QUIET
 
 
 def _as_bool(value: object) -> bool | None:

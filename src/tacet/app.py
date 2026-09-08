@@ -25,7 +25,7 @@ from typing import Any
 from . import annotations as ann
 from . import dm7, state
 from .net import TransportError
-from .reaper import ReaperClient
+from .reaper import Liveness, ReaperClient
 
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
@@ -186,7 +186,11 @@ class App:
 
     def snapshot(self) -> dict[str, Any]:
         transport = self._recorder.state if self._recorder is not None else None
-        fresh = transport.is_fresh(self._monotonic()) if transport is not None else False
+        liveness = transport.liveness(self._monotonic()) if transport is not None else Liveness.UNKNOWN
+        # QUIET is silence from a Reaper that told us it had stopped, which is
+        # all Reaper ever does when parked. Believing it is safe: that reading
+        # can only under-claim, never show a dead recorder as rolling.
+        believed = liveness in (Liveness.LIVE, Liveness.QUIET)
         return {
             "state": self.machine.state.value,
             "why": state.describe(self.machine),
@@ -201,10 +205,11 @@ class App:
                 "error": self._console.last_error,
             },
             "recording": {
-                "known": fresh and transport is not None and transport.recording is not None,
+                "known": believed and transport is not None and transport.recording is not None,
                 "recording": bool(transport.recording) if transport is not None else False,
                 "position": transport.position if transport is not None else None,
-                "confirmed": fresh,
+                "confirmed": believed,
+                "liveness": liveness.value,
                 "healthy": self._recorder.healthy if self._recorder is not None else True,
             },
             "buttons": [
