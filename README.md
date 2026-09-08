@@ -1,5 +1,7 @@
 # tacet-downbeat
 
+[![CI](https://github.com/misnow1/tacet-downbeat/actions/workflows/ci.yml/badge.svg)](https://github.com/misnow1/tacet-downbeat/actions/workflows/ci.yml)
+
 Automates the marching band microphone DCA on a Yamaha DM7C during home football
 games. The band mics feed a PA separate from the main stadium PA and are
 currently ridden by hand from an iPad.
