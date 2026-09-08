@@ -100,6 +100,36 @@ Reaper's console shows what the script is doing.
 Worth reporting: whether it runs at all, whether markers land near the right
 place, and whether the region gets created.
 
+### 3. First run of the UI
+
+Never opened in a browser. The Python behind it has 202 tests and an end-to-end
+smoke test against a dead console, but nothing has exercised the DOM, so treat
+the page itself as unproven.
+
+```
+tacet-serve --console-host 127.0.0.1 --dca 3 \
+    --log /tmp/tacet/game.jsonl --queue /tmp/tacet/queue.tsv \
+    --reaper-host 127.0.0.1 --listen 127.0.0.1 --http-port 8080
+```
+
+Pointing `--console-host` at loopback is deliberate for a first run: UDP goes
+nowhere and nothing moves a real fader. Open `http://127.0.0.1:8080` on the
+laptop, then on the iPad against the machine's real address.
+
+Worth checking:
+
+- Buttons are big enough to hit without looking. They are sized for that and
+  have never been near a real tablet.
+- The fader reads **commanded** and recording reads **confirmed** or
+  **no feedback**, visibly differently. If those two ever look alike, that is a
+  bug, not a style question — see design.md §5.5.
+- Killing the server shows the disconnected banner, and restarting it
+  reconnects on its own.
+- With Reaper running and its OSC device on, recording state should go from
+  unknown to confirmed. That also double-checks the address map from step 1.
+- Span buttons (quarters, halftime exodus) should highlight while open and
+  clear when tapped again.
+
 ## Session B — press box with the DM7
 
 ```
@@ -121,7 +151,10 @@ The console IP is the one under Setup → Network → For Mixer Control. Port 49
 
 1. Reaper's actual OSC addresses for record, play and position.
 2. Whether the Lua mirror runs, and what it got wrong.
-3. The granularity answer, if the press box happened.
+3. Whether the UI is usable on an iPad, and whether commanded and confirmed
+   read as clearly different.
+4. The granularity answer, if the press box happened.
 
-With 1 and 3 the remaining guesses in the codebase are gone, and the state
-machine and web UI can be built against facts.
+With those, every remaining guess in the codebase is gone. Phase 0 is
+code-complete; what is left is proving it against the three real things it has
+never met — the console, Reaper, and a browser.
