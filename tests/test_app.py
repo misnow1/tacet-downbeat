@@ -188,6 +188,76 @@ class TestFailures(AppTestCase):
         self.assertIn("stood-down", self.keys())
 
 
+class TestFaderButtons(AppTestCase):
+    """The fader buttons move the fader and say why, in one tap.
+
+    The move is recoverable afterwards from the post-DCA reference channel
+    (design.md 9); the reason is not. So the reason is what does the acting,
+    and cannot be the tap that got skipped.
+    """
+
+    async def test_up_on_whistle_opens_the_fader(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(app.snapshot()["fader"]["commanded"], dm7.UNITY)
+
+    async def test_up_on_whistle_also_records_why(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-whistle")
+        self.assertIn("up-whistle", self.keys())
+
+    async def test_the_move_records_the_reason_that_caused_it(self):
+        # The commanded entry carries the button that triggered it, so a log
+        # read back later says why the fader moved, not just that it did.
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-drums")
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+        self.assertEqual(commanded[-1].data["detail"], "up-drums")
+
+    async def test_faded_out_releases(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.annotate("out")
+        self.assertIn(app.machine.state, (state.State.RELEASING, state.State.IDLE))
+        self.assertIn("out", self.keys())
+
+    async def test_an_annotation_with_no_action_leaves_the_fader_alone(self):
+        app = self.build()
+        await app.arm()
+        before = app.snapshot()["fader"]["commanded"]
+        await app.annotate("drumline-cadence")
+        self.assertEqual(app.snapshot()["fader"]["commanded"], before)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+    async def test_a_refused_move_still_records_the_reason(self):
+        """Standing down, a trigger is refused. The operator still heard the
+        whistle, and a log that kept only the accepted taps would misrepresent
+        the night."""
+        app = self.build()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertIn("up-whistle", self.keys())
+        self.assertTrue(app.snapshot()["refusal"])
+
+    async def test_a_refused_move_does_not_move_the_fader(self):
+        app = self.build()
+        await app.annotate("up-whistle")
+        self.assertEqual(app.snapshot()["fader"]["commanded"], dm7.MINUS_INF)
+
+    async def test_the_snapshot_tells_the_page_which_buttons_act(self):
+        app = self.build()
+        buttons = {b["key"]: b["action"] for b in app.snapshot()["buttons"]}
+        self.assertEqual(buttons["up-whistle"], "open")
+        self.assertEqual(buttons["out"], "release")
+        self.assertIsNone(buttons["drumline-cadence"])
+
+
 class TestSnapshot(AppTestCase):
     async def test_the_fader_is_never_reported_as_confirmed(self):
         # The DM7 cannot answer. Rendering commanded as confirmed would be the

@@ -18,12 +18,21 @@ function showRefusal(text) {
   node.style.display = text ? "block" : "none";
 }
 
+// A category is reached in a hurry if tapping something in it moves the fader.
+function actsOnTheFader(items) {
+  return items.some((item) => item.action) ? 1 : 0;
+}
+
 function renderButtons(buttons) {
   const byCategory = {};
   for (const button of buttons) (byCategory[button.category] ||= []).push(button);
   const host = $("buttons");
   host.innerHTML = "";
-  for (const [category, items] of Object.entries(byCategory)) {
+  // Categories that move the fader come first, nearest the big buttons. The
+  // sort is stable, so everything else keeps the vocabulary's own order.
+  const categories = Object.entries(byCategory);
+  categories.sort((a, b) => actsOnTheFader(b[1]) - actsOnTheFader(a[1]));
+  for (const [category, items] of categories) {
     const heading = document.createElement("h2");
     heading.textContent = category;
     const grid = document.createElement("div");
@@ -34,6 +43,7 @@ function renderButtons(buttons) {
       node.dataset.key = item.key;
       node.dataset.kind = item.kind;
       node.dataset.label = item.label;
+      if (item.action) node.dataset.action = item.action;
       node.onclick = () => activate(item, node);
       grid.appendChild(node);
     }

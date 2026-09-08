@@ -279,6 +279,11 @@ margin:4px 0 0}
 /* Spans are a different kind of control from instants and must not look like
    them: one tap of these opens a region and the next one closes it. */
 .grid button[data-kind="span"]{border-style:dashed}
+/* These move the fader as well as recording why, so they must not read as more
+   annotation buttons: the grid is tapped without looking. */
+.grid button[data-action]{border-width:2px;font-weight:700}
+.grid button[data-action="open"]{border-color:var(--open);color:var(--open)}
+.grid button[data-action="release"]{border-color:var(--fade);color:var(--fade)}
 #link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;background:var(--warn);
 display:none}
 </style></head><body>

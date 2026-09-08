@@ -27,6 +27,12 @@ from . import dm7, state
 from .net import TransportError
 from .reaper import Liveness, ReaperClient
 
+#: What an operator button that also moves the fader asks the machine to do.
+_ACTIONS: Mapping[ann.Action, state.Command] = {
+    ann.Action.OPEN: state.Command.TRIGGER,
+    ann.Action.RELEASE: state.Command.RELEASE,
+}
+
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
 STOOD_DOWN = "stood-down"
@@ -154,6 +160,22 @@ class App:
     # -- annotation -------------------------------------------------------
 
     async def annotate(self, event_key: str, *, data: Mapping[str, Any] | None = None) -> ann.Entry:
+        """Record what the operator saw, and act on it when it says to.
+
+        The fader buttons do both. Asking for the move and the reason as two
+        separate taps meant the reason was the one that got dropped when the
+        night got busy - and it is the half nothing else can recover, since
+        design.md 9 reconstructs the moves themselves from the post-DCA
+        reference channel.
+        """
+        event = ann.lookup(event_key)
+        if event.action is not None:
+            # The move goes first. A missed downbeat is unrecoverable and must
+            # not wait behind a log write.
+            await self._command(_ACTIONS[event.action], detail=event_key)
+        # Recorded whatever the machine did with it, including a refusal: the
+        # operator saw what they saw, and a log that only kept the accepted
+        # taps would misrepresent the night.
         entry = self._log.record(event_key, data=data)
         self._notify()
         return entry
@@ -218,6 +240,7 @@ class App:
                     "label": event.label,
                     "category": event.category.value,
                     "kind": event.kind.value,
+                    "action": event.action.value if event.action is not None else None,
                 }
                 for event in ann.BUTTONS
             ],

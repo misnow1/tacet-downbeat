@@ -266,6 +266,54 @@ check(
   "span",
 );
 
+// -- fader buttons --------------------------------------------------------
+
+// These both move the fader and say why. They sit in the same grid as the
+// annotation buttons, which is tapped without looking, so they have to be
+// marked for the styling that tells them apart - and put where they are
+// reached in a hurry.
+const MIXED = [
+  { key: "band-enters-stands", label: "Band enters stands", category: "BAND", kind: "instant" },
+  { key: "q1", label: "Q1", category: "GAME", kind: "span" },
+  { key: "up-whistle", label: "Up on whistle", category: "FDR", kind: "instant", action: "open" },
+  { key: "out", label: "Faded out", category: "FDR", kind: "instant", action: "release" },
+];
+
+function laidOut() {
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, MIXED, []));
+  return created.filter((node) => node.tag === "button");
+}
+
+function headings() {
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, MIXED, []));
+  return created.filter((node) => node.tag === "h2").map((node) => node.textContent);
+}
+
+const laid = laidOut();
+const byKey = new Map(laid.map((node) => [node.dataset.key, node]));
+
+check("an opening button is marked as one", byKey.get("up-whistle").dataset.action, "open");
+check("a releasing button is marked as one", byKey.get("out").dataset.action, "release");
+check(
+  "an annotation button is not marked as acting",
+  byKey.get("band-enters-stands").dataset.action,
+  undefined,
+);
+check(
+  "a span that does not act is not marked as acting",
+  byKey.get("q1").dataset.action,
+  undefined,
+);
+check("the fader category comes first", headings()[0], "FDR");
+check("the rest keep the vocabulary order", headings().slice(1), ["BAND", "GAME"]);
+check(
+  "an acting button is still an instant, not a toggle",
+  byKey.get("up-whistle").textContent,
+  "Up on whistle",
+);
+
 // -- report -----------------------------------------------------------------
 
 console.log(`${checks} checks, ${failures} failures`);

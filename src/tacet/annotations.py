@@ -78,6 +78,19 @@ class Kind(StrEnum):
     SPAN = "span"
 
 
+class Action(StrEnum):
+    """A fader move a button makes as well as recording why it was made.
+
+    Kept here rather than in `state` so the vocabulary stays a vocabulary: this
+    records what the operator meant, and `tacet.app` decides what the machine
+    does about it. Nothing here moves a fader on its own - these fire only when
+    an operator taps them, which is what CLAUDE.md permits in Phase 0.
+    """
+
+    OPEN = "open"
+    RELEASE = "release"
+
+
 @dataclass(frozen=True)
 class EventType:
     key: str
@@ -87,10 +100,20 @@ class EventType:
     #: False for events the box writes itself. The operator has a handful of
     #: seconds and a small screen; only what a human taps belongs on it.
     button: bool = True
+    #: Set when tapping this both moves the fader and says why. None means the
+    #: event only records.
+    action: Action | None = None
 
 
-def _instant(key: str, label: str, category: Category, *, button: bool = True) -> EventType:
-    return EventType(key, label, category, Kind.INSTANT, button=button)
+def _instant(
+    key: str,
+    label: str,
+    category: Category,
+    *,
+    button: bool = True,
+    action: Action | None = None,
+) -> EventType:
+    return EventType(key, label, category, Kind.INSTANT, button=button, action=action)
 
 
 def _span(key: str, label: str, category: Category, *, button: bool = True) -> EventType:
@@ -139,13 +162,19 @@ VOCABULARY: tuple[EventType, ...] = (
     # unclassified timeout beats one that went unmarked while they decided.
     # Also the key old logs already carry.
     _span("timeout", "Timeout: unspecified", Category.GAME),
-    # Fader moves. `commanded` is written by the box itself; the rest are the
-    # operator saying why.
+    # Fader moves. `commanded` is written by the box itself; the rest both move
+    # the fader and say why, in one tap.
+    #
+    # Splitting those cost two taps for one event, and the reason is the half
+    # that cannot be recovered afterwards: design.md 9 gets the moves themselves
+    # back from the post-DCA reference channel, but nothing gets back why. A
+    # reason that depends on the operator finding a second button is a reason
+    # that goes missing on a busy night, and Phase 1 exists to collect it.
     _instant("commanded", "Fader commanded", Category.FADER, button=False),
-    _instant("up-whistle", "Up on whistle", Category.FADER),
-    _instant("up-drums", "Up on drums", Category.FADER),
-    _instant("up-slow", "Up slow, missed the start", Category.FADER),
-    _instant("out", "Faded out", Category.FADER),
+    _instant("up-whistle", "Up on whistle", Category.FADER, action=Action.OPEN),
+    _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
+    _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN),
+    _instant("out", "Faded out", Category.FADER, action=Action.RELEASE),
     # Detector was wrong. Useful long before a detector exists, because the
     # operator can mark what one would have got wrong.
     _instant("false-open", "Detector wrong: false open", Category.DETECTOR),
