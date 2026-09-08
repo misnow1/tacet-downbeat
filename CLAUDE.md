@@ -144,6 +144,47 @@ Phase 1 captures four aligned streams, all on a common clock:
 Assume a scrubbable review timeline will eventually exist. Build capture so it
 stays possible.
 
+## Python standards
+
+Non-negotiable, same status as the hard constraints above.
+
+- **Zero runtime dependencies.** `pyproject.toml` declares `dependencies = []`
+  and it stays that way. OSC is hand-rolled in `tacet.osc` for exactly this
+  reason. Dev tooling (ruff, mypy, pytest, pre-commit) never ships. Ask before
+  adding either kind.
+- **Everything is type-annotated** and `mypy` runs strict. Annotations without a
+  checker are decoration.
+- **ruff must be clean** — lint and format both.
+- **Tests are required**, and preferably written first. Constraints that matter
+  get asserted directly: `test_every_packet_of_a_full_cycle_is_a_fader_level_write`
+  is what actually enforces faders-only, not a comment.
+- **No magic numbers or strings.** Named constants or configuration. Derive
+  related values from one another (`LEVEL_MAX = 10 * UNITS_PER_DB`) and pin the
+  spec's printed numbers in a test.
+- **Small functions, and a pure core with a thin I/O shell.** `ramp_steps` is a
+  pure generator of `(offset, level)` pairs and the async driver just executes
+  them, so ramp shape is testable with no socket and no clock. Prefer that shape.
+- **Inject collaborators** behind a Protocol rather than reaching for a socket
+  inside a class. See `dm7.Sender`.
+- ASCII only in source. A docstring containing a typographic minus is a trap for
+  anyone who copy-pastes a level out of it.
+
+### Layout and commands
+
+`src/` layout; the package is `src/tacet/`. Python 3.11+, developed on 3.12
+(`.python-version`), venv at `.venv`.
+
+```
+make install    # venv + dev tooling
+make hooks      # install pre-commit
+make check      # lint + typecheck + test, exactly what CI runs
+make fmt        # fix what ruff can fix
+```
+
+Pre-commit runs lint and formatting only — a hook that takes a minute stops
+getting used. CI (`.github/workflows/ci.yml`) runs the full suite on Linux and
+macOS and is what gates a merge.
+
 ## Working notes
 
 - Prefer offline replay over live testing. There are a limited number of home

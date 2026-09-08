@@ -1,32 +1,44 @@
 import asyncio
 import unittest
+from typing import Any, cast
 
 from tacet import dm7, osc
 
 
 class FakeSender:
-    def __init__(self):
-        self.packets = []
+    """Records packets instead of opening a socket."""
 
-    def send(self, packet):
+    def __init__(self) -> None:
+        self.packets: list[bytes] = []
+
+    def send(self, packet: bytes) -> None:
         self.packets.append(packet)
 
-    def messages(self):
-        return [osc.decode_packet(p) for p in self.packets]
+    def messages(self) -> list[osc.Message]:
+        decoded = [osc.decode_packet(p) for p in self.packets]
+        assert all(isinstance(m, osc.Message) for m in decoded)
+        return cast("list[osc.Message]", decoded)
 
-    def levels(self):
-        return [m.args[0] for m in self.messages()]
+    def levels(self) -> list[int]:
+        return [cast("int", m.args[0]) for m in self.messages()]
 
 
 class FailingSender:
-    def send(self, packet):
+    def send(self, packet: bytes) -> None:
         raise dm7.Dm7Error("network unreachable")
 
 
-def client(**kwargs):
-    kwargs.setdefault("sender", FakeSender())
+def client(**kwargs: Any) -> tuple[dm7.Dm7Client, FakeSender]:
+    sender: FakeSender = kwargs.setdefault("sender", FakeSender())
     kwargs.setdefault("tick_hz", 100.0)
-    return dm7.Dm7Client("192.0.2.1", dca=3, **kwargs), kwargs["sender"]
+    return dm7.Dm7Client(UNREACHABLE_HOST, dca=3, **kwargs), sender
+
+
+#: Asserted as a literal on purpose. These strings are the wire format; if a
+#: refactor of the address constants changes them, that is a breaking change and
+#: these tests are the alarm.
+DCA_3_LEVEL_ADDRESS = "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3"
+UNREACHABLE_HOST = "192.0.2.1"  # TEST-NET-1, guaranteed not to route
 
 
 class TestLevelHelpers(unittest.TestCase):
@@ -40,6 +52,16 @@ class TestLevelHelpers(unittest.TestCase):
         self.assertEqual(dm7.to_db(-2000), -20.0)
         self.assertEqual(dm7.to_db(1000), 10.0)
         self.assertEqual(dm7.to_db(dm7.MINUS_INF), float("-inf"))
+
+    def test_derived_constants_match_the_spec_values(self):
+        # These are computed from UNITS_PER_DB now, so pin the numbers the spec
+        # actually prints: min -32768, max 1000, scaling 100.
+        self.assertEqual(dm7.UNITS_PER_DB, 100)
+        self.assertEqual(dm7.LEVEL_MIN, -32768)
+        self.assertEqual(dm7.LEVEL_MAX, 1000)
+        self.assertEqual(dm7.DEFAULT_FADE_FLOOR, -6000)
+        self.assertEqual(dm7.MINUS_INF, -32768)
+        self.assertEqual(dm7.UNITY, 0)
 
     def test_table_1_is_the_43_values_from_the_spec(self):
         self.assertEqual(len(dm7.TABLE_1), 43)
@@ -62,7 +84,7 @@ class TestLevelHelpers(unittest.TestCase):
 
 
 class TestRampSteps(unittest.TestCase):
-    def steps(self, *args, **kwargs):
+    def steps(self, *args: Any, **kwargs: Any) -> list[tuple[float, int]]:
         return list(dm7.ramp_steps(*args, **kwargs))
 
     def test_reaches_the_target(self):
@@ -132,10 +154,11 @@ class TestSending(unittest.TestCase):
         self.assertEqual(sender.levels(), [dm7.LEVEL_MAX])
 
     def test_a_send_failure_is_raised_and_recorded(self):
-        c = dm7.Dm7Client("192.0.2.1", sender=FailingSender())
+        c = dm7.Dm7Client(UNREACHABLE_HOST, sender=FailingSender())
         with self.assertRaises(dm7.Dm7Error):
             c.send_level(0)
         self.assertFalse(c.healthy)
+        assert c.last_error is not None
         self.assertIn("network unreachable", c.last_error)
 
     def test_recovery_clears_the_fault(self):
@@ -182,9 +205,7 @@ class TestMoves(unittest.IsolatedAsyncioTestCase):
         await c.fade_out(seconds=0.05)
         self.assertGreater(len(sender.packets), 3)
         for message in sender.messages():
-            self.assertEqual(
-                message.address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3"
-            )
+            self.assertEqual(message.address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3")
             self.assertEqual(len(message.args), 1)
             self.assertIsInstance(message.args[0], int)
 

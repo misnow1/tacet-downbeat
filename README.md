@@ -34,9 +34,26 @@ slapback and drags the band's tempo.
 ## Layout
 
 ```
-docs/design.md   the design document — read this first
-audio/           multitrack sources for offline analysis (gitignored)
+docs/design.md      the design document — read this first
+docs/vendors/       vendor specs (Yamaha DM7 OSC, plus a text extraction)
+src/tacet/          the box: OSC codec, DM7 fader client
+tests/
+audio/              multitrack sources for offline analysis (gitignored)
 ```
+
+## Development
+
+Python 3.11+, no runtime dependencies. `src/` layout, package `tacet`.
+
+```
+make install    # create .venv and install the dev tooling
+make hooks      # install the pre-commit hooks
+make check      # lint, type check, test - what CI runs
+```
+
+Everything is type-annotated and checked with `mypy --strict`; `ruff` handles
+lint and formatting. Pre-commit runs the fast checks; CI runs the full suite on
+Linux and macOS.
 
 ## Data
 

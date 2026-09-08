@@ -4,6 +4,18 @@ import unittest
 from tacet import osc
 
 
+def as_message(packet: bytes) -> osc.Message:
+    decoded = osc.decode_packet(packet)
+    assert isinstance(decoded, osc.Message), f"expected a message, got {decoded!r}"
+    return decoded
+
+
+def as_bundle(packet: bytes) -> osc.Bundle:
+    decoded = osc.decode_packet(packet)
+    assert isinstance(decoded, osc.Bundle), f"expected a bundle, got {decoded!r}"
+    return decoded
+
+
 class TestEncodeString(unittest.TestCase):
     def test_padding_rounds_up_to_four_including_the_terminator(self):
         # A 3-char string plus its null exactly fills four bytes: no extra pad.
@@ -29,12 +41,10 @@ class TestEncodeMessage(unittest.TestCase):
 
     def test_dm7_fader_command(self):
         # The command this project actually sends. -2000 is -20.00 dB.
-        packet = osc.encode_message(
-            "/yosc:req/set/MIXER:Current/DCA/Fader/Level/2", -2000, tags="i"
-        )
-        address, args = osc.decode_packet(packet)
-        self.assertEqual(address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/2")
-        self.assertEqual(args, (-2000,))
+        packet = osc.encode_message("/yosc:req/set/MIXER:Current/DCA/Fader/Level/2", -2000, tags="i")
+        message = as_message(packet)
+        self.assertEqual(message.address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/2")
+        self.assertEqual(message.args, (-2000,))
         self.assertIn(b",i\x00\x00", packet)
 
     def test_bool_encodes_as_a_payloadless_tag_not_an_int(self):
@@ -65,43 +75,45 @@ class TestEncodeMessage(unittest.TestCase):
 
 class TestRoundTrip(unittest.TestCase):
     def test_mixed_argument_types_survive(self):
-        packet = osc.encode_message("/mix", 1, 2.5, "three", b"\x04\x05")
-        address, args = osc.decode_packet(packet)
-        self.assertEqual(address, "/mix")
-        self.assertEqual(args[0], 1)
-        self.assertAlmostEqual(args[1], 2.5)
-        self.assertEqual(args[2], "three")
-        self.assertEqual(args[3], b"\x04\x05")
+        message = as_message(osc.encode_message("/mix", 1, 2.5, "three", b"\x04\x05"))
+        self.assertEqual(message.address, "/mix")
+        self.assertEqual(message.args[0], 1)
+        self.assertAlmostEqual(float(message.args[1]), 2.5)
+        self.assertEqual(message.args[2], "three")
+        self.assertEqual(message.args[3], b"\x04\x05")
 
     def test_no_argument_message(self):
-        self.assertEqual(osc.decode_packet(osc.encode_message("/go")), ("/go", ()))
+        self.assertEqual(as_message(osc.encode_message("/go")), ("/go", ()))
 
     def test_blob_lengths_that_need_padding(self):
         for n in range(0, 9):
             packet = osc.encode_message("/b", bytes(range(n)))
             self.assertEqual(len(packet) % 4, 0, f"blob of {n} bytes misaligned")
-            self.assertEqual(osc.decode_packet(packet).args[0], bytes(range(n)))
+            self.assertEqual(as_message(packet).args[0], bytes(range(n)))
 
     def test_string_arguments_of_every_alignment(self):
         for n in range(0, 9):
             packet = osc.encode_message("/s", "x" * n)
-            self.assertEqual(osc.decode_packet(packet).args[0], "x" * n)
+            self.assertEqual(as_message(packet).args[0], "x" * n)
 
 
 class TestBundles(unittest.TestCase):
     def test_round_trip(self):
         inner = [osc.encode_message("/one", 1), osc.encode_message("/two", 2.0)]
-        decoded = osc.decode_packet(osc.encode_bundle(inner))
-        self.assertIsInstance(decoded, osc.Bundle)
+        decoded = as_bundle(osc.encode_bundle(inner))
         self.assertEqual(decoded.timetag, osc.IMMEDIATELY)
         self.assertEqual(decoded.elements[0], ("/one", (1,)))
-        self.assertEqual(decoded.elements[1].address, "/two")
+        second = decoded.elements[1]
+        assert isinstance(second, osc.Message)
+        self.assertEqual(second.address, "/two")
 
     def test_nested_bundles(self):
         # Reaper nests; make sure recursion terminates on the right thing.
         inner = osc.encode_bundle([osc.encode_message("/deep", 9)])
-        decoded = osc.decode_packet(osc.encode_bundle([inner]))
-        self.assertEqual(decoded.elements[0].elements[0], ("/deep", (9,)))
+        decoded = as_bundle(osc.encode_bundle([inner]))
+        nested = decoded.elements[0]
+        assert isinstance(nested, osc.Bundle)
+        self.assertEqual(nested.elements[0], ("/deep", (9,)))
 
     def test_element_size_running_past_the_buffer_is_rejected(self):
         packet = bytearray(osc.encode_bundle([osc.encode_message("/a", 1)]))

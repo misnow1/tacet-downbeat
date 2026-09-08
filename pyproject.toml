@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tacet-downbeat"
+version = "0.1.0"
+description = "Marching band microphone DCA automation for a Yamaha DM7C"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Michael Snow" }]
+
+# Deliberately empty, and intended to stay that way. This runs in a press box on
+# a Saturday with nobody available to fix it; OSC is hand-rolled in tacet.osc
+# rather than taken as a dependency. See CLAUDE.md, "Ask before adding
+# dependencies". Anything below is tooling and never ships.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "pre-commit>=3.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tacet"]
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",    # pycodestyle
+  "F",         # pyflakes
+  "I",         # import sorting
+  "N",         # pep8-naming
+  "UP",        # pyupgrade
+  "B",         # bugbear
+  "C4",        # comprehensions
+  "SIM",       # simplify
+  "RET",       # return consistency
+  "ARG",       # unused arguments
+  "PTH",       # prefer pathlib
+  "TID",       # tidy imports
+  "ANN",       # require annotations
+  "RUF",
+]
+ignore = [
+  "ANN401",  # Any is occasionally the honest annotation
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests document themselves by name; annotating every case adds noise, not safety.
+"tests/**" = ["ANN", "ARG"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[[tool.mypy.overrides]]
+# Test bodies are exercised by running them; strict annotation there buys little.
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+# Tests use unittest.IsolatedAsyncioTestCase rather than pytest-asyncio: it is
+# stdlib, and it keeps async test support out of the dependency churn.
+
+[tool.coverage.run]
+source = ["src/tacet"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
