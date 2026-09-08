@@ -44,7 +44,9 @@ audio/              multitrack sources for offline analysis (gitignored)
 
 ## Development
 
-Python 3.11+, no runtime dependencies. `src/` layout, package `tacet`.
+Python 3.11+, `src/` layout, package `tacet`. The control path that moves the
+fader imports only the standard library, enforced by a test; the web UI takes
+`aiohttp`.
 
 ```
 make install    # create .venv and install the dev tooling

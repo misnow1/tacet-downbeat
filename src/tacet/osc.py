@@ -1,8 +1,9 @@
 """Minimal OSC 1.0 encoding and decoding.
 
-Hand-rolled rather than pulled from PyPI: the wire format is small, and this
-has to run in a press box on a Saturday with nobody available to fix it.
-See CLAUDE.md, "Ask before adding dependencies".
+Hand-rolled rather than pulled from PyPI: the wire format is small, and this is
+on the control path, which imports only the standard library because it is what
+moves the fader with nobody available to fix it. See CLAUDE.md, "Python
+standards"; `tests/test_dependency_policy.py` enforces it.
 
 Covers what this project speaks: int32, float32, string, blob, the no-argument
 types, and bundles (Reaper sends feedback in bundles).

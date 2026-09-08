@@ -114,8 +114,8 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 
 ## Platform
 
-- **Python 3, standard library only** for the Phase 0 box. OSC is hand-rolled;
-  no third-party dependency. Phase 2 shares a process with a numpy/scipy
+- **Python 3.11+.** The control path is standard library only; the UI and
+  tooling may take dependencies. Phase 2 shares a process with a numpy/scipy
   detector, which is why the runtime is Python.
 - Development and Phase 1 capture: **macOS + DVS** (license owned), recorded
   in Reaper.
@@ -148,10 +148,17 @@ stays possible.
 
 Non-negotiable, same status as the hard constraints above.
 
-- **Zero runtime dependencies.** `pyproject.toml` declares `dependencies = []`
-  and it stays that way. OSC is hand-rolled in `tacet.osc` for exactly this
-  reason. Dev tooling (ruff, mypy, pytest, pre-commit) never ships. Ask before
-  adding either kind.
+- **The control path takes no dependencies.** `tacet.osc`, `tacet.net`,
+  `tacet.dm7` and `tacet.state` are what move the fader during a game, and they
+  import nothing but the standard library. That is why OSC is hand-rolled rather
+  than taken from PyPI. `tests/test_dependency_policy.py` enforces this by
+  reading the imports, so it fails rather than drifts. Ask before adding
+  anything here.
+- **Everything else may take dependencies.** The web UI, Reaper integration,
+  capture and offline analysis sit outside the control path, and a mature,
+  pinned library there beats hand-rolling. Dev tooling never ships at all.
+  When the detector arrives it will need numpy and scipy *and* it will move the
+  fader — that tension gets resolved deliberately, not by accident.
 - **Everything is type-annotated** and `mypy` runs strict. Annotations without a
   checker are decoration.
 - **ruff must be clean** — lint and format both.

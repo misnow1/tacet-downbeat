@@ -10,11 +10,16 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Michael Snow" }]
 
-# Deliberately empty, and intended to stay that way. This runs in a press box on
-# a Saturday with nobody available to fix it; OSC is hand-rolled in tacet.osc
-# rather than taken as a dependency. See CLAUDE.md, "Ask before adding
-# dependencies". Anything below is tooling and never ships.
-dependencies = []
+# The control path -- tacet.osc, net, dm7, state -- imports nothing but the
+# standard library. That is the code moving the fader in a press box on a
+# Saturday with nobody available to fix it, and OSC is hand-rolled for exactly
+# that reason. tests/test_dependency_policy.py enforces it.
+#
+# Everything outside the control path may take dependencies: a mature, pinned
+# library beats hand-rolling. See CLAUDE.md, "Python standards".
+dependencies = [
+  "aiohttp>=3.9,<4",  # operator web UI and its live state push
+]
 
 [project.optional-dependencies]
 dev = [

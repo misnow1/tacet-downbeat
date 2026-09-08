@@ -16,7 +16,8 @@ make hooks       # pre-commit
 make check       # should be green before you change anything
 ```
 
-Python 3.11+. Zero runtime dependencies — the venv is for ruff, mypy and pytest.
+Python 3.11+. The control path takes no dependencies; the web UI takes
+`aiohttp`. `make install` handles both, plus the dev tooling.
 
 ## What is built
 

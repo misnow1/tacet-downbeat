@@ -652,10 +652,15 @@ a deliberate widening of the original scope. It pays immediately: it means the
 *first* captured game is annotated even though no detector exists yet, and
 annotation is the one part of ground truth that cannot be reconstructed later.
 
-**Runtime: Python 3, standard library only.** OSC is UDP carrying a simple
-binary encoding and is short enough to implement directly, so Phase 0 adds no
-third-party dependency at all. The choice also anticipates Phase 2, where the
-detector — inevitably numpy/scipy — has to share a process with fader control.
+**Runtime: Python 3.11+.** The choice anticipates Phase 2, where the detector —
+inevitably numpy/scipy — has to share a process with fader control.
+
+Dependencies are tiered. The **control path** — the OSC codec, the console
+client and the state machine — imports only the standard library, because that
+is what moves the fader with nobody available to fix it; OSC is UDP carrying a
+simple binary encoding and is short enough to implement directly. Everything
+outside that path, the web UI included, may take a mature pinned library rather
+than hand-rolling. A test reads the imports and enforces the split.
 
 ### Phase 1 — Shadow mode
 
