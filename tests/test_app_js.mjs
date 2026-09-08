@@ -133,26 +133,51 @@ check("timecode: carries across an hour", timecode(3599.9999), "1:00:00.000");
 // Reaper is silent whenever it is parked, so silence alone is not a fault.
 // These four have to stay tellable apart; see design.md 5.5.
 const TAGS = {
-  live: ["confirmed", "tag confirmed"],
-  quiet: ["confirmed (idle)", "tag confirmed"],
-  lost: ["LINK LOST", "tag unknown"],
-  unknown: ["no feedback", "tag unknown"],
+  live: { known: true, label: "confirmed", className: "tag confirmed" },
+  quiet: { known: true, label: "confirmed (idle)", className: "tag confirmed" },
+  lost: { known: false, label: "LINK LOST", className: "tag unknown" },
+  unknown: { known: false, label: "no feedback", className: "tag unknown" },
 };
 
-for (const [liveness, [label, className]] of Object.entries(TAGS)) {
-  const nodes = rendered({ liveness, known: true, confirmed: true, position: 1.5 });
-  check(`${liveness}: tag label`, nodes.get("rec-tag").textContent, label);
-  check(`${liveness}: tag class`, nodes.get("rec-tag").className, className);
+for (const [liveness, want] of Object.entries(TAGS)) {
+  const nodes = rendered({ liveness, known: want.known, confirmed: true, position: 1.5 });
+  check(`${liveness}: tag label`, nodes.get("rec-tag").textContent, want.label);
+  check(`${liveness}: tag class`, nodes.get("rec-tag").className, want.className);
+}
+
+// A live link and an unknown record state are not a contradiction: Reaper
+// announces /record only when it changes, so a box that started after the last
+// change has heard /time and nothing about recording. The tag has to describe
+// the value, not the link, or this reads as "I do not know, and I am sure".
+for (const liveness of ["live", "quiet"]) {
+  const nodes = rendered({ liveness, known: false, confirmed: true });
+  check(`${liveness} with no record state: value`, nodes.get("rec").textContent, "unknown");
+  check(`${liveness} with no record state: label`, nodes.get("rec-tag").textContent, "not yet reported");
+  check(`${liveness} with no record state: class`, nodes.get("rec-tag").className, "tag unknown");
+}
+
+// The invariant behind all of it.
+for (const liveness of Object.keys(TAGS)) {
+  for (const known of [true, false]) {
+    const nodes = rendered({ liveness, known, confirmed: true });
+    if (nodes.get("rec").textContent === "unknown") {
+      check(
+        `${liveness}/known=${known}: an unknown value is never tagged confirmed`,
+        nodes.get("rec-tag").className.includes("confirmed"),
+        false,
+      );
+    }
+  }
 }
 
 check(
   "every liveness gets its own label",
-  new Set(Object.values(TAGS).map(([label]) => label)).size,
+  new Set(Object.values(TAGS).map((want) => want.label)).size,
   Object.keys(TAGS).length,
 );
 
 for (const liveness of Object.keys(TAGS)) {
-  const nodes = rendered({ liveness, known: true, confirmed: true });
+  const nodes = rendered({ liveness, known: TAGS[liveness].known, confirmed: true });
   // Recording is confirmed and the fader is only ever commanded. If the
   // recording tag ever borrows the commanded styling the two stop being
   // tellable apart, which design.md 5.5 forbids.

@@ -88,6 +88,23 @@ function timecode(seconds) {
   return sign + h + ":" + pad(m, 2) + ":" + pad(s, 2) + "." + pad(ms, 3);
 }
 
+// How much to trust the recording line above it - which is about the value, not
+// about the link. Those come apart: Reaper announces /record only when it
+// changes, so a box that started after the last change has a perfectly live
+// link and still no idea whether Reaper is rolling. Tagging that "confirmed"
+// because the link was up read as a contradiction, and painted a reassuring
+// colour over something unknown.
+//
+// Reaper is also silent whenever it is parked, so silence alone is not a fault:
+// "quiet" is a believed reading from a stopped Reaper, while "lost" is silence
+// where the /time stream should have been, and only that one is.
+function recordingTag(liveness, known) {
+  if (liveness === "lost") return ["unknown", "LINK LOST"];
+  if (liveness === "unknown") return ["unknown", "no feedback"];
+  if (!known) return ["unknown", "not yet reported"];
+  return ["confirmed", liveness === "quiet" ? "confirmed (idle)" : "confirmed"];
+}
+
 function render(next) {
   if (!next) return;
   snapshot = next;
@@ -99,17 +116,8 @@ function render(next) {
   $("level").textContent = fader.db === null ? "-\u221E dB" : fader.db.toFixed(2) + " dB";
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
 
-  // Reaper is silent whenever it is parked, so silence alone is not a fault.
-  // "quiet" is a believed reading from a stopped Reaper; "lost" is silence
-  // where the /time stream should have been, and that one is a fault.
   const rec = next.recording;
-  const REC_TAG = {
-    live: ["confirmed", "confirmed"],
-    quiet: ["confirmed", "confirmed (idle)"],
-    lost: ["unknown", "LINK LOST"],
-    unknown: ["unknown", "no feedback"],
-  };
-  const [recClass, recLabel] = REC_TAG[rec.liveness] || REC_TAG.unknown;
+  const [recClass, recLabel] = recordingTag(rec.liveness, rec.known);
   $("rec").textContent = !rec.known ? "unknown" : (rec.recording ? "ROLLING" : "stopped");
   const tag = $("rec-tag");
   tag.textContent = recLabel;
