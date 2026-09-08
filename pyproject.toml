@@ -31,6 +31,7 @@ dev = [
 ]
 
 [project.scripts]
+tacet-serve = "tacet.serve:main"
 tacet-verify-reaper = "tacet.verify_reaper:main"
 tacet-verify-dm7 = "tacet.verify_dm7:main"
 

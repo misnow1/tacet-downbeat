@@ -84,23 +84,28 @@ class EventType:
     label: str
     category: Category
     kind: Kind = Kind.INSTANT
+    #: False for events the box writes itself. The operator has a handful of
+    #: seconds and a small screen; only what a human taps belongs on it.
+    button: bool = True
 
 
-def _instant(key: str, label: str, category: Category) -> EventType:
-    return EventType(key, label, category, Kind.INSTANT)
+def _instant(key: str, label: str, category: Category, *, button: bool = True) -> EventType:
+    return EventType(key, label, category, Kind.INSTANT, button=button)
 
 
-def _span(key: str, label: str, category: Category) -> EventType:
-    return EventType(key, label, category, Kind.SPAN)
+def _span(key: str, label: str, category: Category, *, button: bool = True) -> EventType:
+    return EventType(key, label, category, Kind.SPAN, button=button)
 
 
 #: The event vocabulary. Extend it freely - unknown-unknowns are the point
 #: (design.md 5.6). Keys are stable and machine-facing; labels are what the
 #: operator sees on a button and may be reworded without breaking old logs.
 VOCABULARY: tuple[EventType, ...] = (
-    # Session
-    _instant("recording-started", "Recording started", Category.SESSION),
-    _instant("recording-stopped", "Recording stopped", Category.SESSION),
+    # Session. Written by the box, not tapped by anyone.
+    _instant("recording-started", "Recording started", Category.SESSION, button=False),
+    _instant("recording-stopped", "Recording stopped", Category.SESSION, button=False),
+    _instant("armed", "Armed", Category.SESSION, button=False),
+    _instant("stood-down", "Stood down", Category.SESSION, button=False),
     # Band, from design.md 5.6
     _instant("band-enters-stadium", "Band enters stadium", Category.BAND),
     _instant("band-enters-stands", "Band enters stands", Category.BAND),
@@ -123,7 +128,7 @@ VOCABULARY: tuple[EventType, ...] = (
     _span("timeout", "Timeout", Category.GAME),
     # Fader moves. `commanded` is written by the box itself; the rest are the
     # operator saying why.
-    _instant("commanded", "Fader commanded", Category.FADER),
+    _instant("commanded", "Fader commanded", Category.FADER, button=False),
     _instant("up-whistle", "Up on whistle", Category.FADER),
     _instant("up-drums", "Up on drums", Category.FADER),
     _instant("up-slow", "Up slow, missed the start", Category.FADER),
@@ -137,6 +142,9 @@ VOCABULARY: tuple[EventType, ...] = (
 )
 
 EVENTS: Mapping[str, EventType] = {event.key: event for event in VOCABULARY}
+
+#: What the operator UI offers. Two taps is the budget (design.md 5.6).
+BUTTONS: tuple[EventType, ...] = tuple(e for e in VOCABULARY if e.button)
 
 
 def lookup(key: str) -> EventType:

@@ -298,6 +298,9 @@ RTD is used as **context, not interlock**:
 A **web UI** served from the box over the control VLAN. Works on the iPad,
 phone, or laptop; nothing to install, nothing extra to maintain.
 
+Implemented in `tacet.web`, with the logic in `tacet.app` so the operator flow
+is testable without a server. Run it with `tacet-serve`.
+
 Minimum during-game requirements:
 
 - Current DCA level as **last commanded by the box**, labelled as commanded

@@ -1,0 +1,347 @@
+"""The operator UI: a thin aiohttp shell over `tacet.app`.
+
+Everything that decides anything lives in `tacet.app`; this module turns HTTP
+into method calls and pushes snapshots down a websocket. Keeping it thin is what
+lets the operator flow be tested without a server.
+
+The page is served as one self-contained string. It fetches nothing off the
+network: the control VLAN has no route to the internet, and a game is not the
+time to discover that a CDN was a single point of failure. A test asserts it.
+
+There is no stop route, and a test asserts that too (design.md 5.9).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+from typing import Any
+
+from aiohttp import WSMsgType, web
+
+from . import annotations as ann
+from .app import App
+
+
+class _Hub:
+    """Holds the app and the connected browsers, and pushes snapshots at them."""
+
+    def __init__(self, app: App) -> None:
+        self.app = app
+        self.sockets: list[web.WebSocketResponse] = []
+        self._pending: set[asyncio.Task[None]] = set()
+
+    def broadcast(self) -> None:
+        # Fire and forget: a slow or wedged browser must never stall a fader
+        # move. Tasks are held until done so they are not collected mid-send.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        payload = json.dumps(self.app.snapshot())
+        for socket in list(self.sockets):
+            if socket.closed:
+                continue
+            task = loop.create_task(_send(socket, payload))
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+
+
+_HUB = web.AppKey("tacet_hub", _Hub)
+
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8080
+
+
+async def _index(_request: web.Request) -> web.Response:
+    return web.Response(text=PAGE, content_type="text/html")
+
+
+async def _state(request: web.Request) -> web.Response:
+    return web.json_response(request.app[_HUB].app.snapshot())
+
+
+def _command_route(name: str) -> Any:
+    async def handler(request: web.Request) -> web.Response:
+        app = request.app[_HUB].app
+        await getattr(app, name)()
+        return web.json_response(app.snapshot())
+
+    return handler
+
+
+async def _record(request: web.Request) -> web.Response:
+    app = request.app[_HUB].app
+    await app.start_recording()
+    return web.json_response(app.snapshot())
+
+
+async def _body(request: web.Request) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": f"malformed JSON: {exc}"}),
+            content_type="application/json",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "expected a JSON object"}),
+            content_type="application/json",
+        )
+    return payload
+
+
+def _bad_request(message: str) -> web.HTTPBadRequest:
+    return web.HTTPBadRequest(text=json.dumps({"error": message}), content_type="application/json")
+
+
+async def _annotate(request: web.Request) -> web.Response:
+    app = request.app[_HUB].app
+    payload = await _body(request)
+    key = payload.get("key")
+    if not isinstance(key, str):
+        raise _bad_request("'key' is required")
+    try:
+        entry = await app.annotate(key, data=payload.get("data"))
+    except ann.AnnotationError as exc:
+        raise _bad_request(str(exc)) from exc
+    return web.json_response({"entry": entry.as_dict(), "state": app.snapshot()})
+
+
+async def _span_start(request: web.Request) -> web.Response:
+    app = request.app[_HUB].app
+    payload = await _body(request)
+    key = payload.get("key")
+    if not isinstance(key, str):
+        raise _bad_request("'key' is required")
+    try:
+        span_id = await app.start_span(key)
+    except ann.AnnotationError as exc:
+        raise _bad_request(str(exc)) from exc
+    return web.json_response({"span_id": span_id, "state": app.snapshot()})
+
+
+async def _span_end(request: web.Request) -> web.Response:
+    app = request.app[_HUB].app
+    payload = await _body(request)
+    span_id = payload.get("span_id")
+    if not isinstance(span_id, str):
+        raise _bad_request("'span_id' is required")
+    try:
+        await app.end_span(span_id)
+    except ann.AnnotationError as exc:
+        raise _bad_request(str(exc)) from exc
+    return web.json_response({"state": app.snapshot()})
+
+
+async def _websocket(request: web.Request) -> web.WebSocketResponse:
+    socket = web.WebSocketResponse(heartbeat=10.0)
+    await socket.prepare(request)
+    hub = request.app[_HUB]
+    hub.sockets.append(socket)
+    try:
+        await socket.send_str(json.dumps(hub.app.snapshot()))
+        async for message in socket:
+            if message.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
+                break
+    finally:
+        if socket in hub.sockets:
+            hub.sockets.remove(socket)
+    return socket
+
+
+async def _send(socket: web.WebSocketResponse, payload: str) -> None:
+    """A browser that has gone away is not an error worth raising."""
+    with contextlib.suppress(ConnectionResetError, RuntimeError):
+        await socket.send_str(payload)
+
+
+def create_app(app: App) -> web.Application:
+    server = web.Application()
+    hub = _Hub(app)
+    server[_HUB] = hub
+    app.on_change(hub.broadcast)
+
+    server.add_routes(
+        [
+            web.get("/", _index),
+            web.get("/api/state", _state),
+            web.post("/api/arm", _command_route("arm")),
+            web.post("/api/stand-down", _command_route("stand_down")),
+            web.post("/api/trigger", _command_route("trigger")),
+            web.post("/api/release", _command_route("release")),
+            web.post("/api/record", _record),
+            web.post("/api/annotate", _annotate),
+            web.post("/api/span/start", _span_start),
+            web.post("/api/span/end", _span_end),
+            web.get("/ws", _websocket),
+        ]
+    )
+    return server
+
+
+PAGE = """<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>tacet-downbeat</title>
+<style>
+:root{--bg:#14161a;--panel:#1e2128;--line:#2c313b;--text:#e8eaed;--dim:#9aa3b0;
+--open:#2e7d32;--fade:#b26a00;--warn:#c62828;--ok:#2e7d32}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+-webkit-text-size-adjust:100%;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{padding:14px 16px;border-bottom:1px solid var(--line)}
+#state{font-size:26px;font-weight:700;letter-spacing:.02em}
+#why{color:var(--dim);margin-top:4px}
+#refusal{color:#ffb4a9;margin-top:6px;display:none}
+main{padding:16px;display:grid;gap:16px;max-width:900px;margin:0 auto}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{font:inherit;font-weight:600;color:var(--text);background:var(--panel);
+border:1px solid var(--line);border-radius:12px;padding:18px 12px;cursor:pointer;
+touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button:active{transform:translateY(1px)}
+button.big{font-size:20px;padding:26px 12px}
+button.open{background:var(--open);border-color:var(--open)}
+button.fade{background:var(--fade);border-color:var(--fade)}
+button.on{outline:2px solid var(--text)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.label{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:99px;
+border:1px solid var(--line);color:var(--dim);margin-left:6px;vertical-align:middle}
+.tag.commanded{border-color:var(--fade);color:#ffca7a}
+.tag.confirmed{border-color:var(--ok);color:#9fd8a2}
+.tag.unknown{border-color:var(--warn);color:#ff9d94}
+h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;
+margin:4px 0 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.grid button{padding:14px 10px;font-size:14px;font-weight:500}
+#link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;background:var(--warn);
+display:none}
+</style></head><body>
+<div id="link">Disconnected from the box &mdash; what you see may be stale</div>
+<header><div id="state">&hellip;</div><div id="why"></div><div id="refusal"></div></header>
+<main>
+  <div class="row">
+    <button class="big open" id="btn-trigger">OPEN</button>
+    <button class="big fade" id="btn-release">FADE OUT</button>
+  </div>
+  <div class="row">
+    <div class="panel"><div class="label">Fader</div>
+      <div class="value"><span id="level">&mdash;</span><span class="tag commanded">commanded</span></div>
+      <div id="fader-error" style="color:#ff9d94;font-size:13px;margin-top:4px"></div></div>
+    <div class="panel"><div class="label">Recording</div>
+      <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
+      <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
+  </div>
+  <div class="row">
+    <button id="btn-arm">Arm</button>
+    <button id="btn-stand-down">Stand down</button>
+  </div>
+  <div class="row"><button id="btn-record">Start recording</button><div></div></div>
+  <div id="buttons"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let snapshot = null;
+
+async function post(path, body) {
+  const options = {method: "POST"};
+  if (body) { options.headers = {"Content-Type": "application/json"};
+              options.body = JSON.stringify(body); }
+  const response = await fetch(path, options);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) { showRefusal((payload && payload.error) || response.statusText); return null; }
+  render(payload.state || payload);
+  return payload;
+}
+
+function showRefusal(text) {
+  const node = $("refusal");
+  node.textContent = text || "";
+  node.style.display = text ? "block" : "none";
+}
+
+function renderButtons(buttons) {
+  const byCategory = {};
+  for (const button of buttons) (byCategory[button.category] ||= []).push(button);
+  const host = $("buttons");
+  host.innerHTML = "";
+  for (const [category, items] of Object.entries(byCategory)) {
+    const heading = document.createElement("h2");
+    heading.textContent = category;
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    for (const item of items) {
+      const node = document.createElement("button");
+      node.textContent = item.label;
+      node.dataset.key = item.key;
+      node.dataset.kind = item.kind;
+      node.onclick = () => activate(item, node);
+      grid.appendChild(node);
+    }
+    host.appendChild(heading); host.appendChild(grid);
+  }
+}
+
+function activate(item, node) {
+  if (item.kind !== "span") {
+    const data = item.key === "note"
+      ? {text: prompt("Note") || ""} : undefined;
+    if (item.key === "note" && !data.text) return;
+    post("/api/annotate", {key: item.key, data});
+    return;
+  }
+  const open = (snapshot.open_spans || []).find(id => id.startsWith(item.key + "-"));
+  if (open) post("/api/span/end", {span_id: open});
+  else post("/api/span/start", {key: item.key});
+}
+
+function render(next) {
+  if (!next) return;
+  snapshot = next;
+  $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
+  $("why").textContent = next.why;
+  showRefusal(next.refusal);
+
+  const fader = next.fader;
+  $("level").textContent = fader.db === null ? "-\\u221E dB" : fader.db.toFixed(2) + " dB";
+  $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
+
+  const rec = next.recording;
+  $("rec").textContent = !rec.confirmed ? "unknown" : (rec.recording ? "ROLLING" : "stopped");
+  const tag = $("rec-tag");
+  tag.textContent = rec.confirmed ? "confirmed" : "no feedback";
+  tag.className = "tag " + (rec.confirmed ? "confirmed" : "unknown");
+  $("rec-pos").textContent =
+    rec.confirmed && rec.position !== null ? "at " + rec.position.toFixed(1) + "s" : "";
+
+  if (!snapshot.buttonsRendered) { renderButtons(next.buttons); snapshot.buttonsRendered = true; }
+  for (const node of document.querySelectorAll("#buttons button")) {
+    const open = (next.open_spans || []).some(id => id.startsWith(node.dataset.key + "-"));
+    node.classList.toggle("on", open);
+  }
+}
+
+$("btn-trigger").onclick = () => post("/api/trigger");
+$("btn-release").onclick = () => post("/api/release");
+$("btn-arm").onclick = () => post("/api/arm");
+$("btn-stand-down").onclick = () => post("/api/stand-down");
+$("btn-record").onclick = () => post("/api/record");
+
+function connect() {
+  const socket = new WebSocket(
+    (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  socket.onopen = () => { $("link").style.display = "none"; };
+  socket.onmessage = event => render(JSON.parse(event.data));
+  socket.onclose = () => { $("link").style.display = "block"; setTimeout(connect, 1000); };
+  socket.onerror = () => socket.close();
+}
+fetch("/api/state").then(r => r.json()).then(render);
+connect();
+</script></body></html>
+"""

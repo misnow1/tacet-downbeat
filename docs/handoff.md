@@ -30,7 +30,10 @@ Python 3.11+. The control path takes no dependencies; the web UI takes
 | `tacet.mirror` | The TSV queue the Lua script tails. |
 | `tacet.reaper` | Transport control and feedback. **OSC addresses are a guess.** |
 | `reaper/tacet_mirror.lua` | Logic tested against a stubbed Reaper API (27 checks, mutation-verified). **Never run inside Reaper.** |
-| State machine, web UI | Not started. |
+| `tacet.state` | The operating state machine. Pure, mutation-tested. |
+| `tacet.app` | Everything wired together, transport-free. |
+| `tacet.web` | aiohttp UI. Smoke-tested end to end against a dead console. |
+| `tacet.serve` | `tacet-serve`, the entry point. |
 
 ## Session A — Mac with Reaper
 
