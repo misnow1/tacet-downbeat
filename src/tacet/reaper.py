@@ -13,10 +13,11 @@ There is no stop. Each home game is a single irreplaceable sample, and a stop
 button does not belong on a screen being tapped by someone watching a field.
 Stopping is done deliberately, in Reaper.
 
-**The addresses below are the stock `Default.ReaperOSC` pattern names and have
-not yet been checked against a live console.** They are configuration rather
-than constants precisely so a mismatch is a config change and not a rewrite;
-verify them against the installed pattern file before a game.
+The addresses below are the stock `Default.ReaperOSC` pattern names, verified
+on 2026-09-08 against Reaper on the development Mac: `/play`, `/record` and
+`/stop` all arrive carrying 1.0 or 0.0, and `/time` carries seconds as a float.
+They remain configuration rather than constants, because the pattern file is
+user-editable; verify them against the installed one before a game.
 """
 
 from __future__ import annotations
@@ -35,8 +36,14 @@ DEFAULT_SEND_PORT = 8000
 #: The port Reaper sends feedback to: its "device port".
 DEFAULT_RECEIVE_PORT = 9000
 
-#: How long a transport reading stays trustworthy. Reaper feeds back
-#: continuously, so silence for longer than this means the link is gone.
+#: How long a transport reading stays trustworthy.
+#:
+#: Note that Reaper only feeds back while the transport is *moving* - about
+#: 11 Hz of `/time` while rolling, and a single burst on each transport
+#: change. Parked and stopped it sends nothing at all, so a reading goes
+#: stale within this window whenever Reaper is merely idle. Staleness
+#: therefore means "no longer known", which is not the same as "the link is
+#: gone"; the two are indistinguishable over a write-only silence.
 DEFAULT_FEEDBACK_TIMEOUT = 2.0
 
 _ACTION_PREFIX = "/action"
@@ -45,7 +52,7 @@ _ACTION_PREFIX = "/action"
 @dataclass(frozen=True)
 class AddressMap:
     """Reaper's OSC addresses. Configuration, not constants: users can edit
-    `Default.ReaperOSC`, and these defaults are unverified."""
+    `Default.ReaperOSC`. These defaults match the stock pattern file."""
 
     play: str = "/play"
     pause: str = "/pause"

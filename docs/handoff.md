@@ -4,7 +4,7 @@ Working state for a session on another machine. Everything else a new session
 needs is already in `CLAUDE.md` and `docs/design.md`, which travel with the repo
 and load automatically.
 
-**Last updated:** 2026-09-08
+**Last updated:** 2026-09-08 (Session A run on the Mac; results below)
 
 ## Getting set up on a fresh machine
 
@@ -41,10 +41,32 @@ Nothing here needs the stadium.
 
 ### 1. Confirm the OSC addresses
 
-`tacet.reaper.AddressMap` holds the stock `Default.ReaperOSC` names *from
-memory*. This is the one assumption that fails silently: UDP is fire-and-forget,
-Reaper ignores paths it does not recognise, and the box would report success
-while doing nothing.
+**Done - `AddressMap` was correct.** Verified 2026-09-08 against Reaper on the
+Mac, both on the wire and end to end through `tacet.app`:
+
+| Address | Observed |
+|---|---|
+| `/play` | `1.0` on roll, `0.0` on stop |
+| `/record` | `1.0` on roll, `0.0` on stop |
+| `/stop` | `1.0` / `0.0`; still never sent by us |
+| `/time` | float seconds, about 11 Hz while rolling |
+
+These match the installed `Default.ReaperOSC` verbatim (`t/play`, `t/record`,
+`t/stop`, `f/time`). Driving the transport moved `/api/state` to
+`{"known": true, "recording": true, "confirmed": true}`.
+
+**Finding: Reaper is silent when the transport is stopped.** Not a slower feed -
+nothing at all, confirmed over a 6 s listen. It sends only while the transport
+moves, plus one burst per transport change. So `is_fresh` lapses 2 s after
+Reaper stops and the UI reads "no feedback" whenever Reaper is merely idle,
+which is exactly the pre-game window where the operator wants reassurance the
+recorder is alive. Honest (idle and dead are genuinely indistinguishable over a
+silent link) but it cries wolf. Unresolved; the docstrings now describe the real
+behaviour.
+
+The original reasoning, kept because it is still why this step existed: UDP is
+fire-and-forget, Reaper ignores paths it does not recognise, and the box would
+report success while doing nothing.
 
 In Reaper: Preferences → Control/OSC/web → add or open the OSC device. Note its
 **listen port** (we send there, default 8000) and **device port** (it sends
@@ -74,11 +96,30 @@ mutation-checked to confirm it actually fails when the script is broken.
 What that does **not** cover is whether Reaper behaves the way the stub pretends:
 that `AddProjectMarker2` takes those arguments in that order, that
 `GetPlayPosition` is valid while recording, that `defer` and `ExtState` do what
-is assumed. That is what this step is for.
+is assumed.
+
+**Done - all of it holds.** Run 2026-09-08 inside Reaper against a live
+recording. The script tailed the queue and persisted `queue_offset=90` into
+`reaper-extstate.ini` against a 90-byte queue, so the incremental tail and
+`ExtState` round-trip both work. Four events produced:
+
+| Mark | Bars.beats | Seconds |
+|---|---|---|
+| M1 `SYS\|recording-started` | 1.1.18 | 0.09 |
+| R1 `GAME\|q1` start | 1.4.96 | 1.98 |
+| M2 `BAND\|touchdown-sequence` | 3.1.27 | 4.14 |
+| R1 `GAME\|q1` end | 6.3.86 | 11.43 |
+
+The gaps reproduce the driving script's sleeps. Confirmed: argument order,
+`isrgn` really distinguishing region from marker, start and end not transposed,
+`GetPlayPosition` valid mid-record, and `|` names surviving into Reaper.
 
 1. Copy `reaper/tacet_mirror.lua` into `REAPER/Scripts`.
-2. Actions → Load ReaScript → pick it → run. It asks once for the queue path and
-   remembers it. Anything under a path you can write to is fine.
+2. Actions → Show action list → New action → Load ReaScript, then run it.
+   ("Load ReaScript" is not a top-level action; on current Reaper you reach it
+   through the action list.) It asks once for the queue path and remembers it in
+   `ExtState`, so point `tacet-serve --queue` at whatever you enter. Anything
+   under a path you can write to is fine.
 3. Generate some events:
 
 ```python
@@ -149,12 +190,19 @@ The console IP is the one under Setup → Network → For Mixer Control. Port 49
 
 ## What to bring back
 
-1. Reaper's actual OSC addresses for record, play and position.
-2. Whether the Lua mirror runs, and what it got wrong.
+1. ~~Reaper's actual OSC addresses~~ - done, `AddressMap` was right.
+2. ~~Whether the Lua mirror runs~~ - done, it got nothing wrong.
 3. Whether the UI is usable on an iPad, and whether commanded and confirmed
-   read as clearly different.
-4. The granularity answer, if the press box happened.
+   read as clearly different. **Still open** - the page has served and its API
+   is exercised, but no browser has rendered it.
+4. The granularity answer, if the press box happened. **Still open.**
 
-With those, every remaining guess in the codebase is gone. Phase 0 is
-code-complete; what is left is proving it against the three real things it has
-never met — the console, Reaper, and a browser.
+Reaper is no longer a guess. What is left is a browser and the console.
+
+## Environment notes from the Mac
+
+- `.python-version` pins 3.12.12, which was not installed; the venv was built on
+  3.12.13. Repin or install 3.12.12.
+- `make test-lua` uses whatever `lua` is on `PATH` - 5.5.1 here. Reaper embeds
+  5.4, so the suite was also run against Homebrew's keg-only
+  `/opt/homebrew/opt/lua@5.4/bin/lua5.4`. 27/27 under both.
