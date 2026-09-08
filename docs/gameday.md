@@ -210,7 +210,13 @@ Honest state of things, so nothing here reads as more settled than it is.
 - **The console.** Never driven by this software. Addresses are verified
   against the spec, not against a DM7.
 - **Fade granularity.** Unknown until `verify_dm7 --granularity` runs.
-- **RTD.** Not implemented. Game timing is operator-tapped for now.
+- **RTD.** Not implemented. Game timing is operator-tapped for now. One thing
+  about it is known in advance and will bite on the first attempt: the
+  scoreboard console **does not send its state when something connects**. It
+  sends only changes, so a reader started mid-game shows blanks until each field
+  first moves - no score until someone scores. Pressing `STOP` on the scoreboard
+  console forces a full dump. So either the capture starts before the console
+  comes up, or someone presses `STOP` once during pregame. See design.md 8.
 - **The post-DCA reference channel.** Not captured yet; it is what supplies the
   ground-truth fader labels.
 

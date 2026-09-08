@@ -606,9 +606,73 @@ operated from an iPad; a serial controller was previously in place.
 Daktronics **Real-Time Data (RTD)** remains available in current systems. The
 All Sport Pro interface box broadcasts RTD over UDP with configurable ports per
 data source, and can also drive an additional serial or USB MDP output for
-supplementary fixed-digit displays. Classic RTD over RS-232 is 19200 8N1, with
-packets framed by 0x16 and terminated by a checksum followed by 0x17 — a
-well-documented format with open-source decoders available in several languages.
+supplementary fixed-digit displays. Classic RTD over RS-232 is 19200 8N1.
+
+### What the protocol actually is
+
+Verified 2026-09-08 against open-source decoders. Not verified against this
+stadium, and nothing below has been seen on a wire here.
+
+RTD is not a semantic protocol. It is a **display-buffer write protocol**: the
+console holds one flat buffer of ASCII, and each packet says *write these
+characters at this offset*. Only changed regions are transmitted, so a reader
+has to accumulate state rather than parse events.
+
+```
+0x16  "00000000"  0x01  "004210" NNNN   0x02  <ascii>  0x04  <2 hex>   0x17
+SYN   header      SOH   prefix, offset  STX   payload  EOT   checksum  ETB
+```
+
+- The `004210` prefix is what identifies an RTD data packet. Other packet types
+  share the framing and are not this — `004010` is the Venus display
+  position-text command, which is what most of the community write-ups on the
+  0x16/0x17 framing are actually describing.
+- `NNNN` is a decimal offset and is **zero-based**. The published field offsets
+  are **one-based**. Play clock at documented offset 201 is buffer index 200.
+- The checksum is a wrapping byte sum over the payload, including the 0x04
+  separator, rendered as two uppercase hex digits.
+
+The framing is public. **The offset-to-meaning map is not.** It is per sport
+"field set", it lives in Daktronics' own manuals, and the open-source decoders
+carry it as tables transcribed by hand from a vendor PDF.
+
+### The football field set
+
+From those transcribed tables. Every context use in §5.4 is covered by six
+fields:
+
+| Use in §5.4 | Field | Offset | Width |
+|---|---|---|---|
+| Play-clock-low caution | Play Clock Time | 201 | 8 |
+| Permissive: clock stopped | Main Clock Stopped (`' '` or `'s'`) | 28 | 1 |
+| Quarter breaks | Quarter / Quarter Description | 142 / 148 | 2 / 12 |
+| Timeouts | Home/Guest Time Out Indicator and Text | 132–141 | 1 / 4 |
+| Halftime exodus arming | Quarter and Main Clock Time | 142, 1 | 2 / 5 |
+
+**The play clock is present in the football field set.** That settles the
+original question in the abstract; what remains is whether it is populated on
+this install. Clock-stopped arriving as a literal one-byte flag, rather than
+something inferred from clock deltas, is better than was assumed.
+
+Two hedges. The transcribed tables carry their own warning that they were
+generated semi-automatically and may contain errors; and they are **All Sport
+5000**-era, while this install is an All Sport **Pro**. The framing should
+survive that gap — backward compatibility with existing dumb displays is the
+entire reason RTD exists — but field sets are likelier to have drifted. Treat
+the offsets as a strong prior to validate against a capture, not as settled. The
+8-byte `mm:ss` play clock is the first thing to check; that is a strange shape
+for a 40-second clock.
+
+### The console does not dump state on connect
+
+A reader that attaches mid-game sees a **buffer full of holes**, filling in only
+as each field first changes: no score until someone scores, possibly no team
+names all night. Pressing `STOP` on the scoreboard console forces a full dump.
+
+Consequence for capture: the log has to distinguish *field is blank* from *field
+has never been written*. Those are different facts, collapsing them quietly
+poisons the Phase 3 analysis, and it cannot be recovered afterwards. The
+operational half of this is in gameday.md.
 
 ### Requested
 
@@ -616,10 +680,12 @@ well-documented format with open-source decoders available in several languages.
    network is preferred over serial. This is one-way and consumes no scoreboard
    resources.
 2. **The UDP port and data source configuration** for football.
-3. **Confirmation that the play clock is present in the football field set**, not
-   only the game clock. Ideally: a capture of the live stream using Daktronics'
-   **Data Monitor** during a game, so the actual available fields can be
-   inspected directly rather than assumed.
+3. **A capture of the live stream during a game**, using Daktronics' **Data
+   Monitor**. This is the highest-value item on the list and the cheapest to
+   supply — it settles the port, the field set, and whether the play clock is
+   populated, in one artifact, without anyone having to go find a manual. The
+   published field tables already say the play clock exists; only a capture says
+   it is populated here.
 4. **A network path** from the scoreboard VLAN to the audio control VLAN, or
    provision for a second NIC in the receiving machine.
 
@@ -634,6 +700,11 @@ configuration change now and a change order later.
   https://www.daktronics.com/blog/rtd-explained-in-5-minutes
 - All Sport Pro interface box configuration —
   https://www.daktronics.com/web-documents/manuals/dd5092697.pdf
+- Football field offsets, transcribed from the vendor PDF —
+  https://github.com/zabackary/daktronics-allsport-5000-rs
+  (`sports_data/`, `src/sports/football.rs`)
+- RTD framing, community reference —
+  https://timingguys.com/topic/daktronics-rtd-protocol-reference
 
 ---
 
