@@ -60,9 +60,12 @@ nothing at all, confirmed over a 6 s listen. It sends only while the transport
 moves, plus one burst per transport change. So `is_fresh` lapses 2 s after
 Reaper stops and the UI reads "no feedback" whenever Reaper is merely idle,
 which is exactly the pre-game window where the operator wants reassurance the
-recorder is alive. Honest (idle and dead are genuinely indistinguishable over a
-silent link) but it cries wolf. Unresolved; the docstrings now describe the real
-behaviour.
+recorder is alive. Fixed in `reaper.Liveness`: silence is now read in
+the light of what Reaper was last doing, so a parked Reaper reads "stopped
+(idle)" and only silence where the `/time` stream should have been is a fault.
+There is no heartbeat available to do it any other way - probing
+`/device/track/count` answers only when the value changes, so it cannot be used
+as a ping.
 
 The original reasoning, kept because it is still why this step existed: UDP is
 fire-and-forget, Reaper ignores paths it does not recognise, and the box would
