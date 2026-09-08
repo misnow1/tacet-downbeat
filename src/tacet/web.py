@@ -348,6 +348,21 @@ function activate(item, node) {
   else post("/api/span/start", {key: item.key});
 }
 
+// Reaper's /time is a float of seconds and says nothing about how Reaper is
+// displaying its own timeline, so the formatting is entirely ours. Rounding to
+// whole milliseconds first keeps 59.9996 from rendering as :60.000.
+function timecode(seconds) {
+  const sign = seconds < 0 ? "-" : "";
+  const total = Math.round(Math.abs(seconds) * 1000);
+  const ms = total % 1000;
+  const whole = (total - ms) / 1000;
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor(whole / 60) % 60;
+  const s = whole % 60;
+  const pad = (v, n) => String(v).padStart(n, "0");
+  return sign + h + ":" + pad(m, 2) + ":" + pad(s, 2) + "." + pad(ms, 3);
+}
+
 function render(next) {
   if (!next) return;
   snapshot = next;
@@ -375,7 +390,7 @@ function render(next) {
   tag.textContent = recLabel;
   tag.className = "tag " + recClass;
   $("rec-pos").textContent =
-    rec.confirmed && rec.position !== null ? "at " + rec.position.toFixed(1) + "s" : "";
+    rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
 
   if (!snapshot.buttonsRendered) { renderButtons(next.buttons); snapshot.buttonsRendered = true; }
   for (const node of document.querySelectorAll("#buttons button")) {
