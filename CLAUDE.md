@@ -183,7 +183,12 @@ make fmt        # fix what ruff can fix
 
 Pre-commit runs lint and formatting only — a hook that takes a minute stops
 getting used. CI (`.github/workflows/ci.yml`) runs the full suite on Linux and
-macOS and is what gates a merge.
+macOS, on every push to `main` and on every pull request.
+
+**Branch protection is not enabled**, so CI reports and does not block — a push
+to `main` lands whether the checks passed or not. A required status check is
+deferred until after Phase 0 ships. Until then a red `make check` is blocking by
+convention only, so run it before committing rather than relying on the badge.
 
 ## Working notes
 
