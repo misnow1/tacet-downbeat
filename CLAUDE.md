@@ -192,6 +192,13 @@ convention only, so run it before committing rather than relying on the badge.
 
 ## Working notes
 
+- **Commits go straight to `main`.** Solo repo; no branch or PR ceremony. Commit
+  only when asked, and do not push unless asked.
+- Vendor PDFs are encrypted and need decrypting before they can be read at all.
+  See `docs/vendors/README.md` before wrestling with one.
+- `reaper/tacet_mirror.lua` runs inside Reaper, not here, and cannot be tested
+  from this repo. `python -m tacet.verify_reaper` and `verify_dm7` are the
+  harnesses for the two things that need real hardware in front of them.
 - Prefer offline replay over live testing. There are a limited number of home
   games per season and each one is a single irreplaceable sample.
 - When tuning, tune against captured games, not intuition. Thresholds guessed in

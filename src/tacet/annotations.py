@@ -146,6 +146,13 @@ def lookup(key: str) -> EventType:
         raise UnknownEventError(f"no such event: {key!r}") from None
 
 
+class EntrySink(Protocol):
+    """Anything that wants a copy of each entry as it is written, such as the
+    Reaper mirror queue."""
+
+    def append(self, entry: Entry) -> None: ...
+
+
 class Clock(Protocol):
     """Injected so tests are deterministic and so replay can supply its own."""
 
@@ -266,10 +273,12 @@ class AnnotationLog:
         *,
         clock: Clock | None = None,
         fsync: bool = True,
+        mirror: EntrySink | None = None,
     ) -> None:
         self.path = Path(path)
         self._clock: Clock = clock if clock is not None else SystemClock()
         self._fsync = fsync
+        self._mirror = mirror
         self._handle: Any = None
         self._seq = 0
         self._open_spans: dict[str, Entry] = {}
@@ -391,6 +400,10 @@ class AnnotationLog:
         self._handle.flush()
         if self._fsync:
             os.fsync(self._handle.fileno())
+        # Mirrored from the one place an entry is written, so the two files
+        # cannot drift. The mirror is regenerable if it is lost.
+        if self._mirror is not None:
+            self._mirror.append(entry)
         return entry
 
 

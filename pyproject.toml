@@ -25,6 +25,10 @@ dev = [
   "pre-commit>=3.8",
 ]
 
+[project.scripts]
+tacet-verify-reaper = "tacet.verify_reaper:main"
+tacet-verify-dm7 = "tacet.verify_dm7:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/tacet"]
 

@@ -36,7 +36,8 @@ slapback and drags the band's tempo.
 ```
 docs/design.md      the design document — read this first
 docs/vendors/       vendor specs (Yamaha DM7 OSC, plus a text extraction)
-src/tacet/          the box: OSC codec, DM7 fader client
+src/tacet/          the box: OSC codec, DM7 and Reaper clients, annotation log
+reaper/             ReaScript that mirrors annotations into Reaper markers
 tests/
 audio/              multitrack sources for offline analysis (gitignored)
 ```
