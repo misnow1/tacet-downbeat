@@ -207,6 +207,38 @@ def _collect(packet: osc.Message | osc.Bundle, into: list[osc.Message]) -> None:
         _collect(element, into)
 
 
+def record_refusal(state: TransportState, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> str | None:
+    """Why the box will not send a record command, or None if it will.
+
+    Reaper's `/record` is a toggle, not a start. Sent at a recorder that is
+    already rolling it stops the recording - which is the stop button design.md
+    5.9 refuses to put on this screen, reached by tapping "start" twice. Each
+    home game is a single irreplaceable sample, so the box declines rather than
+    risk it.
+
+    Silence is what makes the safe cases decidable. Reaper streams `/time`
+    while the transport moves and says nothing at all when it is parked, so
+    having heard nothing recently means the transport is stopped and `/record`
+    can only start it. When the transport *is* moving and Reaper has not said
+    whether it is recording - a box restarted mid-game, since transport state
+    is announced only when it changes - there is no way to tell a safe send
+    from one that would end the recording, and the box says so instead of
+    guessing.
+    """
+    liveness = state.liveness(now, timeout=timeout)
+    if liveness is Liveness.LOST:
+        return "Reaper has stopped answering. Start the recording in Reaper."
+    if liveness is Liveness.LIVE:
+        if state.recording:
+            return "Reaper is already recording."
+        if state.recording is None:
+            return (
+                "Reaper's transport is moving but it has not said whether it is "
+                "recording. Start the recording in Reaper."
+            )
+    return None
+
+
 class ReaperClient:
     """Commands Reaper's transport and tracks what it reports back.
 

@@ -122,6 +122,13 @@ function render(next) {
   const tag = $("rec-tag");
   tag.textContent = recLabel;
   tag.className = "tag " + recClass;
+  // /record is a toggle at Reaper's end, so once it is rolling the button must
+  // not invite a second press. The box refuses it anyway; this is the
+  // affordance, not the guard.
+  const record = $("btn-record");
+  record.disabled = !rec.can_start;
+  record.textContent = rec.known && rec.recording ? "Recording" : "Start recording";
+
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
 

@@ -38,6 +38,7 @@ function element(id) {
     style: {},
     dataset: {},
     onclick: null,
+    disabled: false,
     classList: {
       toggle(name, on) {
         if (on) classes.add(name);
@@ -98,6 +99,7 @@ function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
       position: null,
       confirmed: false,
       liveness: "unknown",
+      can_start: true,
       healthy: true,
       ...recording,
     },
@@ -227,6 +229,38 @@ check(
   rendered({ liveness: "lost", known: false, confirmed: false, position: 12.0 }).get("rec-pos")
     .textContent,
   "",
+);
+
+// -- the record button ------------------------------------------------------
+
+// Reaper's /record is a toggle. A start button that stops on the second press
+// is the stop button design.md 5.9 keeps off this screen.
+check(
+  "a startable recorder offers the button",
+  rendered({ can_start: true }).get("btn-record").disabled,
+  false,
+);
+check(
+  "a rolling recorder does not",
+  rendered({ liveness: "live", known: true, recording: true, confirmed: true, can_start: false })
+    .get("btn-record").disabled,
+  true,
+);
+check(
+  "a rolling recorder says so on the button",
+  rendered({ liveness: "live", known: true, recording: true, confirmed: true, can_start: false })
+    .get("btn-record").textContent,
+  "Recording",
+);
+check(
+  "an idle recorder offers to start",
+  rendered({ can_start: true }).get("btn-record").textContent,
+  "Start recording",
+);
+check(
+  "a lost recorder does not offer the button either",
+  rendered({ liveness: "lost", known: false, can_start: false }).get("btn-record").disabled,
+  true,
 );
 
 // -- the fader --------------------------------------------------------------

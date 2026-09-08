@@ -25,7 +25,7 @@ from typing import Any
 from . import annotations as ann
 from . import dm7, state
 from .net import TransportError
-from .reaper import Liveness, ReaperClient
+from .reaper import Liveness, ReaperClient, record_refusal
 
 #: What an operator button that also moves the fader asks the machine to do.
 _ACTIONS: Mapping[ann.Action, state.Command] = {
@@ -62,6 +62,11 @@ class App:
 
         self._fade_task: asyncio.Task[None] | None = None
         self._last_refusal: str | None = None
+        #: Whether `_last_refusal` came from the record button. That refusal is
+        #: derived from Reaper's state, so it has to clear itself when the
+        #: state moves on - otherwise the screen keeps saying "already
+        #: recording" at a recorder that has since stopped.
+        self._refused_recording = False
         self._listeners: list[Callable[[], None]] = []
 
     # -- operator actions -------------------------------------------------
@@ -193,11 +198,31 @@ class App:
     # -- recorder ---------------------------------------------------------
 
     async def start_recording(self) -> None:
-        """Roll. There is no counterpart here; stopping happens in Reaper."""
+        """Roll. There is no counterpart here; stopping happens in Reaper.
+
+        Reaper's `/record` is a toggle, so a second tap would stop the
+        recording - the stop button design.md 5.9 keeps off this screen,
+        reached by pressing start twice. The box refuses instead, and says why.
+        """
+        refusal = self.record_refusal
+        if refusal is not None:
+            self._last_refusal = refusal
+            self._refused_recording = True
+            self._notify()
+            return
         if self._recorder is not None:
             self._recorder.start_recording()
         self._log.record(RECORDING_STARTED)
+        self._last_refusal = None
+        self._refused_recording = False
         self._notify()
+
+    @property
+    def record_refusal(self) -> str | None:
+        """Why the record button will not fire, or None if it will."""
+        if self._recorder is None:
+            return None
+        return record_refusal(self._recorder.state, self._monotonic())
 
     def handle_recorder_packet(self, packet: bytes) -> None:
         if self._recorder is not None:
@@ -213,10 +238,13 @@ class App:
         # all Reaper ever does when parked. Believing it is safe: that reading
         # can only under-claim, never show a dead recorder as rolling.
         believed = liveness in (Liveness.LIVE, Liveness.QUIET)
+        refusal = self._last_refusal
+        if self._refused_recording and self.record_refusal is None:
+            refusal = None
         return {
             "state": self.machine.state.value,
             "why": state.describe(self.machine),
-            "refusal": self._last_refusal,
+            "refusal": refusal,
             "detector_enabled": self.machine.allow_detector,
             "fader": {
                 "commanded": self._console.commanded_level,
@@ -232,6 +260,9 @@ class App:
                 "position": transport.position if transport is not None else None,
                 "confirmed": believed,
                 "liveness": liveness.value,
+                # False once Reaper is known to be rolling: /record is a toggle
+                # and a second press would stop it (design.md 5.9).
+                "can_start": self.record_refusal is None,
                 "healthy": self._recorder.healthy if self._recorder is not None else True,
             },
             "buttons": [

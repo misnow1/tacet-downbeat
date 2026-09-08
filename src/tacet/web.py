@@ -260,6 +260,8 @@ button{font:inherit;font-weight:600;color:var(--text);background:var(--panel);
 border:1px solid var(--line);border-radius:12px;padding:18px 12px;cursor:pointer;
 touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 button:active{transform:translateY(1px)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:disabled:active{transform:none}
 button.big{font-size:20px;padding:26px 12px}
 button.open{background:var(--open);border-color:var(--open)}
 button.fade{background:var(--fade);border-color:var(--fade)}

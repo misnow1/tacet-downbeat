@@ -188,6 +188,106 @@ class TestFailures(AppTestCase):
         self.assertIn("stood-down", self.keys())
 
 
+class TestRecordIsNotAStopButton(AppTestCase):
+    """Reaper's /record is a toggle, so the button had to stop being one.
+
+    design.md 5.9: each home game is a single irreplaceable sample, and a stop
+    button does not belong on a screen being tapped by someone watching a
+    field. A start button that stops on the second press is that button.
+    """
+
+    def record_packets(self):
+        return self.reaper_sender.addresses()
+
+    async def test_tapping_start_twice_never_stops_the_recording(self):
+        app = self.build()
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        # One command reached Reaper, not two. The second would have stopped it.
+        self.assertEqual(self.record_packets().count("/record"), 1)
+
+    async def test_the_second_tap_says_why_it_did_nothing(self):
+        app = self.build()
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        self.assertIn("already recording", app.snapshot()["refusal"])
+
+    async def test_a_refused_tap_does_not_log_a_second_start(self):
+        app = self.build()
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
+
+    async def test_a_silent_reaper_can_still_be_started(self):
+        # The ordinary pre-game case: Reaper parked, and silent because it is
+        # parked. Refusing here would make the button useless.
+        app = self.build()
+        await app.start_recording()
+        self.assertIn("/record", self.record_packets())
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_a_reaper_that_reported_a_stop_can_be_started(self):
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        await app.start_recording()
+        self.assertIn("/record", self.record_packets())
+
+    async def test_a_moving_transport_of_unknown_record_state_is_refused(self):
+        """A box restarted mid-game hears /time and no transport change, so it
+        cannot tell a safe send from one that ends the recording."""
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/time", 12.0))
+        await app.start_recording()
+        self.assertNotIn("/record", self.record_packets())
+        self.assertIn("not said whether", app.snapshot()["refusal"])
+
+    async def test_a_lost_recorder_is_refused(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        clock[0] += 60.0
+        await app.start_recording()
+        self.assertNotIn("/record", self.record_packets())
+        self.assertIn("stopped answering", app.snapshot()["refusal"])
+
+    async def test_the_refusal_clears_once_reaper_has_stopped(self):
+        # Otherwise the screen keeps saying "already recording" at a recorder
+        # that has since stopped - the same contradiction as a confirmed tag on
+        # an unknown value.
+        app = self.build()
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        self.assertIsNotNone(app.snapshot()["refusal"])
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_a_successful_start_clears_an_earlier_refusal(self):
+        app = self.build()
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        await app.start_recording()
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_the_snapshot_tells_the_page_when_to_disable_the_button(self):
+        app = self.build()
+        self.assertTrue(app.snapshot()["recording"]["can_start"])
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+
+    async def test_there_is_still_no_way_to_ask_reaper_to_stop(self):
+        app = self.build()
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        self.assertNotIn("/stop", self.record_packets())
+
+
 class TestFaderButtons(AppTestCase):
     """The fader buttons move the fader and say why, in one tap.
 
