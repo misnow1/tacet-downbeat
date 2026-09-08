@@ -305,13 +305,16 @@ Minimum during-game requirements:
   appear here (§5.3)
 - **Open** and **fade out** buttons
 - Plain-language "why" line — what state the machine is in and what put it there
+- Recording state, which unlike the fader **is** confirmed (§5.9). Commanded and
+  confirmed values must be visually distinct; never render them alike
 
 Full telemetry is interesting but not required for game operations.
 
 ### 5.6 Annotation
 
 The same UI carries one-tap **event annotation**, timestamped against the same
-clock as audio, RTD, and OSC state.
+clock as audio, RTD, and OSC state. §5.9 describes how that shared clock is
+obtained.
 
 This is not a convenience feature. Most band state is **not recoverable after
 the fact** — it is not in the multitrack, not in RTD, and not in the fader
@@ -332,6 +335,10 @@ Initial event vocabulary (extend freely — unknown-unknowns are the point):
 - Detector was wrong — false open
 - Detector was wrong — missed entrance
 - Free-text note
+
+Plus, standing in for RTD until it exists (§5.4), the game-timing events an
+operator can see from the box: quarter start and end, halftime, and the
+last-two-minutes window.
 
 Two-tap maximum, no typing required for the common cases. Anything requiring
 attention mid-game will not get logged.
@@ -410,6 +417,47 @@ Running the live box on macOS with DVS for the first season is acceptable and
 possibly preferable — it is a proven path, and it avoids debugging a new
 detector and a new audio stack simultaneously. Migrate to Linux once the
 detector has stopped changing weekly.
+
+### 5.9 Recording and annotation transport (Reaper)
+
+Recording is done in **Reaper**, with DVS as its audio device. Reaper also
+accepts OSC control, and for now runs on the same machine as the box, so the
+control connection is localhost. Treat the endpoint as configuration, not a
+constant — the Phase 2 Linux move separates them.
+
+**Why this matters more than convenience.** §9 requires four streams on a common
+clock, which normally means timestamp discipline and a drift-correction pass. A
+Reaper marker sits at a sample position in the same project as the audio, so
+annotation and audio are aligned *by construction* and there is nothing to
+correct. It also delivers much of the deferred review timeline in §9, because
+Reaper already is a scrubbable timeline with the audio and the marks on it.
+
+**The box's log is the source of truth; markers are a derived view.** Every
+annotation is appended to the box's own log as it happens. Markers are mirrored
+into Reaper from that log and can be regenerated from it at any time, given the
+record-start anchor. If Reaper crashes or the mirroring script is not loaded,
+the convenient view is lost and the data is not.
+
+This also settles marker naming. Reaper's built-in insert-marker action yields
+either an unnamed marker or a modal dialog, and a modal dialog mid-game is
+unusable. Mirroring from the log instead keeps the event vocabulary in the box,
+where §5.6 requires it to stay extensible.
+
+Conventions:
+
+- **Regions for spans, markers for instants.** Quarters, halftime exodus,
+  last-two-minutes and band-in-stands are intervals; a fader move is a point.
+- **Parseable names** — a delimited prefix (`FDR|up-whistle`, `GAME|q3-start`)
+  so the later read is a split rather than a regex.
+
+**Transport control is deliberately incomplete.** The UI arms and starts
+recording; it offers no stop. Each home game is a single irreplaceable sample,
+and a stop button does not belong on a screen being tapped by someone watching a
+field. Stopping is done deliberately, in Reaper.
+
+Unlike the console, Reaper's OSC **is** bidirectional, so record and transport
+state are genuinely confirmed. The UI must show that distinction rather than
+blur it: recording is *confirmed*, fader position is only *commanded* (§5.3).
 
 ---
 
@@ -591,12 +639,23 @@ configuration change now and a change order later.
 ### Phase 0 — Wired control path
 
 Standalone value, independent of any detection. A wired box on the control VLAN
-speaking OSC to the DM7, with a web UI exposing open / fade-out buttons and DCA
-level readback.
+speaking OSC to the DM7, with a web UI exposing open / fade-out buttons and the
+last commanded DCA level.
 
 This is more reliable than the iPad on day one and provides a working fallback
 for Wi-Fi failure, which is a real and recurring problem. **Ship this first
 regardless of what happens to the rest of the project.**
+
+Phase 0 also carries the annotation and recording transport of §5.9 — record
+arming, the event vocabulary of §5.6, and marker mirroring into Reaper. This is
+a deliberate widening of the original scope. It pays immediately: it means the
+*first* captured game is annotated even though no detector exists yet, and
+annotation is the one part of ground truth that cannot be reconstructed later.
+
+**Runtime: Python 3, standard library only.** OSC is UDP carrying a simple
+binary encoding and is short enough to implement directly, so Phase 0 adds no
+third-party dependency at all. The choice also anticipates Phase 2, where the
+detector — inevitably numpy/scipy — has to share a process with fader control.
 
 ### Phase 1 — Shadow mode
 

@@ -12,7 +12,8 @@ several of them contradict what would otherwise be sensible defaults.
 
 **Phase 0 / 1. The detector drives nothing.**
 
-- Phase 0 — wired OSC control path + web UI. Standalone value; ships regardless.
+- Phase 0 — wired OSC control path + web UI + Reaper recording/annotation
+  transport. Standalone value; ships regardless.
 - Phase 1 — shadow mode. Compute everything, log everything, drive nothing.
 - Phase 2 — assisted. Detector drives the DCA, operator supervises.
 - Phase 3 — refinement from accumulated logs.
@@ -79,9 +80,15 @@ Full detail in design.md §5.
   offsets in software where time-coherence is needed.
 - **Game data** — Daktronics RTD over UDP, read-only. Positive permissives,
   play-clock-low release bias, halftime-exodus arming, and logging.
+- **Recorder** — Reaper, DVS as its audio device, driven over OSC on localhost
+  for now. Its OSC *is* bidirectional, so recording state is genuinely
+  confirmed. Annotations live in the box's own log; Reaper markers are a derived,
+  regenerable view. Markers align to audio by construction — that is the common
+  clock. Regions for spans, markers for instants. **No stop button in the UI.**
+  See design.md §5.9.
 - **UI** — web, served over the control VLAN. Works on iPad, phone, laptop.
-  Open/fade buttons, DCA level readback, plain-language "why" line, and
-  annotation buttons.
+  Open/fade buttons, last commanded DCA level, plain-language "why" line, and
+  annotation buttons. Commanded and confirmed values must render differently.
 - **AES67 is not available** on this Dante domain and is out of scope.
 
 ## State machine
@@ -107,7 +114,11 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 
 ## Platform
 
-- Development and Phase 1 capture: **macOS + DVS** (license owned).
+- **Python 3, standard library only** for the Phase 0 box. OSC is hand-rolled;
+  no third-party dependency. Phase 2 shares a process with a numpy/scipy
+  detector, which is why the runtime is Python.
+- Development and Phase 1 capture: **macOS + DVS** (license owned), recorded
+  in Reaper.
 - Detector development happens **offline against WAV files** — no interface, no
   Dante, no real-time path. Prefer this for all algorithm work.
 - Phase 2 target is Linux; macOS is acceptable for season one.
@@ -122,7 +133,7 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 
 Phase 1 captures four aligned streams, all on a common clock:
 
-1. DVS multitrack, 14 channels
+1. DVS multitrack, 14 channels, recorded in Reaper
 2. Post-DCA reference channel — one Dante channel of the band PA feed. Compared
    against the pre-fader mics it recovers actual operator fader moves (**the
    ground truth labels**). OSC cannot supply these; it is write-only.
