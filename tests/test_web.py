@@ -1,4 +1,5 @@
 import json
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -6,7 +7,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, reaper, web
+from tacet import dm7, osc, reaper, web
 
 
 class FakeSender:
@@ -154,3 +155,58 @@ class TestWebSocket(WebTestCase):
             await self.client.post("/api/arm")
             payload = json.loads((await socket.receive()).data)
             self.assertEqual(payload["state"], "idle")
+
+
+class TestBroadcastThrottle(unittest.TestCase):
+    """Reaper streams `/time` at about 11 Hz while rolling, and every packet
+    used to push a whole snapshot at every browser - roughly 30 KB/s each, on
+    an iPad on stadium wifi, for three hours. The playhead does not need that
+    resolution. Anything that is not the playhead still goes out at once.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        log = ann.AnnotationLog(root / "game.jsonl")
+        log.open()
+        self.addCleanup(log.close)
+        self.app = tacet_app.App(
+            console=dm7.Dm7Client("192.0.2.1", dca=3, sender=FakeSender()),
+            log=log,
+            recorder=reaper.ReaperClient(sender=FakeSender()),
+        )
+
+    def moved(self, snapshot, position):
+        recording = dict(snapshot["recording"], position=position)
+        return dict(snapshot, recording=recording)
+
+    def test_the_first_snapshot_always_goes_out(self):
+        self.assertTrue(web.should_broadcast(None, self.app.snapshot(), elapsed=0.0))
+
+    def test_a_playhead_that_has_only_moved_waits(self):
+        before = self.app.snapshot()
+        self.assertFalse(web.should_broadcast(before, self.moved(before, 12.5), elapsed=0.1, interval=1.0))
+
+    def test_a_playhead_that_has_only_moved_goes_out_once_the_interval_passes(self):
+        before = self.app.snapshot()
+        self.assertTrue(web.should_broadcast(before, self.moved(before, 12.5), elapsed=1.5, interval=1.0))
+
+    def test_anything_that_is_not_the_playhead_is_never_delayed(self):
+        """The fader must not wait on a coalescing timer. A missed downbeat is
+        unrecoverable; see CLAUDE.md on fast open."""
+        before = self.app.snapshot()
+        after = self.app.snapshot()
+        after["fader"] = dict(after["fader"], commanded=0)
+        self.assertTrue(web.should_broadcast(before, after, elapsed=0.0, interval=1.0))
+
+    def test_a_transport_change_is_never_delayed(self):
+        before = self.app.snapshot()
+        self.app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        after = self.app.snapshot()
+        self.assertNotEqual(before["recording"]["recording"], after["recording"]["recording"])
+        self.assertTrue(web.should_broadcast(before, after, elapsed=0.0, interval=1.0))
+
+    def test_an_identical_snapshot_still_waits(self):
+        snapshot = self.app.snapshot()
+        self.assertFalse(web.should_broadcast(snapshot, snapshot, elapsed=0.1, interval=1.0))

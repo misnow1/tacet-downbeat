@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -23,14 +25,53 @@ from aiohttp import WSMsgType, web
 from . import annotations as ann
 from .app import App
 
+#: How often a snapshot that differs only in playhead position is pushed out.
+#:
+#: Reaper streams `/time` at about 11 Hz while the transport rolls, and each
+#: packet produces a snapshot. Pushing every one of them costs roughly 30 KB/s
+#: per connected browser for three hours, over whatever wifi a stadium has, to
+#: animate a number nobody reads at that resolution. Everything that is not the
+#: playhead still goes out immediately.
+POSITION_BROADCAST_INTERVAL = 1.0
+
+
+def _without_position(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    recording = {k: v for k, v in snapshot["recording"].items() if k != "position"}
+    return {**snapshot, "recording": recording}
+
+
+def should_broadcast(
+    previous: Mapping[str, Any] | None,
+    current: Mapping[str, Any],
+    *,
+    elapsed: float,
+    interval: float = POSITION_BROADCAST_INTERVAL,
+) -> bool:
+    """Whether this snapshot is worth waking every browser for.
+
+    Pure, so the coalescing rule is testable without a socket or a clock.
+
+    Only the playhead is ever held back. A fader move, a state change or a lost
+    recorder goes out at once regardless of the interval: a missed downbeat is
+    unrecoverable, and CLAUDE.md wants faults visible, not averaged.
+    """
+    if previous is None:
+        return True
+    if _without_position(previous) != _without_position(current):
+        return True
+    return elapsed >= interval
+
 
 class _Hub:
     """Holds the app and the connected browsers, and pushes snapshots at them."""
 
-    def __init__(self, app: App) -> None:
+    def __init__(self, app: App, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self.app = app
         self.sockets: list[web.WebSocketResponse] = []
         self._pending: set[asyncio.Task[None]] = set()
+        self._monotonic = monotonic
+        self._last: dict[str, Any] | None = None
+        self._last_sent = 0.0
 
     def broadcast(self) -> None:
         # Fire and forget: a slow or wedged browser must never stall a fader
@@ -39,7 +80,13 @@ class _Hub:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        payload = json.dumps(self.app.snapshot())
+        snapshot = self.app.snapshot()
+        now = self._monotonic()
+        if not should_broadcast(self._last, snapshot, elapsed=now - self._last_sent):
+            return
+        self._last = snapshot
+        self._last_sent = now
+        payload = json.dumps(snapshot)
         for socket in list(self.sockets):
             if socket.closed:
                 continue
