@@ -146,9 +146,12 @@ place, and whether the region gets created.
 
 ### 3. First run of the UI
 
-Never opened in a browser. The Python behind it has 202 tests and an end-to-end
-smoke test against a dead console, but nothing has exercised the DOM, so treat
-the page itself as unproven.
+Never opened in a browser. The Python behind it has an end-to-end smoke test
+against a dead console, and the page's own script is tested under node against a
+stubbed DOM (`make test-js`) - so the rendering logic is covered, including that
+the four recording states stay tellable apart. What no test can reach is whether
+a real browser agrees, and whether any of it is usable at arm's length on a
+tablet. Treat the page as unproven in that sense.
 
 ```
 tacet-serve --console-host 127.0.0.1 --dca 3 \

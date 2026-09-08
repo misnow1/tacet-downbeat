@@ -208,6 +208,13 @@ convention only, so run it before committing rather than relying on the badge.
   test-lua`); what is not tested is whether Reaper really behaves as the stub
   pretends. Install a Lua 5.4 to run it: `brew install lua`, `apt install
   lua5.4`.
+- `src/tacet/static/app.js` is the operator page's script. It is inlined into
+  the page at import - the control VLAN has no route to the internet, so the
+  page fetches nothing - but it lives in its own file so it can be tested:
+  `tests/test_app_js.mjs`, `make test-js`, against a stubbed DOM. Same bargain
+  as the Lua: the logic is tested, the browser is not. Needs node. Mind the
+  escaping - the file is inlined into a Python string, and a doubled backslash
+  there reaches the screen as a literal.
 - `python -m tacet.verify_reaper` and `verify_dm7` are the harnesses for the two
   things that genuinely need hardware in front of them.
 - Prefer offline replay over live testing. There are a limited number of home

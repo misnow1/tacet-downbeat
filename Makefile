@@ -2,7 +2,7 @@
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: help venv install lint fmt typecheck test test-lua check hooks clean
+.PHONY: help venv install lint fmt typecheck test test-lua test-js check hooks clean
 
 help:  ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -34,7 +34,14 @@ test-lua:  ## Run the ReaScript tests, if a Lua interpreter is available
 		echo "skipping: no lua interpreter (brew install lua / apt install lua5.4)"; \
 	fi
 
-check: lint typecheck test test-lua  ## Everything CI runs
+test-js:  ## Run the browser script tests, if node is available
+	@if command -v node >/dev/null 2>&1; then \
+		node tests/test_app_js.mjs; \
+	else \
+		echo "skipping: no node interpreter (brew install node / apt install nodejs)"; \
+	fi
+
+check: lint typecheck test test-lua test-js  ## Everything CI runs
 	$(VENV)/bin/ruff format --check .
 
 hooks: install  ## Install the pre-commit hooks

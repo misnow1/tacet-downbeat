@@ -56,3 +56,9 @@ jobs:
       - name: Test ReaScript
         if: runner.os == 'Linux'
         run: lua5.4 reaper/test_tacet_mirror.lua
+
+      # The page's script is the same script whatever the browser, so one
+      # platform covers it. Node is preinstalled on the runners.
+      - name: Test browser script
+        if: runner.os == 'Linux'
+        run: node tests/test_app_js.mjs
