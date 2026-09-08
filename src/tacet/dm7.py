@@ -18,12 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import socket
 import time
 from collections.abc import Callable, Iterable, Iterator
-from typing import Protocol, runtime_checkable
 
 from . import osc
+from .net import ClosableSender, Sender, TransportError, UdpSender
 
 DEFAULT_PORT = 49900
 
@@ -108,28 +107,6 @@ TABLE_1 = (
 )
 
 
-class Dm7Error(RuntimeError):
-    """The console could not be reached. Surface this; never swallow it."""
-
-
-class Sender(Protocol):
-    """Anything that can put a packet on the wire.
-
-    Injected so tests can record packets instead of opening a socket, and so a
-    future transport (a redundant path, a replay harness) drops in unchanged.
-    """
-
-    def send(self, packet: bytes) -> None:
-        """Send one packet, or raise `Dm7Error` if it cannot be sent."""
-
-
-@runtime_checkable
-class ClosableSender(Protocol):
-    def send(self, packet: bytes) -> None: ...
-
-    def close(self) -> None: ...
-
-
 def clamp(level: int) -> int:
     return max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
 
@@ -208,24 +185,6 @@ def ramp_steps(
         yield duration, tail
 
 
-class UdpSender:
-    """Fire-and-forget UDP. Nothing comes back; see the module docstring."""
-
-    def __init__(self, host: str, port: int = DEFAULT_PORT) -> None:
-        self.host = host
-        self.port = port
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-    def send(self, packet: bytes) -> None:
-        try:
-            self._socket.sendto(packet, (self.host, self.port))
-        except OSError as exc:
-            raise Dm7Error(f"could not send to {self.host}:{self.port}: {exc}") from exc
-
-    def close(self) -> None:
-        self._socket.close()
-
-
 class Dm7Client:
     """Commands one DCA fader.
 
@@ -284,7 +243,7 @@ class Dm7Client:
         packet = osc.encode_message(self._address, level, tags=osc.TypeTag.INT32)
         try:
             self._sender.send(packet)
-        except Dm7Error as exc:
+        except TransportError as exc:
             self.last_error = str(exc)
             raise
         self.last_error = None

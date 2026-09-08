@@ -3,6 +3,7 @@ import unittest
 from typing import Any, cast
 
 from tacet import dm7, osc
+from tacet.net import TransportError
 
 
 class FakeSender:
@@ -25,7 +26,7 @@ class FakeSender:
 
 class FailingSender:
     def send(self, packet: bytes) -> None:
-        raise dm7.Dm7Error("network unreachable")
+        raise TransportError("network unreachable")
 
 
 def client(**kwargs: Any) -> tuple[dm7.Dm7Client, FakeSender]:
@@ -155,7 +156,7 @@ class TestSending(unittest.TestCase):
 
     def test_a_send_failure_is_raised_and_recorded(self):
         c = dm7.Dm7Client(UNREACHABLE_HOST, sender=FailingSender())
-        with self.assertRaises(dm7.Dm7Error):
+        with self.assertRaises(TransportError):
             c.send_level(0)
         self.assertFalse(c.healthy)
         assert c.last_error is not None
