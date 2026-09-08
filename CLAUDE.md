@@ -196,9 +196,13 @@ convention only, so run it before committing rather than relying on the badge.
   only when asked, and do not push unless asked.
 - Vendor PDFs are encrypted and need decrypting before they can be read at all.
   See `docs/vendors/README.md` before wrestling with one.
-- `reaper/tacet_mirror.lua` runs inside Reaper, not here, and cannot be tested
-  from this repo. `python -m tacet.verify_reaper` and `verify_dm7` are the
-  harnesses for the two things that need real hardware in front of them.
+- `reaper/tacet_mirror.lua` runs inside Reaper. Its logic **is** tested here,
+  against a stubbed Reaper API (`reaper/test_tacet_mirror.lua`, `make
+  test-lua`); what is not tested is whether Reaper really behaves as the stub
+  pretends. Install a Lua 5.4 to run it: `brew install lua`, `apt install
+  lua5.4`.
+- `python -m tacet.verify_reaper` and `verify_dm7` are the harnesses for the two
+  things that genuinely need hardware in front of them.
 - Prefer offline replay over live testing. There are a limited number of home
   games per season and each one is a single irreplaceable sample.
 - When tuning, tune against captured games, not intuition. Thresholds guessed in

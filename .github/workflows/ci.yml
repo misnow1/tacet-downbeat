@@ -46,3 +46,13 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      # The ReaScript runs inside Reaper's own Lua 5.4 whatever the host OS, so
+      # one platform is enough to cover it.
+      - name: Install Lua
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+
+      - name: Test ReaScript
+        if: runner.os == 'Linux'
+        run: lua5.4 reaper/test_tacet_mirror.lua

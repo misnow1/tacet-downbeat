@@ -2,7 +2,7 @@
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: help venv install lint fmt typecheck test check hooks clean
+.PHONY: help venv install lint fmt typecheck test test-lua check hooks clean
 
 help:  ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -27,7 +27,14 @@ typecheck:  ## mypy, strict
 test:  ## Run the suite
 	$(VENV)/bin/pytest -q
 
-check: lint typecheck test  ## Everything CI runs
+test-lua:  ## Run the ReaScript tests, if a Lua interpreter is available
+	@if command -v lua >/dev/null 2>&1; then \
+		lua reaper/test_tacet_mirror.lua; \
+	else \
+		echo "skipping: no lua interpreter (brew install lua / apt install lua5.4)"; \
+	fi
+
+check: lint typecheck test test-lua  ## Everything CI runs
 	$(VENV)/bin/ruff format --check .
 
 hooks: install  ## Install the pre-commit hooks

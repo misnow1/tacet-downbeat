@@ -28,7 +28,7 @@ Python 3.11+. Zero runtime dependencies — the venv is for ruff, mypy and pytes
 | `tacet.markers` | Offline derivation of markers and regions. Pure. |
 | `tacet.mirror` | The TSV queue the Lua script tails. |
 | `tacet.reaper` | Transport control and feedback. **OSC addresses are a guess.** |
-| `reaper/tacet_mirror.lua` | **Never run.** No Lua interpreter on the dev box to even syntax-check it. |
+| `reaper/tacet_mirror.lua` | Logic tested against a stubbed Reaper API (27 checks, mutation-verified). **Never run inside Reaper.** |
 | State machine, web UI | Not started. |
 
 ## Session A — Mac with Reaper
@@ -62,7 +62,15 @@ python -m tacet.verify_reaper --send /play --listen 10
 
 ### 2. Try the mirror script
 
-Untested code. Expect it to be wrong somewhere.
+Its logic is tested against a stubbed Reaper API — `make test-lua`, or
+`lua reaper/test_tacet_mirror.lua`. Queue parsing, span pairing, partial lines,
+offset persistence and the orphan-end path are all covered, and the suite was
+mutation-checked to confirm it actually fails when the script is broken.
+
+What that does **not** cover is whether Reaper behaves the way the stub pretends:
+that `AddProjectMarker2` takes those arguments in that order, that
+`GetPlayPosition` is valid while recording, that `defer` and `ExtState` do what
+is assumed. That is what this step is for.
 
 1. Copy `reaper/tacet_mirror.lua` into `REAPER/Scripts`.
 2. Actions → Load ReaScript → pick it → run. It asks once for the queue path and
