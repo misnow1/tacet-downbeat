@@ -1,3 +1,8 @@
 # audio sources for analysis
 audio/**
 !audio/README.md
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
