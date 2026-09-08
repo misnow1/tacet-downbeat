@@ -35,6 +35,7 @@ slapback and drags the band's tempo.
 
 ```
 docs/design.md      the design document — read this first
+docs/gameday.md     the game-day runbook — what to start, in what order
 docs/vendors/       vendor specs (Yamaha DM7 OSC, plus a text extraction)
 src/tacet/          the box: OSC codec, console and Reaper clients, state
                     machine, annotation log, web UI

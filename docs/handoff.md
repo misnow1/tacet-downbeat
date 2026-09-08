@@ -208,7 +208,11 @@ The console IP is the one under Setup → Network → For Mixer Control. Port 49
    is exercised, but no browser has rendered it.
 4. The granularity answer, if the press box happened. **Still open.**
 
-Reaper is no longer a guess. What is left is a browser and the console.
+Reaper is no longer a guess, and neither is the browser. What is left is the
+console.
+
+Operating the thing on a Saturday is `docs/gameday.md`, which is where the
+startup order and the site-specific values live.
 
 ## Environment notes from the Mac
 
