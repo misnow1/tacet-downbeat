@@ -29,6 +29,7 @@ function check(label, got, want) {
 // -- the stub ---------------------------------------------------------------
 
 function element(id) {
+  const classes = new Set();
   return {
     id,
     textContent: "",
@@ -37,13 +38,20 @@ function element(id) {
     style: {},
     dataset: {},
     onclick: null,
-    classList: { toggle() {} },
+    classList: {
+      toggle(name, on) {
+        if (on) classes.add(name);
+        else classes.delete(name);
+      },
+      contains: (name) => classes.has(name),
+    },
     appendChild() {},
   };
 }
 
 function browser() {
   const nodes = new Map();
+  const created = [];
   const context = createContext({
     console,
     document: {
@@ -51,8 +59,15 @@ function browser() {
         if (!nodes.has(id)) nodes.set(id, element(id));
         return nodes.get(id);
       },
-      createElement: (tag) => element(tag),
-      querySelectorAll: () => [],
+      createElement(tag) {
+        const node = element(tag);
+        node.tag = tag;
+        created.push(node);
+        return node;
+      },
+      // The page only ever asks for "#buttons button". The stub ignores the
+      // selector and answers with every button it has been asked to make.
+      querySelectorAll: () => created.filter((node) => node.tag === "button"),
     },
     location: { protocol: "http:", host: "box:8080" },
     setTimeout() {},
@@ -67,10 +82,10 @@ function browser() {
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes };
+  return { context, nodes, created };
 }
 
-function snapshot(recording = {}, fader = {}) {
+function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
   return {
     state: "standing-down",
     why: "Standing down.",
@@ -86,8 +101,8 @@ function snapshot(recording = {}, fader = {}) {
       healthy: true,
       ...recording,
     },
-    buttons: [],
-    open_spans: [],
+    buttons,
+    open_spans: openSpans,
   };
 }
 
@@ -204,6 +219,51 @@ check(
   "an unreachable console says so",
   rendered({}, { healthy: false, error: "no route to host" }).get("fader-error").textContent,
   "Console unreachable: no route to host",
+);
+
+// -- span buttons say which tap they are ------------------------------------
+
+// The first five band buttons are instants that happen to pair up (enters /
+// exits), while the quarters are genuine spans. Nothing on screen distinguished
+// those two shapes, and an outline on an open span looks exactly like an
+// instant that was just tapped.
+const BUTTONS = [
+  { key: "q1", label: "Q1", category: "GAME", kind: "span" },
+  { key: "timeout-injury", label: "Timeout: injury", category: "GAME", kind: "span" },
+  { key: "band-enters-stands", label: "Band enters stands", category: "BAND", kind: "instant" },
+];
+
+function buttons(openSpans = []) {
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, BUTTONS, openSpans));
+  const found = new Map();
+  for (const node of created.filter((n) => n.tag === "button")) found.set(node.dataset.key, node);
+  return found;
+}
+
+check("a closed span says it starts", buttons().get("q1").textContent, "Q1 (start)");
+check("an open span says it ends", buttons(["q1-2"]).get("q1").textContent, "Q1 (end)");
+check(
+  "an instant carries no start or end",
+  buttons().get("band-enters-stands").textContent,
+  "Band enters stands",
+);
+check(
+  "an instant is never marked open, whatever spans are running",
+  buttons(["q1-2"]).get("band-enters-stands").classList.contains("on"),
+  false,
+);
+check("an open span is highlighted", buttons(["q1-2"]).get("q1").classList.contains("on"), true);
+check("a closed span is not highlighted", buttons().get("q1").classList.contains("on"), false);
+check(
+  "one open span does not open another",
+  buttons(["q1-2"]).get("timeout-injury").textContent,
+  "Timeout: injury (start)",
+);
+check(
+  "spans are marked as spans for styling",
+  buttons().get("q1").dataset.kind,
+  "span",
 );
 
 // -- report -----------------------------------------------------------------

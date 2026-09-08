@@ -125,7 +125,20 @@ VOCABULARY: tuple[EventType, ...] = (
     _span("halftime", "Halftime", Category.GAME),
     _span("halftime-exodus", "Halftime exodus", Category.GAME),
     _span("last-two-minutes", "Last two minutes", Category.GAME),
-    _span("timeout", "Timeout", Category.GAME),
+    # Timeouts are not one thing. The band plays through most of them, but not
+    # an injury timeout (design.md 2, "Practical reading"), so a log that calls
+    # them all "timeout" cannot answer the one question that matters when
+    # tuning: was the band meant to be playing here. Whose timeout it is also
+    # decides which band is playing at all - see other-band-on-field.
+    _span("timeout-home", "Timeout: home", Category.GAME),
+    _span("timeout-away", "Timeout: away", Category.GAME),
+    _span("timeout-media", "Timeout: media", Category.GAME),
+    _span("timeout-official", "Timeout: officials", Category.GAME),
+    _span("timeout-injury", "Timeout: injury", Category.GAME),
+    # Kept, and deliberately last. The operator is watching a field, and an
+    # unclassified timeout beats one that went unmarked while they decided.
+    # Also the key old logs already carry.
+    _span("timeout", "Timeout: unspecified", Category.GAME),
     # Fader moves. `commanded` is written by the box itself; the rest are the
     # operator saying why.
     _instant("commanded", "Fader commanded", Category.FADER, button=False),

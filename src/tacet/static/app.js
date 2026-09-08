@@ -30,14 +30,24 @@ function renderButtons(buttons) {
     grid.className = "grid";
     for (const item of items) {
       const node = document.createElement("button");
-      node.textContent = item.label;
+      node.textContent = buttonLabel(item.label, item.kind, false);
       node.dataset.key = item.key;
       node.dataset.kind = item.kind;
+      node.dataset.label = item.label;
       node.onclick = () => activate(item, node);
       grid.appendChild(node);
     }
     host.appendChild(heading); host.appendChild(grid);
   }
+}
+
+// Span buttons toggle: the first tap opens the region, the second closes it.
+// Instants fire once. The highlight alone cannot carry that difference - it
+// looks the same as an instant that was just tapped - so the button says which
+// tap it is about to be.
+function buttonLabel(label, kind, open) {
+  if (kind !== "span") return label;
+  return label + (open ? " (end)" : " (start)");
 }
 
 function activate(item, node) {
@@ -101,6 +111,7 @@ function render(next) {
   for (const node of document.querySelectorAll("#buttons button")) {
     const open = (next.open_spans || []).some(id => id.startsWith(node.dataset.key + "-"));
     node.classList.toggle("on", open);
+    node.textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
   }
 }
 

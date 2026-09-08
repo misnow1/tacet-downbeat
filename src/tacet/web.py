@@ -276,6 +276,9 @@ h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em
 margin:4px 0 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .grid button{padding:14px 10px;font-size:14px;font-weight:500}
+/* Spans are a different kind of control from instants and must not look like
+   them: one tap of these opens a region and the next one closes it. */
+.grid button[data-kind="span"]{border-style:dashed}
 #link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;background:var(--warn);
 display:none}
 </style></head><body>

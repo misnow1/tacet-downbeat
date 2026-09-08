@@ -52,6 +52,24 @@ class TestVocabulary(unittest.TestCase):
         for key in ("q1", "halftime-exodus", "last-two-minutes"):
             self.assertEqual(ann.EVENTS[key].kind, ann.Kind.SPAN, key)
 
+    def test_every_timeout_is_a_game_span(self):
+        timeouts = [e for e in ann.VOCABULARY if e.key.startswith("timeout")]
+        self.assertGreater(len(timeouts), 1)
+        for event in timeouts:
+            self.assertEqual(event.kind, ann.Kind.SPAN, event.key)
+            self.assertEqual(event.category, ann.Category.GAME, event.key)
+
+    def test_an_injury_timeout_is_distinguishable_from_the_rest(self):
+        # design.md 2: the band plays through timeouts *excluding* injury
+        # timeouts. A log that cannot tell them apart cannot answer whether the
+        # band was meant to be playing.
+        self.assertIn("timeout-injury", ann.EVENTS)
+
+    def test_the_original_timeout_key_still_resolves(self):
+        # Keys are machine-facing and stable; logs from before the split still
+        # have to read back.
+        self.assertEqual(ann.lookup("timeout").kind, ann.Kind.SPAN)
+
     def test_lookup_rejects_an_unknown_key(self):
         with self.assertRaises(ann.UnknownEventError):
             ann.lookup("no-such-event")
