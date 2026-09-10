@@ -182,6 +182,11 @@ Worth checking:
   for and the only one a stub cannot rehearse.
 - The banner is absent when the link is healthy and says `Connecting` only
   briefly. A banner that sits on `Connecting` means frames are not arriving.
+- The counter beside the state climbs to about 15 and resets to `0s`, over and
+  over, with a green dot. That cycle is the healthy reading - a figure sitting
+  still is the failure it exists to catch. Worth watching for a minute, since
+  it is the only element on the page that is meant to change on its own while
+  nothing is happening.
 - The wake advice at the foot of the page should be present on the iPad, since
   the API needs HTTPS. If Safari ever holds the lock instead, the line says so -
   and that is worth reporting, because it would mean the assumption in

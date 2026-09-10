@@ -316,6 +316,14 @@ Minimum during-game requirements:
   box therefore sends a keepalive the page can see, and the page distinguishes
   three states: connecting, delivering, and open-but-silent-too-long. An open
   socket is not evidence of a working link (§5.7)
+- **Something that says the link is fine, not only that it is broken.** A
+  banner alone cannot: its absence is also what a page that has stopped
+  executing looks like, which on this link is precisely the ambiguity worth
+  removing. A counter of seconds since the last frame does it, and does it as
+  two separable facts - digits that change every second are the renderer
+  proving it runs, and digits dropping back to zero are the link proving it
+  delivers. Neither says anything about the console, and nothing can: OSC is
+  write-only and a datagram into a black hole succeeds (§5.3)
 - **The screen has to stay on.** A locked iPad is no interface at all. The
   browser API for holding it awake requires a secure context and the page is
   served over plain HTTP, so the page asks for the lock where it can and

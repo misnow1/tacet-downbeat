@@ -303,6 +303,16 @@ font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 -webkit-text-size-adjust:100%;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 header{padding:14px 16px;border-bottom:1px solid var(--line)}
 #state{font-size:26px;font-weight:700;letter-spacing:.02em}
+/* The state and the link counter share a line: the counter is the one element
+   that says things are fine, and no banner cannot, since a page that has
+   stopped executing shows no banner either. */
+.headline{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+#pulse{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums;
+white-space:nowrap}
+#pulse::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;
+background:var(--line);margin-right:6px}
+#pulse.live::before{background:var(--ok)}
+#pulse.stale::before{background:var(--warn)}
 #why{color:var(--dim);margin-top:4px}
 #refusal{color:#ffb4a9;margin-top:6px;display:none}
 main{padding:16px;display:grid;gap:16px;max-width:900px;margin:0 auto}
@@ -348,7 +358,10 @@ margin:4px 0 0}
 #wake.advice{color:#ffca7a}
 </style></head><body>
 <div id="link" class="connecting">Connecting to the box</div>
-<header><div id="state">&hellip;</div><div id="why"></div><div id="refusal"></div></header>
+<header>
+  <div class="headline"><div id="state">&hellip;</div><div id="pulse">--</div></div>
+  <div id="why"></div><div id="refusal"></div>
+</header>
 <main>
   <div class="row">
     <button class="big open" id="btn-trigger">OPEN</button>

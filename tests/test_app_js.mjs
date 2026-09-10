@@ -505,6 +505,39 @@ for (const [open, silence, staleAfter] of [
   );
 }
 
+// -- the link counter -------------------------------------------------------
+
+// The half that says things are fine. A banner cannot: its absence is also what
+// a page that has stopped executing looks like, and telling those apart is the
+// entire point on a link assumed to be unreliable.
+const linkPulse = linkContext.linkPulse;
+
+check("nothing heard yet shows no reading", linkPulse(null, null)[1], "--");
+check("and claims no health for it", linkPulse(null, null)[0], "");
+check("a fresh frame reads zero", linkPulse(0, STALE_AFTER)[1], "0s");
+check("and reads as live", linkPulse(0, STALE_AFTER)[0], "live");
+check("seconds are whole", linkPulse(3.4, STALE_AFTER)[1], "3s");
+// The count climbing is normal - the box only speaks every 15s when it has
+// nothing to report. What is not normal is a count that stops changing.
+check("a quiet box still reads live", linkPulse(STALE_AFTER - 0.1, STALE_AFTER)[0], "live");
+check("silence past the threshold does not", linkPulse(STALE_AFTER, STALE_AFTER)[0], "stale");
+check("but still says how long", linkPulse(41.6, STALE_AFTER)[1], "42s");
+
+// A silence with no threshold to judge it against is not a fault, it is a
+// socket that has not been told anything yet.
+check("an unmeasured silence is never called stale", linkPulse(999, null)[0], "live");
+
+// The counter and the banner have to agree about what is wrong. The banner is
+// what shouts; the counter is what is read at a glance.
+for (const silence of [0, 10, STALE_AFTER - 0.1]) {
+  check(`silence=${silence}: quiet link, no banner and a live counter`,
+        [linkBanner(true, silence, STALE_AFTER), linkPulse(silence, STALE_AFTER)[0]],
+        [null, "live"]);
+}
+check("past the threshold both say so",
+      [linkBanner(true, 999, STALE_AFTER)[0], linkPulse(999, STALE_AFTER)[0]],
+      ["stale", "stale"]);
+
 // -- the link banner, wired up ----------------------------------------------
 
 // Driven through the socket callbacks the page actually installs, so the
@@ -516,6 +549,8 @@ const snapshotFrame = { data: JSON.stringify(snapshot()) };
   const { nodes } = browser();
   check("a page that has not connected yet does not claim it has",
         nodes.get("link").className, "lost");
+  check("and its counter shows no reading rather than a huge one",
+        nodes.get("pulse").textContent, "--");
 }
 {
   const { nodes, sockets } = browser();
@@ -538,6 +573,8 @@ const snapshotFrame = { data: JSON.stringify(snapshot()) };
   sockets[0].onmessage(keepaliveFrame);
   check("a delivered keepalive clears the banner", nodes.get("link").className, "");
   check("and leaves no text behind it", nodes.get("link").textContent, "");
+  check("and starts the counter", nodes.get("pulse").textContent, "0s");
+  check("green, which is the point of it", nodes.get("pulse").className, "live");
 }
 {
   // A keepalive carries no state. Rendering it would blank the whole page.
@@ -556,6 +593,17 @@ const snapshotFrame = { data: JSON.stringify(snapshot()) };
   sockets[0].onmessage(keepaliveFrame);
   sockets[0].onclose();
   check("a dropped socket says so at once", nodes.get("link").className, "lost");
+  check("and the counter stops claiming a reading", nodes.get("pulse").textContent, "--");
+  check("and stops being green", nodes.get("pulse").className, "");
+}
+
+{
+  // A snapshot is proof of life too, so it moves the counter even though it
+  // carries no threshold.
+  const { nodes, sockets } = browser();
+  sockets[0].onopen();
+  sockets[0].onmessage(snapshotFrame);
+  check("a snapshot starts the counter as well", nodes.get("pulse").textContent, "0s");
 }
 
 // -- the wake advice --------------------------------------------------------

@@ -226,6 +226,29 @@ class TestStaleThreshold(unittest.TestCase):
         self.assertIn('"stale_after"', web.KEEPALIVE_FRAME)
 
 
+class TestLinkIndicator(WebTestCase):
+    """The banner only ever says something is wrong, and its absence is also
+    what a page that has stopped executing looks like. The counter beside the
+    state is the half that says things are fine.
+    """
+
+    async def test_the_page_carries_the_counter(self):
+        body = await (await self.client.get("/")).text()
+        self.assertIn('id="pulse"', body)
+
+    async def test_it_starts_claiming_nothing(self):
+        # Not "0s". Nothing has arrived yet, and a page that has never heard
+        # from the box must not open looking healthy.
+        body = await (await self.client.get("/")).text()
+        self.assertIn('<div id="pulse">--</div>', body)
+
+    async def test_it_shares_the_line_with_the_state(self):
+        body = await (await self.client.get("/")).text()
+        headline = body[body.index('class="headline"') : body.index('id="why"')]
+        self.assertIn('id="state"', headline)
+        self.assertIn('id="pulse"', headline)
+
+
 class TestWakeAdvice(WebTestCase):
     """The Screen Wake Lock API needs a secure context and the page is served
     over plain HTTP on a VLAN with no route to a certificate authority. An iPad

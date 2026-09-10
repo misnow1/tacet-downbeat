@@ -187,7 +187,7 @@ const now = () => Date.now() / 1000;
 // through it. `staleAfter` is null until the box names it, which is what
 // separates "connecting" from "connected": an open socket that has never
 // delivered a frame has not proven anything yet.
-let link = {open: false, staleAfter: null, seen: 0};
+let link = {open: false, staleAfter: null, seen: null};
 
 // An open socket does not prove a working link, and that is the failure that
 // matters in a stadium. Wifi degrades as the stands fill, TCP half-opens,
@@ -212,11 +212,42 @@ function linkBanner(open, silence, staleAfter) {
   return null;
 }
 
+// The counter beside the state, which is the half that says things are fine.
+// A banner cannot: its absence is also what a page that has stopped executing
+// looks like, and on a link this unreliable that ambiguity is the whole
+// problem.
+//
+// It is a number rather than a light because it has two separate things to
+// prove, and a light conflates them. The digits change every second even when
+// the box has nothing to report, which is the renderer proving it still runs;
+// and they drop back to zero on each keepalive, at most 15s apart, which is the
+// link proving it still delivers. A counter that has stopped moving is a dead
+// page. A counter climbing past the threshold is a dead link. Those are
+// different faults and they now look different.
+//
+// It says nothing about the console, deliberately. OSC is write-only and a
+// datagram into a black hole succeeds, so no indicator here can honestly claim
+// the DM7 heard anything (design.md 5.3).
+function linkPulse(silence, staleAfter) {
+  if (silence === null) return ["", "--"];
+  const text = Math.round(silence) + "s";
+  if (staleAfter !== null && silence >= staleAfter) return ["stale", text];
+  return ["live", text];
+}
+
 function paintLink() {
-  const banner = linkBanner(link.open, now() - link.seen, link.staleAfter);
+  // Null rather than a huge number, so "nothing has arrived on this socket yet"
+  // stays a distinct fact from "nothing has arrived for a long time".
+  const silence = link.seen === null ? null : now() - link.seen;
+  const banner = linkBanner(link.open, silence, link.staleAfter);
   const node = $("link");
   node.className = banner ? banner[0] : "";
   node.textContent = banner ? banner[1] : "";
+
+  const [pulseClass, pulseText] = linkPulse(silence, link.staleAfter);
+  const pulse = $("pulse");
+  pulse.className = pulseClass;
+  pulse.textContent = pulseText;
 }
 
 // Any frame proves the link, not just a keepalive: a box busy pushing snapshots
@@ -241,7 +272,7 @@ function connect() {
   socket.onclose = () => {
     // Everything the old socket established is gone with it, the threshold
     // included: the next one has to prove itself from scratch.
-    link = {open: false, staleAfter: null, seen: 0};
+    link = {open: false, staleAfter: null, seen: null};
     paintLink();
     setTimeout(connect, RECONNECT_MS);
   };

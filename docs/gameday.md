@@ -125,6 +125,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 | Fader | `-∞ dB`, tagged **commanded** |
 | Recording | `unknown`, tagged **no feedback** |
 | Top of the screen | Nothing. No banner is the healthy state |
+| Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
 
 `no feedback` before recording is correct, not a fault. Reaper says nothing at
@@ -141,6 +142,21 @@ Then, in order:
    whole chain - box, queue, script, Reaper.
 3. **Arm** when the band is in the stands. The state goes to `IDLE` and the
    fader buttons become live.
+
+**The counter beside the state is the one thing that says the page is
+alive.** It reads seconds since the box last said anything, so it climbs to
+about 15 and drops back to `0s` - the box only speaks every 15 seconds when it
+has nothing to report, and the reset is the proof the link still delivers. Two
+readings tell you two different things:
+
+- **A figure that has stopped changing** means the page has stopped, not that
+  the box has gone quiet. Reload it.
+- **A figure climbing past about 40**, with a red dot and a red banner, means
+  the link is down and what is on screen is stale.
+
+It says nothing about the console. Nothing can - OSC is write-only, and a packet
+sent into a black hole succeeds (design.md 5.3). `Console unreachable` appears
+only when the box's own send fails.
 
 **Record before annotating.** Reaper has no negative timeline, so anything
 logged before recording starts has nowhere to go on it. Those entries are kept
@@ -214,6 +230,7 @@ The box fails visible. Anything it cannot confirm, it says.
 
 | The page says | What it means | What to do |
 |---|---|---|
+| The counter has stopped changing | The page itself has stopped, not the box. This is what no banner cannot tell you on its own | Reload the page. The box, the log and the recording are unaffected |
 | `Not connected to the box` | The websocket is down. The page is retrying once a second | Everything on screen is the last thing the box said. The console is unaffected; ride the fader from the DM7 app if it does not come back |
 | `Connecting to the box` | The socket opened but the box has not delivered anything through it yet | Normal for a moment. If it stays, the box is up and wedged rather than down |
 | `No word from the box for Ns` | The socket still looks open and nothing is arriving through it, which is what stadium wifi does as the stands fill | Treat the whole page as stale. The link usually drops properly a moment later and the retry takes over |
