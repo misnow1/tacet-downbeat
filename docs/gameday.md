@@ -117,6 +117,7 @@ reconnects on its own if the box restarts.
 | State | `STANDING DOWN` |
 | Fader | `-∞ dB`, tagged **commanded** |
 | Recording | `unknown`, tagged **no feedback** |
+| Top of the screen | Nothing. No banner is the healthy state |
 
 `no feedback` before recording is correct, not a fault. Reaper says nothing at
 all while its transport is parked, and announces the record state only when it
@@ -205,11 +206,19 @@ The box fails visible. Anything it cannot confirm, it says.
 
 | The page says | What it means | What to do |
 |---|---|---|
+| `Not connected to the box` | The websocket is down. The page is retrying once a second | Everything on screen is the last thing the box said. The console is unaffected; ride the fader from the DM7 app if it does not come back |
+| `Connecting to the box` | The socket opened but the box has not delivered anything through it yet | Normal for a moment. If it stays, the box is up and wedged rather than down |
+| `No word from the box for Ns` | The socket still looks open and nothing is arriving through it, which is what stadium wifi does as the stands fill | Treat the whole page as stale. The link usually drops properly a moment later and the retry takes over |
 | `LINK LOST` | Reaper stopped answering while its transport should have been streaming | Check Reaper is alive. The audio may still be recording |
 | `not yet reported` | Link is fine, Reaper has not said whether it is recording | Normal after a box restart. Any transport change in Reaper resolves it |
 | `Console unreachable` | The DM7 did not accept a packet | The operator has the fader. Ride it from the iPad and keep going |
 | `Reaper is already recording` | Second press of the record button | Nothing. It refused on purpose |
 | `not armed` | A fader button while standing down | Arm first. The tap was still logged |
+
+The top banner is about the iPad's link to the box. `LINK LOST` on the
+recording line is about the box's link to Reaper. They are different failures
+and can happen separately: the box can be talking to Reaper perfectly while the
+iPad cannot see the box.
 
 **A restarted box mid-game cannot start recording**, and says so. It has heard
 `/time` but no transport change, so it cannot tell whether Reaper is rolling,

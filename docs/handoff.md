@@ -176,7 +176,12 @@ Worth checking:
   **no feedback**, visibly differently. If those two ever look alike, that is a
   bug, not a style question — see design.md §5.5.
 - Killing the server shows the disconnected banner, and restarting it
-  reconnects on its own.
+  reconnects on its own. Harder and worth trying: pull the wifi rather than the
+  server, so the socket stalls instead of closing. The banner should turn red
+  within about 40 seconds on its own, which is the case the keepalive exists
+  for and the only one a stub cannot rehearse.
+- The banner is absent when the link is healthy and says `Connecting` only
+  briefly. A banner that sits on `Connecting` means frames are not arriving.
 - With Reaper running and its OSC device on, recording state should go from
   unknown to confirmed. That also double-checks the address map from step 1.
 - Span buttons (quarters, halftime exodus) should highlight while open and

@@ -146,13 +146,86 @@ $("btn-arm").onclick = () => post("/api/arm");
 $("btn-stand-down").onclick = () => post("/api/stand-down");
 $("btn-record").onclick = () => post("/api/record");
 
+// -- the link to the box ----------------------------------------------------
+
+// How long to wait before trying the socket again. Fast, and deliberately not
+// backed off: there is one box, a handful of browsers, and a page that is wrong
+// for ten seconds is worse than a few wasted connection attempts.
+const RECONNECT_MS = 1000;
+
+// How often the banner is repainted, so a silence that has gone on too long
+// gets noticed without a message having to arrive in order to notice it. That
+// is the whole point - the dangerous case is the one where nothing arrives.
+const LINK_TICK_MS = 1000;
+
+const now = () => Date.now() / 1000;
+
+// What is known about the connection, as distinct from what the box last said
+// through it. `staleAfter` is null until the box names it, which is what
+// separates "connecting" from "connected": an open socket that has never
+// delivered a frame has not proven anything yet.
+let link = {open: false, staleAfter: null, seen: 0};
+
+// An open socket does not prove a working link, and that is the failure that
+// matters in a stadium. Wifi degrades as the stands fill, TCP half-opens,
+// `onclose` never fires, and the page goes on showing a snapshot from six
+// minutes ago with complete confidence. The server's websocket pings prove
+// liveness to aiohttp but a browser does not surface ping or pong to script, so
+// the box sends a keepalive the page can see and this watches the gap between
+// arrivals.
+//
+// Same distinction recordingTag draws about Reaper: a box that is deliberately
+// quiet is not a fault - it goes quiet whenever nothing changes - while a
+// keepalive that did not arrive is. Hence the threshold rather than a timer on
+// any silence at all.
+function linkBanner(open, silence, staleAfter) {
+  if (!open) return ["lost", "Not connected to the box \u2014 what you see may be stale"];
+  if (staleAfter === null) return ["connecting", "Connecting to the box"];
+  if (silence >= staleAfter) {
+    return ["stale",
+            "No word from the box for " + Math.round(silence)
+              + "s \u2014 what you see may be stale"];
+  }
+  return null;
+}
+
+function paintLink() {
+  const banner = linkBanner(link.open, now() - link.seen, link.staleAfter);
+  const node = $("link");
+  node.className = banner ? banner[0] : "";
+  node.textContent = banner ? banner[1] : "";
+}
+
+// Any frame proves the link, not just a keepalive: a box busy pushing snapshots
+// is plainly alive. Only the keepalive carries how long to wait, so there is one
+// copy of that number and it lives next to the interval it is derived from.
+function noteFrame(message) {
+  link.seen = now();
+  if (message.keepalive) link.staleAfter = message.stale_after;
+  paintLink();
+}
+
 function connect() {
   const socket = new WebSocket(
     (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
-  socket.onopen = () => { $("link").style.display = "none"; };
-  socket.onmessage = event => render(JSON.parse(event.data));
-  socket.onclose = () => { $("link").style.display = "block"; setTimeout(connect, 1000); };
+  socket.onopen = () => { link.open = true; paintLink(); };
+  socket.onmessage = event => {
+    const message = JSON.parse(event.data);
+    noteFrame(message);
+    // A keepalive carries no state. Rendering it would blank the page.
+    if (!message.keepalive) render(message);
+  };
+  socket.onclose = () => {
+    // Everything the old socket established is gone with it, the threshold
+    // included: the next one has to prove itself from scratch.
+    link = {open: false, staleAfter: null, seen: 0};
+    paintLink();
+    setTimeout(connect, RECONNECT_MS);
+  };
   socket.onerror = () => socket.close();
 }
+
 fetch("/api/state").then(r => r.json()).then(render);
+paintLink();
+setInterval(paintLink, LINK_TICK_MS);
 connect();

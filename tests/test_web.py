@@ -20,6 +20,9 @@ class FakeSender:
 
 class WebTestCase(AioHTTPTestCase):
     async def get_application(self):
+        return web.create_app(self.build_app())
+
+    def build_app(self):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
@@ -33,7 +36,7 @@ class WebTestCase(AioHTTPTestCase):
             recorder=reaper.ReaperClient(sender=FakeSender()),
             fade_seconds=0.05,
         )
-        return web.create_app(self.tacet)
+        return self.tacet
 
     def entries(self):
         return [e.event for e in ann.read_entries(self.root / "game.jsonl")]
@@ -146,15 +149,81 @@ class TestAnnotation(WebTestCase):
 class TestWebSocket(WebTestCase):
     async def test_a_snapshot_arrives_on_connect(self):
         async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
             payload = json.loads((await socket.receive()).data)
             self.assertEqual(payload["state"], "standing-down")
 
     async def test_changes_are_pushed(self):
         async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
             await socket.receive()  # the initial snapshot
             await self.client.post("/api/arm")
             payload = json.loads((await socket.receive()).data)
             self.assertEqual(payload["state"], "idle")
+
+
+class TestKeepalive(WebTestCase):
+    """An open socket proves nothing. Stadium wifi half-opens - delivery stops,
+    `onclose` never fires, and the page goes on showing a snapshot from six
+    minutes ago with complete confidence. aiohttp's ping frames are how the box
+    notices a dead browser; a browser cannot see them, so it gets these.
+    """
+
+    async def test_a_keepalive_arrives_before_the_first_snapshot(self):
+        # The page reports itself as connecting until it has been told how long
+        # to wait, so being told has to come with the first round trip rather
+        # than a keepalive interval later.
+        async with self.client.ws_connect("/ws") as socket:
+            first = json.loads((await socket.receive()).data)
+            self.assertTrue(first["keepalive"])
+            self.assertEqual(first["stale_after"], web.STALE_AFTER)
+            second = json.loads((await socket.receive()).data)
+            self.assertEqual(second["state"], "standing-down")
+
+    async def test_a_keepalive_is_not_mistakable_for_a_snapshot(self):
+        # The page renders whatever is not marked, so an unmarked keepalive
+        # would blank the state, the fader and the recording line at once.
+        frame = json.loads(web.KEEPALIVE_FRAME)
+        self.assertTrue(frame["keepalive"])
+        for key in ("state", "fader", "recording", "buttons"):
+            self.assertNotIn(key, frame)
+
+    async def test_a_snapshot_is_not_mistakable_for_a_keepalive(self):
+        payload = await (await self.client.get("/api/state")).json()
+        self.assertNotIn("keepalive", payload)
+
+
+class TestKeepaliveRepeats(WebTestCase):
+    """The interval turned right up, so the loop can be watched repeating
+    without the test taking a minute to do it."""
+
+    async def get_application(self):
+        return web.create_app(self.build_app(), keepalive_interval=0.01)
+
+    async def test_they_keep_coming_on_a_socket_with_nothing_to_report(self):
+        # The whole point. Silence is what the page has to be able to trust,
+        # and it can only trust it if something arrives during it.
+        async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
+            await socket.receive()  # the initial snapshot
+            for _ in range(3):
+                frame = json.loads((await socket.receive()).data)
+                self.assertTrue(frame["keepalive"])
+
+
+class TestStaleThreshold(unittest.TestCase):
+    def test_it_survives_a_lost_keepalive(self):
+        # One frame lost on a bad link is not a fault. Were the threshold at or
+        # under a single interval, every ordinary hiccup would paint the page
+        # red and the banner would stop meaning anything.
+        self.assertGreater(web.STALE_AFTER, web.KEEPALIVE_INTERVAL * 2)
+
+    def test_it_is_derived_rather_than_written_down_twice(self):
+        self.assertEqual(web.STALE_AFTER, web.KEEPALIVE_INTERVAL * web.KEEPALIVE_LOSSES_BEFORE_STALE)
+
+    def test_the_page_is_told_it_rather_than_keeping_a_copy(self):
+        # The one number, crossing into the other language exactly once.
+        self.assertIn('"stale_after"', web.KEEPALIVE_FRAME)
 
 
 class TestBroadcastThrottle(unittest.TestCase):

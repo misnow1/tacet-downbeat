@@ -310,6 +310,12 @@ Minimum during-game requirements:
 - Plain-language "why" line — what state the machine is in and what put it there
 - Recording state, which unlike the fader **is** confirmed (§5.9). Commanded and
   confirmed values must be visually distinct; never render them alike
+- **The state of the link to the box itself.** Everything above is a claim the
+  page can only make about the last thing it was told, so a link that has
+  stopped delivering turns the whole screen into a lie that looks correct. The
+  box therefore sends a keepalive the page can see, and the page distinguishes
+  three states: connecting, delivering, and open-but-silent-too-long. An open
+  socket is not evidence of a working link (§5.7)
 
 Full telemetry is interesting but not required for game operations.
 
@@ -355,6 +361,16 @@ on that link.
 A wired box on the control VLAN speaking OSC is **strictly more reliable than
 the iPad, before it detects anything at all**. See §9 — this is a worthwhile
 standalone deliverable.
+
+That moves the unreliable link rather than removing it: the operator's page
+still reaches the box over the same degrading wifi. The failure to design for is
+not the socket that closes but the one that half-opens — 2.4 GHz absorbed by a
+filling stand, TCP stalled, no close event, and a page rendering a snapshot from
+six minutes ago with complete confidence. Nothing else on the screen looks wrong
+while that is happening, which makes it exactly the silent degradation this
+document forbids elsewhere. Hence the keepalive in §5.5: liveness has to be
+something the page observes arriving, not something it infers from a socket that
+has not told it otherwise.
 
 802.11ah / HaLow is a reasonable redundant path — sub-GHz penetrates bodies far
 better, and the payload is a few hundred bytes per second. Redundant path, not

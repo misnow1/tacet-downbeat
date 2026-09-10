@@ -53,6 +53,7 @@ function element(id) {
 function browser() {
   const nodes = new Map();
   const created = [];
+  const sockets = [];
   const context = createContext({
     console,
     document: {
@@ -72,18 +73,25 @@ function browser() {
     },
     location: { protocol: "http:", host: "box:8080" },
     setTimeout() {},
+    // The banner is repainted on a tick so a silence is noticed without a
+    // message arriving to notice it. Never fired here; paintLink is called
+    // directly instead.
+    setInterval() {},
     // The page boots on load. Neither of these may resolve, or the tests would
     // be racing the page's own first render.
     fetch: () => new Promise(() => {}),
     WebSocket: class {
       constructor(url) {
         this.url = url;
+        sockets.push(this);
       }
-      close() {}
+      close() {
+        if (this.onclose) this.onclose();
+      }
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes, created };
+  return { context, nodes, created, sockets };
 }
 
 function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
@@ -372,6 +380,108 @@ check(
   byKey.get("up-whistle").textContent,
   "Up on whistle",
 );
+
+// -- the link banner --------------------------------------------------------
+
+// The failure that matters in a stadium is not a socket that closes, it is one
+// that half-opens: delivery stops, `onclose` never fires, and the page goes on
+// showing a six-minute-old snapshot with complete confidence. So the banner has
+// three states rather than two, and an open socket alone is not one of them.
+const { context: linkContext } = browser();
+const linkBanner = linkContext.linkBanner;
+const STALE_AFTER = 37.5; // what the box sends; see web.STALE_AFTER
+
+check("a closed socket says so", linkBanner(false, 0, STALE_AFTER)[0], "lost");
+check(
+  "a closed socket warns that the screen is stale",
+  linkBanner(false, 0, STALE_AFTER)[1],
+  "Not connected to the box \u2014 what you see may be stale",
+);
+// Until the box has named a threshold nothing has been delivered, and there is
+// no basis for calling the link healthy. An open socket is an attempt.
+check("an open socket that has delivered nothing is connecting",
+      linkBanner(true, 0, null)[0], "connecting");
+check("and does not claim a staleness it has no threshold for",
+      linkBanner(true, 999, null)[0], "connecting");
+check("a delivering link shows no banner at all", linkBanner(true, 0, STALE_AFTER), null);
+// A box with nothing to report goes deliberately quiet, so quiet is not a
+// fault. Same distinction recordingTag draws about a parked Reaper.
+check("a quiet link inside the threshold is not a fault",
+      linkBanner(true, STALE_AFTER - 0.1, STALE_AFTER), null);
+check("silence past the threshold is", linkBanner(true, STALE_AFTER, STALE_AFTER)[0], "stale");
+check(
+  "and says how long it has been",
+  linkBanner(true, 42.4, STALE_AFTER)[1],
+  "No word from the box for 42s \u2014 what you see may be stale",
+);
+
+// The invariant: there is one way to show nothing, and it needs both a live
+// socket and something recently delivered through it.
+for (const [open, silence, staleAfter] of [
+  [false, 0, STALE_AFTER],
+  [false, 0, null],
+  [true, 0, null],
+  [true, 999, STALE_AFTER],
+]) {
+  check(
+    `open=${open} silence=${silence} staleAfter=${staleAfter}: never reads as healthy`,
+    linkBanner(open, silence, staleAfter) === null,
+    false,
+  );
+}
+
+// -- the link banner, wired up ----------------------------------------------
+
+// Driven through the socket callbacks the page actually installs, so the
+// plumbing is covered as well as the decision above.
+const keepaliveFrame = { data: JSON.stringify({ keepalive: true, stale_after: STALE_AFTER }) };
+const snapshotFrame = { data: JSON.stringify(snapshot()) };
+
+{
+  const { nodes } = browser();
+  check("a page that has not connected yet does not claim it has",
+        nodes.get("link").className, "lost");
+}
+{
+  const { nodes, sockets } = browser();
+  sockets[0].onopen();
+  check("an opened socket is still only connecting", nodes.get("link").className, "connecting");
+}
+{
+  const { nodes, sockets } = browser();
+  sockets[0].onopen();
+  sockets[0].onmessage(snapshotFrame);
+  check("a snapshot renders", nodes.get("state").textContent, "STANDING DOWN");
+  // The threshold arrives with the keepalive, and until it does the page has
+  // no number to judge a silence against.
+  check("but does not settle the threshold on its own",
+        nodes.get("link").className, "connecting");
+}
+{
+  const { nodes, sockets } = browser();
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  check("a delivered keepalive clears the banner", nodes.get("link").className, "");
+  check("and leaves no text behind it", nodes.get("link").textContent, "");
+}
+{
+  // A keepalive carries no state. Rendering it would blank the whole page.
+  const { nodes, sockets } = browser();
+  sockets[0].onopen();
+  sockets[0].onmessage(snapshotFrame);
+  sockets[0].onmessage(keepaliveFrame);
+  check("a keepalive does not blank the state", nodes.get("state").textContent, "STANDING DOWN");
+  check("and does not blank the fader", nodes.get("level").textContent, "-\u221E dB");
+}
+{
+  // Everything the old socket established goes with it, the threshold
+  // included: the next one proves itself from scratch.
+  const { nodes, sockets } = browser();
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  sockets[0].onclose();
+  check("a dropped socket says so at once", nodes.get("link").className, "lost");
+}
 
 // -- report -----------------------------------------------------------------
 

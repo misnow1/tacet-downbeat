@@ -35,6 +35,34 @@ from .app import App
 #: playhead still goes out immediately.
 POSITION_BROADCAST_INTERVAL = 1.0
 
+#: How often the box says "still here" on a socket it has nothing to report on.
+#:
+#: An open socket proves nothing on stadium wifi. The link half-opens, delivery
+#: stops, `onclose` never fires, and the page goes on showing a snapshot from
+#: six minutes ago with complete confidence. aiohttp's own ping frames
+#: (`WS_PING_INTERVAL`) solve the mirror image of this - they are how the box
+#: notices a browser that went away - but a browser does not surface ping or
+#: pong to script, so the page cannot see them. This is the one it can see.
+KEEPALIVE_INTERVAL = 15.0
+
+#: How many keepalives may go missing before the page stops trusting what it is
+#: showing. Two, so one lost frame on a bad link is not a fault; the half is so
+#: a keepalive that is merely late is not one either.
+KEEPALIVE_LOSSES_BEFORE_STALE = 2.5
+
+#: When the page gives up on what it is showing. Derived rather than written
+#: down twice: the page is told this number instead of keeping its own copy, so
+#: the threshold cannot drift away from the interval it comes from.
+STALE_AFTER = KEEPALIVE_INTERVAL * KEEPALIVE_LOSSES_BEFORE_STALE
+
+#: How often aiohttp pings the browser, which is how the box notices a browser
+#: that has gone away without closing. The other direction of the same problem.
+WS_PING_INTERVAL = 10.0
+
+#: A frame that carries no state, only the fact that the link delivered it.
+#: `keepalive` marks it so the page renders a snapshot and not this.
+KEEPALIVE_FRAME = json.dumps({"keepalive": True, "stale_after": STALE_AFTER})
+
 
 def _without_position(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     recording = {k: v for k, v in snapshot["recording"].items() if k != "position"}
@@ -97,6 +125,11 @@ class _Hub:
 
 
 _HUB = web.AppKey("tacet_hub", _Hub)
+
+#: Configuration rather than a constant, so a link that wants a different
+#: cadence can have one without the number being edited into the source - and so
+#: the loop can be watched repeating in a test without the test taking a minute.
+_KEEPALIVE = web.AppKey("tacet_keepalive_interval", float)
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
@@ -184,17 +217,34 @@ async def _span_end(request: web.Request) -> web.Response:
     return web.json_response({"state": app.snapshot()})
 
 
+async def _keepalive(socket: web.WebSocketResponse, *, interval: float = KEEPALIVE_INTERVAL) -> None:
+    """Say "still here" on a socket the box has nothing to report on."""
+    while True:
+        await asyncio.sleep(interval)
+        if socket.closed:
+            return
+        await _send(socket, KEEPALIVE_FRAME)
+
+
 async def _websocket(request: web.Request) -> web.WebSocketResponse:
-    socket = web.WebSocketResponse(heartbeat=10.0)
+    socket = web.WebSocketResponse(heartbeat=WS_PING_INTERVAL)
     await socket.prepare(request)
     hub = request.app[_HUB]
     hub.sockets.append(socket)
+    # The keepalive goes first, so the page learns how long to wait before
+    # distrusting a silence on the same round trip as its first snapshot. Until
+    # it has been told, it reports itself as connecting rather than connected.
+    keeper = asyncio.ensure_future(_keepalive(socket, interval=request.app[_KEEPALIVE]))
     try:
+        await socket.send_str(KEEPALIVE_FRAME)
         await socket.send_str(json.dumps(hub.app.snapshot()))
         async for message in socket:
             if message.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                 break
     finally:
+        keeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keeper
         if socket in hub.sockets:
             hub.sockets.remove(socket)
     return socket
@@ -206,10 +256,11 @@ async def _send(socket: web.WebSocketResponse, payload: str) -> None:
         await socket.send_str(payload)
 
 
-def create_app(app: App) -> web.Application:
+def create_app(app: App, *, keepalive_interval: float = KEEPALIVE_INTERVAL) -> web.Application:
     server = web.Application()
     hub = _Hub(app)
     server[_HUB] = hub
+    server[_KEEPALIVE] = keepalive_interval
     app.on_change(hub.broadcast)
 
     server.add_routes(
@@ -286,10 +337,15 @@ margin:4px 0 0}
 .grid button[data-action]{border-width:2px;font-weight:700}
 .grid button[data-action="open"]{border-color:var(--open);color:var(--open)}
 .grid button[data-action="release"]{border-color:var(--fade);color:var(--fade)}
-#link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;background:var(--warn);
-display:none}
+/* Three link states, not two. An open socket that has not delivered anything
+   is a connection attempt and reads as one; a silence past the box's own
+   threshold is the dangerous state, because nothing else on the page looks
+   wrong while it is happening. */
+#link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;display:none}
+#link.connecting{display:block;background:var(--fade)}
+#link.stale,#link.lost{display:block;background:var(--warn)}
 </style></head><body>
-<div id="link">Disconnected from the box &mdash; what you see may be stale</div>
+<div id="link" class="connecting">Connecting to the box</div>
 <header><div id="state">&hellip;</div><div id="why"></div><div id="refusal"></div></header>
 <main>
   <div class="row">
