@@ -674,6 +674,31 @@ has never been written*. Those are different facts, collapsing them quietly
 poisons the Phase 3 analysis, and it cannot be recovered afterwards. The
 operational half of this is in gameday.md.
 
+### The pregame countdown occupies a clock
+
+Observed from the press box, not yet seen on a wire. The stadium clock runs a
+countdown to kickoff from around the time doors open, roughly 150 minutes out.
+It ends at the team entrance, resets, and restarts at the top of the first
+quarter.
+
+Capture will normally already be running through all of that (gameday.md), so a
+reader attaches during the countdown rather than at kickoff. Two consequences:
+
+- **A 150-minute countdown does not fit the shape of a game clock.** Main Clock
+  Time is 5 wide at offset 1, which holds `mm:ss` for a quarter and cannot hold
+  `150:00`. Whether pregame drives that field in some other format, drives a
+  separate timer, or leaves it alone entirely is unknown. It is a question for
+  the Data Monitor capture requested below, and it is free to answer there -
+  the same capture settles it. Do not assume the field is idle before kickoff.
+- **Halftime-exodus arming must not fire on it.** The rule in 5.4 is Q2 under
+  5:00. A pregame countdown passing 5:00 is a different fact wearing the same
+  digits, so the quarter field has to be a positive term in that test rather
+  than an assumed one. This is the same discipline as 5.4 generally: RTD is
+  context, and a permissive has to be asserted, not inferred from absence.
+
+The countdown reaching zero is also the cheapest kickoff anchor available. It
+is machine-visible and does not depend on anyone tapping a button.
+
 ### Requested
 
 1. **A read-only RTD feed reachable from the press box.** UDP on the scoreboard

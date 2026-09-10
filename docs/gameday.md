@@ -140,6 +140,44 @@ will not appear as markers.
 
 ---
 
+## When to start the recording
+
+**Before the band enters the stadium**, which in practice means as soon as
+Reaper and the box are up - the pre-flight order above, unchanged.
+
+The stadium clock runs a countdown to kickoff from around the time doors open,
+150 minutes out. It ends at the team entrance, resets, and restarts at the top
+of the first quarter. The band does not come in until roughly 60 minutes before
+kickoff, so most of that countdown is a set of empty stands.
+
+Record it anyway.
+
+| Start at | Runs for | Multitrack |
+|---|---|---|
+| Doors, T-150 | ~6 h | ~44 GB |
+| Band enters stadium, T-60 | ~4.5 h | ~33 GB |
+
+At 14 channels of 24-bit/48 kHz that is about 11 GB between them, which is not
+a reason to do anything. Two things are:
+
+- **The empty stands are not empty of data.** A stadium filling up with no band
+  playing is the cleanest negative sample available - the crowd competing on
+  level with nothing underneath it, which is the exact case a gate fails
+  (design.md 1). Every minute of it is free labelled material for a detector
+  that does not exist yet, and it cannot be collected any other way.
+- **Annotation has a floor and audio does not.** An entry logged before the
+  record anchor is reported as `skipped_before_anchor` and never becomes a
+  marker. `band-enters-stadium` is in the vocabulary and happens at about T-60,
+  so recording that starts after it leaves that marker nowhere to land.
+
+The second one is what sets the time. Audio started late loses audio;
+annotation started late loses the annotation permanently, and design.md 5.6 is
+entirely about the half that cannot be reconstructed afterwards.
+
+There is no stop button, so starting early costs nothing that has to be undone.
+
+---
+
 ## During the game
 
 **There is no stop button, by design.** Each home game is a single
