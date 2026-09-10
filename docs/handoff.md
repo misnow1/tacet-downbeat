@@ -146,12 +146,24 @@ place, and whether the region gets created.
 
 ### 3. First run of the UI
 
-Never opened in a browser. The Python behind it has an end-to-end smoke test
-against a dead console, and the page's own script is tested under node against a
-stubbed DOM (`make test-js`) - so the rendering logic is covered, including that
-the four recording states stay tellable apart. What no test can reach is whether
-a real browser agrees, and whether any of it is usable at arm's length on a
-tablet. Treat the page as unproven in that sense.
+**Rendered in a desktop browser, 2026-09-10, and it looked right.** That
+settles the half no test could reach: a real engine agrees with the stub about
+the layout, the link counter and the recording states. The Python behind it has
+an end-to-end smoke test against a dead console, and the page's own script is
+tested under node against a stubbed DOM (`make test-js`).
+
+**The iPad half is still open**, and it is the half that matters on the day:
+whether the buttons can be hit at arm's length without looking, and whether
+commanded and confirmed read as different at a glance on a smaller screen in a
+bright room. Treat the page as unproven in that sense.
+
+One trap when comparing the two. **The laptop is a secure context and the iPad
+is not.** Browsers treat `http://127.0.0.1` as potentially trustworthy, so
+`navigator.wakeLock` exists there and the page will say it is holding the screen
+awake. Over the LAN address the iPad reaches, plain HTTP is not trustworthy, the
+API is absent, and the page falls back to the Auto-Lock advice. Same code, two
+readings, and the laptop's is the misleading one - it is not evidence the iPad
+will hold its screen.
 
 ```
 tacet-serve --console-host 127.0.0.1 --dca 3 \
@@ -218,12 +230,13 @@ The console IP is the one under Setup → Network → For Mixer Control. Port 49
 1. ~~Reaper's actual OSC addresses~~ - done, `AddressMap` was right.
 2. ~~Whether the Lua mirror runs~~ - done, it got nothing wrong.
 3. Whether the UI is usable on an iPad, and whether commanded and confirmed
-   read as clearly different. **Still open** - the page has served and its API
-   is exercised, but no browser has rendered it.
+   read as clearly different. **Partly done** - a desktop browser has rendered
+   it and agreed with the stub (2026-09-10). The tablet has not, and the
+   questions that need one are still open.
 4. The granularity answer, if the press box happened. **Still open.**
 
-Reaper is no longer a guess, and neither is the browser. What is left is the
-console.
+Reaper is no longer a guess and neither is the rendering. What is left is the
+console, and a tablet.
 
 Operating the thing on a Saturday is `docs/gameday.md`, which is where the
 startup order and the site-specific values live.

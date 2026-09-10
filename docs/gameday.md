@@ -292,5 +292,11 @@ Honest state of things, so nothing here reads as more settled than it is.
 - **The post-DCA reference channel.** Not captured yet; it is what supplies the
   ground-truth fader labels.
 
-Reaper, the mirror script and the page have all been run against the real
+- **The iPad.** The page has been rendered in a desktop browser and looked
+  right, but no tablet has run it, so button sizing at arm's length and the
+  Auto-Lock advice on iPadOS Safari are both unverified. See handoff.md, which
+  also explains why the laptop shows a different wake-lock reading than the iPad
+  will.
+
+Reaper, the mirror script and the page itself have all been run against the real
 thing.
