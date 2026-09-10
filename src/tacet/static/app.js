@@ -23,6 +23,20 @@ function actsOnTheFader(items) {
   return items.some((item) => item.action) ? 1 : 0;
 }
 
+// What the grid currently on screen was built from. Comparing this rather than
+// setting a flag is what keeps the rebuild honest: the vocabulary is not fixed
+// for the life of a page, because a box that restarts mid-game can serve a
+// different ann.BUTTONS and the page reconnects to it without reloading.
+let renderedButtons = null;
+
+// Only the parts a rebuild would change. Deliberately not the whole snapshot -
+// this has to survive a playhead moving a thousand times an hour without
+// noticing.
+function buttonSignature(buttons) {
+  return JSON.stringify(
+    buttons.map(item => [item.key, item.label, item.category, item.kind, item.action || ""]));
+}
+
 function renderButtons(buttons) {
   const byCategory = {};
   for (const button of buttons) (byCategory[button.category] ||= []).push(button);
@@ -132,7 +146,16 @@ function render(next) {
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
 
-  if (!snapshot.buttonsRendered) { renderButtons(next.buttons); snapshot.buttonsRendered = true; }
+  // Rebuilt only when the vocabulary actually changes. renderButtons tears the
+  // grid down and recreates it, and a tap landing during that is lost - the node
+  // under the finger is detached between touchstart and touchend, so no click
+  // fires. This is the grid tapped without looking by someone watching a field,
+  // and it carries the fader buttons, so a dropped tap there is a missed open.
+  const signature = buttonSignature(next.buttons);
+  if (signature !== renderedButtons) {
+    renderButtons(next.buttons);
+    renderedButtons = signature;
+  }
   for (const node of document.querySelectorAll("#buttons button")) {
     const open = (next.open_spans || []).some(id => id.startsWith(node.dataset.key + "-"));
     node.classList.toggle("on", open);

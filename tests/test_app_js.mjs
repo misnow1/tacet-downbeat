@@ -388,6 +388,74 @@ check(
   "Up on whistle",
 );
 
+// -- the grid is not rebuilt under the operator's finger ---------------------
+
+// renderButtons tears the grid down and recreates it. A tap landing during that
+// is lost: the node under the finger is detached between touchstart and
+// touchend, and no click fires. This is the grid gameday.md describes as tapped
+// without looking, by someone watching a field, and it carries the coloured
+// fader buttons - so a dropped tap there is a missed open, and design.md 5.6 is
+// explicit that the annotation half cannot be reconstructed afterwards.
+//
+// The guard used to be a flag written onto the snapshot object, which is
+// replaced by a freshly parsed one on every frame, so it never survived. Reaper
+// streams /time for a whole game, coalesced to a snapshot a second.
+
+function grid(snapshots) {
+  const { context, created } = browser();
+  // Parsed fresh each time, exactly as a websocket frame arrives. The old guard
+  // passed when handed the same object twice, which is why this matters.
+  for (const snap of snapshots) context.render(JSON.parse(JSON.stringify(snap)));
+  return created.filter((node) => node.tag === "button");
+}
+
+const GRID = snapshot({}, {}, BUTTONS, []);
+
+check("one snapshot builds the grid", grid([GRID]).length, BUTTONS.length);
+check(
+  "a hundred more do not build it again",
+  grid(Array(100).fill(GRID)).length,
+  BUTTONS.length,
+);
+
+// Not never, though. A box that restarts mid-game can serve a different
+// vocabulary, and the page reconnects to it without reloading.
+{
+  const { context, created } = browser();
+  const count = () => created.filter((node) => node.tag === "button").length;
+  context.render(snapshot({}, {}, BUTTONS, []));
+  const first = count();
+  context.render(snapshot({}, {}, MIXED, []));
+  check("a changed vocabulary is rebuilt", count() - first, MIXED.length);
+  context.render(snapshot({}, {}, MIXED, []));
+  check("and then left alone again", count() - first, MIXED.length);
+}
+
+// A relabelled button is a changed vocabulary too - the labels are what the
+// operator reads, and the keys alone would not notice.
+{
+  const { context, created } = browser();
+  const count = () => created.filter((node) => node.tag === "button").length;
+  context.render(snapshot({}, {}, BUTTONS, []));
+  const first = count();
+  const relabelled = BUTTONS.map((b) => (b.key === "q1" ? { ...b, label: "First quarter" } : b));
+  context.render(snapshot({}, {}, relabelled, []));
+  check("a relabelled button is rebuilt", count() - first, BUTTONS.length);
+}
+
+// The per-render update path still has to work without a rebuild behind it,
+// which is the half a flag-only fix would have quietly broken.
+{
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, BUTTONS, []));
+  context.render(snapshot({}, {}, BUTTONS, ["q1-2"]));
+  const buttons = created.filter((node) => node.tag === "button");
+  const q1 = buttons.find((node) => node.dataset.key === "q1");
+  check("an opened span still updates", q1.textContent, "Q1 (end)");
+  check("and is still highlighted", q1.classList.contains("on"), true);
+  check("without anything being rebuilt to do it", buttons.length, BUTTONS.length);
+}
+
 // -- the link banner --------------------------------------------------------
 
 // The failure that matters in a stadium is not a socket that closes, it is one
