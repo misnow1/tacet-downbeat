@@ -264,8 +264,14 @@ button - it is not something to attempt on the day.
 
 1. **Stop the recording in Reaper**, deliberately.
 2. Save the project.
-3. Stop `tacet-serve` with Ctrl-C. It never fades on the way out - the operator
-   is left in control.
+3. Stop `tacet-serve` with **Ctrl-C twice**. The first press prints what
+   stopping does and does not do and waits five seconds; the second one does it.
+   Wait longer than that and the next press warns again rather than stopping, so
+   a stray Ctrl-C early in a game cannot pair up with an unrelated one later.
+
+   It never fades on the way out - the operator is left in control, and the
+   console keeps whatever level it was last commanded. **Stopping the box does
+   not stop the recording**; Reaper is still rolling and is stopped in Reaper.
 4. Copy to the NAS: the multitrack, the project, and the annotation log. The
    log is small and the one thing that cannot be recreated.
 

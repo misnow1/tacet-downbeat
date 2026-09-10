@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import signal
 from pathlib import Path
 
 from aiohttp import web as aiohttp_web
@@ -19,6 +20,33 @@ from aiohttp import web as aiohttp_web
 from . import dm7, mirror, reaper, web
 from .annotations import AnnotationLog
 from .app import App
+
+#: How long a Ctrl-C stays armed, waiting for the one that confirms it.
+#:
+#: A confirmation that never expires is its own trap across a three-hour game: a
+#: stray Ctrl-C in the first quarter must not combine with an unrelated one in
+#: the fourth to end the capture. After this, the next press warns again.
+STOP_CONFIRM_SECONDS = 5.0
+
+#: What the first Ctrl-C says. The two things worth knowing are both things this
+#: does *not* do, because both are easy to assume it does.
+STOP_WARNING = f"""
+Stopping the box does not stop the recording. Reaper keeps rolling and is
+stopped in Reaper, deliberately (design.md 5.9).
+
+It does not move the fader either. The console keeps whatever level it was last
+commanded, and the operator has the iPad.
+
+Press Ctrl-C again within {STOP_CONFIRM_SECONDS:.0f}s to stop.
+"""
+
+
+def confirms_stop(pressed_at: float, armed_at: float | None, *, window: float = STOP_CONFIRM_SECONDS) -> bool:
+    """Whether this Ctrl-C is the second of a pair, and so means it.
+
+    Pure, so the rule is testable without a signal, a clock or a subprocess.
+    """
+    return armed_at is not None and pressed_at - armed_at <= window
 
 
 class _Feedback(asyncio.DatagramProtocol):
@@ -64,16 +92,42 @@ async def _run(args: argparse.Namespace) -> None:
     print(f"UI on http://{args.listen}:{args.http_port}  (log: {log.path})")
     print("the fader is commanded, never confirmed; the DM7 cannot answer")
 
+    # Handled rather than left to KeyboardInterrupt. The interrupt used to
+    # arrive inside `runner.cleanup()` - which waits on websocket handlers, so
+    # any connected browser made that the common case - and took out the rest of
+    # the shutdown with it, closing neither the log nor the queue and printing a
+    # page of traceback at whoever was standing there. Nothing was lost, because
+    # both fsync per line, but that was the earlier decision saving this one.
+    stop = asyncio.Event()
+    armed: float | None = None
+
+    def on_interrupt() -> None:
+        nonlocal armed
+        pressed = loop.time()
+        if confirms_stop(pressed, armed):
+            print("stopping")
+            stop.set()
+        else:
+            armed = pressed
+            print(STOP_WARNING)
+
+    loop.add_signal_handler(signal.SIGINT, on_interrupt)
+
     try:
-        await asyncio.Event().wait()
+        await stop.wait()
     finally:
         # Leave the operator in control: never fade on the way out.
-        await runner.cleanup()
-        if transport is not None:
-            transport.close()
-        log.close()
-        if queue is not None:
-            queue.close()
+        loop.remove_signal_handler(signal.SIGINT)
+        # Nested, so a cleanup that fails cannot skip the ones after it. That is
+        # exactly what the interrupt used to do.
+        try:
+            await runner.cleanup()
+        finally:
+            if transport is not None:
+                transport.close()
+            log.close()
+            if queue is not None:
+                queue.close()
 
 
 def parser() -> argparse.ArgumentParser:

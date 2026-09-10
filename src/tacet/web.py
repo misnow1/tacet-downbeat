@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import annotations as ann
 from .app import App
@@ -256,11 +256,26 @@ async def _send(socket: web.WebSocketResponse, payload: str) -> None:
         await socket.send_str(payload)
 
 
+async def _close_sockets(server: web.Application) -> None:
+    """Hang up on every browser before the server goes away.
+
+    Without this the shutdown waits on handlers parked in `async for message in
+    socket`, which do not return until their socket does. The browser wants the
+    close anyway: a clean hangup puts the page straight into its reconnecting
+    banner, where a silent disappearance would leave it looking healthy and
+    stale until the keepalive threshold expired.
+    """
+    for socket in list(server[_HUB].sockets):
+        with contextlib.suppress(ConnectionResetError, RuntimeError):
+            await socket.close(code=WSCloseCode.GOING_AWAY, message=b"box stopping")
+
+
 def create_app(app: App, *, keepalive_interval: float = KEEPALIVE_INTERVAL) -> web.Application:
     server = web.Application()
     hub = _Hub(app)
     server[_HUB] = hub
     server[_KEEPALIVE] = keepalive_interval
+    server.on_shutdown.append(_close_sockets)
     app.on_change(hub.broadcast)
 
     server.add_routes(

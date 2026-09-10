@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from aiohttp import WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
@@ -263,6 +264,21 @@ class TestWakeAdvice(WebTestCase):
     async def test_the_advice_names_the_setting_that_works(self):
         body = await (await self.client.get("/")).text()
         self.assertIn("Auto-Lock", body)
+
+
+class TestShutdown(WebTestCase):
+    async def test_a_browser_is_hung_up_on_rather_than_left_hanging(self):
+        # Two reasons. The shutdown otherwise waits on handlers parked in
+        # `async for message in socket`, which is what made Ctrl-C take two
+        # presses and lose the rest of the cleanup; and the page wants the
+        # close anyway, since a clean hangup puts it straight into its
+        # reconnecting banner, where a silent disappearance would leave it
+        # looking healthy and stale until the keepalive threshold expired.
+        async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
+            await socket.receive()  # the initial snapshot
+            await self.app.shutdown()
+            self.assertEqual((await socket.receive()).type, WSMsgType.CLOSE)
 
 
 class TestBroadcastThrottle(unittest.TestCase):
