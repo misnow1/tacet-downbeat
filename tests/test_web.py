@@ -226,6 +226,22 @@ class TestStaleThreshold(unittest.TestCase):
         self.assertIn('"stale_after"', web.KEEPALIVE_FRAME)
 
 
+class TestWakeAdvice(WebTestCase):
+    """The Screen Wake Lock API needs a secure context and the page is served
+    over plain HTTP on a VLAN with no route to a certificate authority. An iPad
+    that locks its screen stops being an operator interface, so when the API is
+    missing the page has to say the thing that does work.
+    """
+
+    async def test_the_page_carries_somewhere_to_say_it(self):
+        body = await (await self.client.get("/")).text()
+        self.assertIn('id="wake"', body)
+
+    async def test_the_advice_names_the_setting_that_works(self):
+        body = await (await self.client.get("/")).text()
+        self.assertIn("Auto-Lock", body)
+
+
 class TestBroadcastThrottle(unittest.TestCase):
     """Reaper streams `/time` at about 11 Hz while rolling, and every packet
     used to push a whole snapshot at every browser - roughly 30 KB/s each, on

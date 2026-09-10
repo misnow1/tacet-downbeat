@@ -108,6 +108,13 @@ tacet-serve \
 Open `http://<box address>:8080`. The page needs nothing installed and
 reconnects on its own if the box restarts.
 
+**Turn Auto-Lock off**: Settings > Display and Brightness > Auto-Lock > Never.
+An iPad that locks its screen stops being an operator interface, and nobody
+finds out until they look down at a black slab in the middle of a drive. The
+page says so at the bottom of the screen, because it cannot do it itself - the
+browser API for holding the screen on needs HTTPS and this is plain HTTP. Put
+the iPad on a charger too; Never plus a bright screen is a three-hour draw.
+
 ---
 
 ## Pre-flight
@@ -118,6 +125,7 @@ reconnects on its own if the box restarts.
 | Fader | `-∞ dB`, tagged **commanded** |
 | Recording | `unknown`, tagged **no feedback** |
 | Top of the screen | Nothing. No banner is the healthy state |
+| Bottom of the screen | The Auto-Lock advice, until the setting is changed |
 
 `no feedback` before recording is correct, not a fault. Reaper says nothing at
 all while its transport is parked, and announces the record state only when it

@@ -182,6 +182,10 @@ Worth checking:
   for and the only one a stub cannot rehearse.
 - The banner is absent when the link is healthy and says `Connecting` only
   briefly. A banner that sits on `Connecting` means frames are not arriving.
+- The wake advice at the foot of the page should be present on the iPad, since
+  the API needs HTTPS. If Safari ever holds the lock instead, the line says so -
+  and that is worth reporting, because it would mean the assumption in
+  design.md 5.5 is wrong.
 - With Reaper running and its OSC device on, recording state should go from
   unknown to confirmed. That also double-checks the address map from step 1.
 - Span buttons (quarters, halftime exodus) should highlight while open and

@@ -344,6 +344,8 @@ margin:4px 0 0}
 #link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;display:none}
 #link.connecting{display:block;background:var(--fade)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
+#wake{text-align:center;font-size:13px;color:var(--dim);padding:0 4px}
+#wake.advice{color:#ffca7a}
 </style></head><body>
 <div id="link" class="connecting">Connecting to the box</div>
 <header><div id="state">&hellip;</div><div id="why"></div><div id="refusal"></div></header>
@@ -366,6 +368,7 @@ margin:4px 0 0}
   </div>
   <div class="row"><button id="btn-record">Start recording</button><div></div></div>
   <div id="buttons"></div>
+  <div id="wake"></div>
 </main>
 <script>
 __TACET_SCRIPT__

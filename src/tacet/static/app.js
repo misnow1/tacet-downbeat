@@ -225,7 +225,49 @@ function connect() {
   socket.onerror = () => socket.close();
 }
 
+// -- keeping the screen on --------------------------------------------------
+
+// An iPad that locks its screen stops being an operator interface: the page
+// goes away, the socket drops, and nobody finds out until someone looks down at
+// a black slab in the middle of a drive.
+//
+// The Screen Wake Lock API is the right answer and is usually not available
+// here. It needs a secure context, and the page is served over plain HTTP on a
+// VLAN with no route to anything that issues certificates. So it is asked for,
+// in case that changes, and when it is missing the page says the thing that
+// does work today rather than letting the screen go out without comment.
+const WAKE_HELD = "Screen held awake by this page.";
+const WAKE_ADVICE = "This page cannot hold the screen on. Set Auto-Lock to Never"
+  + " (Settings > Display and Brightness) or the device will sleep mid-game.";
+
+let wakeLock = null;
+
+function paintWake(held) {
+  const node = $("wake");
+  node.className = held ? "held" : "advice";
+  node.textContent = held ? WAKE_HELD : WAKE_ADVICE;
+}
+
+async function holdWake() {
+  if (!navigator.wakeLock) { paintWake(false); return; }
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.onrelease = () => { wakeLock = null; };
+  } catch {
+    wakeLock = null;
+  }
+  paintWake(wakeLock !== null);
+}
+
+// A wake lock is dropped whenever the document is hidden and is not handed back
+// when it returns. Without this, one glance at another app turns the hold off
+// for the rest of the game.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && wakeLock === null) holdWake();
+});
+
 fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
 setInterval(paintLink, LINK_TICK_MS);
 connect();
+holdWake();

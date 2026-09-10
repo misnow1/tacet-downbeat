@@ -70,8 +70,15 @@ function browser() {
       // The page only ever asks for "#buttons button". The stub ignores the
       // selector and answers with every button it has been asked to make.
       querySelectorAll: () => created.filter((node) => node.tag === "button"),
+      // The page re-takes its wake lock when the tab comes back. Nothing here
+      // ever fires it; what is tested is the branch it calls into.
+      addEventListener() {},
+      hidden: false,
     },
     location: { protocol: "http:", host: "box:8080" },
+    // No wake lock, which is the deployed case: the API needs a secure context
+    // and the page is served over plain HTTP.
+    navigator: {},
     setTimeout() {},
     // The banner is repainted on a tick so a silence is noticed without a
     // message arriving to notice it. Never fired here; paintLink is called
@@ -481,6 +488,29 @@ const snapshotFrame = { data: JSON.stringify(snapshot()) };
   sockets[0].onmessage(keepaliveFrame);
   sockets[0].onclose();
   check("a dropped socket says so at once", nodes.get("link").className, "lost");
+}
+
+// -- the wake advice --------------------------------------------------------
+
+// The Screen Wake Lock API needs a secure context and the page is plain HTTP,
+// so the advice is the load-bearing half, not the fallback.
+{
+  // The stub has no navigator.wakeLock, which is the deployed case, so the
+  // page has already fallen back by the time it has finished loading.
+  const { context, nodes } = browser();
+  check("no wake lock means advice, without being asked", nodes.get("wake").className, "advice");
+  check(
+    "and the advice names the setting that actually works",
+    nodes.get("wake").textContent.includes("Auto-Lock"),
+    true,
+  );
+  context.paintWake(true);
+  check("a held lock says so instead", nodes.get("wake").className, "held");
+  check(
+    "and does not go on telling the operator to change a setting",
+    nodes.get("wake").textContent.includes("Auto-Lock"),
+    false,
+  );
 }
 
 // -- report -----------------------------------------------------------------
