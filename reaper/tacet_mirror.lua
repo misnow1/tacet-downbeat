@@ -11,6 +11,12 @@
   offline from the log (tacet/markers.py). Losing this costs the view, not the
   data.
 
+  The script only ever places marks for lines that arrive while it is watching.
+  It remembers how far it has read in ExtState; if that memory is gone it starts
+  at the end of the queue rather than the beginning, because the queue is
+  append-only and its history belongs to games that are already mirrored
+  elsewhere.
+
   Install: put this in REAPER/Scripts, add it via Actions > Load ReaScript, and
   run it. It will ask for the queue path once and remember it.
 
@@ -70,9 +76,22 @@ local function file_size(path)
 end
 
 local function load_offset(path)
-  local stored = tonumber(reaper.GetExtState(SECTION, KEY_OFFSET)) or 0
+  local stored = tonumber(reaper.GetExtState(SECTION, KEY_OFFSET))
   local size = file_size(path)
   if size == nil then return 0 end
+  -- Nothing remembered, against a queue that already has lines in it. The queue
+  -- is append-only and is never rotated, so those lines are earlier games that
+  -- an earlier run already mirrored; reading them now would stamp every marker
+  -- of every past game onto this project at the playhead. Start at the end
+  -- instead. Whatever is skipped was written before this script was watching,
+  -- so its position would have been invented anyway, and tacet.markers
+  -- regenerates it from the log.
+  if stored == nil then
+    if size > 0 then
+      log("no remembered position in a queue with history; starting at its end")
+    end
+    return size
+  end
   -- A queue smaller than the stored offset is a different game, or a file that
   -- was cleared. Start again rather than reading from the middle of a line.
   if stored > size then

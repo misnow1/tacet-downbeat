@@ -74,12 +74,32 @@ The console should say:
 [tacet] mirroring <path> from byte N
 ```
 
-**Use one stable queue path and leave the file alone between games.** The queue
-opens in append mode and the script remembers how far it has read, so the two
-stay in step across games and restarts. Deleting the file is safe but not
-useful - the script notices it has shrunk and starts over. The queue is a
-transport, not a record; the annotation log is the source of truth and markers
-can be regenerated from it.
+`N` is where the script left off last game, remembered in Reaper's `ExtState`.
+On a queue that has never been used it is `0`. Anything else the console says
+instead is in **The mirror console** under *When it goes wrong*, with what each
+line needs from you.
+
+**Do:**
+
+- Use **one stable queue path**, every game, indefinitely.
+- **Leave the file alone between games.** It is append-only and the script
+  remembers its position, so a new Reaper project each game resumes exactly
+  where the last one stopped and places nothing from an earlier game.
+- Match `--queue` in step 3 to the path entered here.
+
+**Do not:**
+
+- **Do not rotate, rename or clear the queue per game.** It looks tidy, and it
+  is the one thing that can leave the script resuming in the middle of a line
+  against a file it has no position for. A whole season of queue is well under a
+  megabyte; there is nothing to reclaim by tidying it.
+- **Do not touch the file while the script is running.** If it ever has to be
+  cleared, stop the box and the script first, and clear it between games rather
+  than during one.
+
+The queue is a transport, not a record. The annotation log is the source of
+truth and every marker is derivable from it, so nothing in the queue is worth
+protecting - only its byte count matters, and only to the script.
 
 ### 3. The box
 
@@ -244,6 +264,22 @@ The top banner is about the iPad's link to the box. `LINK LOST` on the
 recording line is about the box's link to Reaper. They are different failures
 and can happen separately: the box can be talking to Reaper perfectly while the
 iPad cannot see the box.
+
+**The mirror script talks in Reaper's console, not on the page.** Everything it
+can say, and whether it needs you:
+
+| The console says | What it means | What to do |
+|---|---|---|
+| `mirroring <path> from byte N` | Normal. `N` is where it left off last game | Nothing |
+| `queue does not exist yet; waiting for the box to create it` | Normal before step 3 | Start the box |
+| `no queue path given; not starting` | The path prompt was cancelled or left empty. **The script is not running** and nothing will mirror | Run it again from the action list and enter the path. It is not remembered until it is entered once |
+| `mirror stopped` | The script has exited - the action was run a second time, or Reaper closed | Markers stop, the log does not. Re-run it if the game is still going |
+| `no remembered position in a queue with history; starting at its end` | Reaper forgot the position - a reinstall, a cleared `reaper-extstate.ini`, a different machine. It refused to read the queue from the beginning, which on a new project would have stamped every marker of every past game onto today's timeline | Nothing. This session mirrors normally from here. If the box was already running, the few events written before the script came up were skipped - they are in the log |
+| `queue is shorter than the stored offset; starting from the beginning` | The file was cleared or replaced, so it is reading all of it | Expect markers for whatever is in that file. If it holds an earlier game, those markers are wrong: delete them in Reaper. The log is unaffected |
+
+The last row is the reason for *do not rotate the queue* in step 2. None of
+these costs annotation data: the log is written by the box and does not depend
+on the script at all.
 
 **A restarted box mid-game cannot start recording**, and says so. It has heard
 `/time` but no transport change, so it cannot tell whether Reaper is rolling,

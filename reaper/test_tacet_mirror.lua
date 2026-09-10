@@ -79,6 +79,14 @@ local function start(path)
   dofile(SCRIPT)
 end
 
+--- Load the script fresh against an empty queue. This is the order gameday.md
+--- prescribes - the script comes up first, the box then appends - and it is the
+--- only order in which the script mirrors a line at a position it witnessed.
+local function start_empty(path)
+  write(path, "")
+  start(path)
+end
+
 --- Advance past the poll interval and run one iteration.
 local function tick()
   now = now + 1.0
@@ -90,8 +98,8 @@ end
 
 local function test_instant_becomes_a_marker()
   local path = os.tmpname()
-  write(path, "NOTE|note\t-\t-\n")
-  start(path)
+  start_empty(path)
+  append(path, "NOTE|note\t-\t-\n")
   playpos = 12.5
   tick()
   equal(#markers, 1, "one marker")
@@ -103,8 +111,8 @@ end
 
 local function test_span_pair_becomes_a_region()
   local path = os.tmpname()
-  write(path, "GAME|q1\tstart\tq1-2\n")
-  start(path)
+  start_empty(path)
+  append(path, "GAME|q1\tstart\tq1-2\n")
   playpos = 5.0
   tick()
   equal(#markers, 0, "a span start places nothing on its own")
@@ -121,8 +129,8 @@ end
 
 local function test_orphan_end_is_reported_not_dropped()
   local path = os.tmpname()
-  write(path, "GAME|q1\tend\tq1-99\n")
-  start(path)
+  start_empty(path)
+  append(path, "GAME|q1\tend\tq1-99\n")
   playpos = 8.0
   tick()
   equal(#markers, 1, "leaves a marker rather than nothing")
@@ -134,8 +142,8 @@ end
 
 local function test_partial_line_waits_for_its_newline()
   local path = os.tmpname()
-  write(path, "NOTE|note\t-\t-\n" .. "NOTE|no")
-  start(path)
+  start_empty(path)
+  append(path, "NOTE|note\t-\t-\n" .. "NOTE|no")
   tick()
   equal(#markers, 1, "only the complete line is consumed")
   append(path, "te\t-\t-\n")
@@ -147,8 +155,8 @@ end
 
 local function test_lines_are_not_replayed()
   local path = os.tmpname()
-  write(path, "NOTE|note\t-\t-\n")
-  start(path)
+  start_empty(path)
+  append(path, "NOTE|note\t-\t-\n")
   tick()
   tick()
   tick()
@@ -158,8 +166,8 @@ end
 
 local function test_offset_survives_a_restart()
   local path = os.tmpname()
-  write(path, "NOTE|note\t-\t-\n")
-  start(path)
+  start_empty(path)
+  append(path, "NOTE|note\t-\t-\n")
   tick()
   local saved = ext["tacet_downbeat/queue_offset"]
   check(saved ~= nil and tonumber(saved) > 0, "offset was persisted")
@@ -173,6 +181,38 @@ local function test_offset_survives_a_restart()
   tick()
   equal(#markers, 1, "only the new line is placed")
   equal(markers[1].name, "DET|false-open", "resumed at the right byte")
+  os.remove(path)
+end
+
+--- The failure this guards against: ExtState is lost - a reinstall, a cleared
+--- reaper-extstate.ini, a different machine - while the queue, which is never
+--- rotated, still holds every line of every past game. Reading it from the
+--- beginning would drop all of that onto today's project at the playhead.
+local function test_history_is_not_replayed_when_the_offset_is_lost()
+  local path = os.tmpname()
+  write(path, "BAND|fight-song\t-\t-\n" .. "BAND|cadence\t-\t-\n")
+  start(path)  -- queue path known, no remembered offset
+  tick()
+  equal(#markers, 0, "an unremembered history is not stamped onto this project")
+  check(logged("starting at its end"), "says why")
+  append(path, "SYS|armed\t-\t-\n")
+  tick()
+  equal(#markers, 1, "new lines still mirror")
+  equal(markers[1].name, "SYS|armed", "and only the new one")
+  os.remove(path)
+end
+
+--- The other side of that rule: on a queue with no history there is nothing to
+--- protect, so the first game's first line must not be skipped.
+local function test_a_queue_created_after_the_script_is_read_from_the_beginning()
+  local path = os.tmpname()
+  os.remove(path)
+  start(path)
+  check(logged("waiting for the box"), "says it is waiting")
+  append(path, "SYS|armed\t-\t-\n")
+  tick()
+  equal(#markers, 1, "the first line of a new queue is mirrored")
+  equal(markers[1].name, "SYS|armed", "from the beginning of the file")
   os.remove(path)
 end
 
@@ -191,8 +231,8 @@ end
 
 local function test_malformed_line_does_not_stop_the_mirror()
   local path = os.tmpname()
-  write(path, "not-enough-fields\n" .. "NOTE|note\t-\t-\n")
-  start(path)
+  start_empty(path)
+  append(path, "not-enough-fields\n" .. "NOTE|note\t-\t-\n")
   tick()
   equal(#markers, 1, "the good line still lands")
   check(logged("malformed"), "the bad one is reported")
@@ -216,6 +256,8 @@ local tests = {
   test_partial_line_waits_for_its_newline,
   test_lines_are_not_replayed,
   test_offset_survives_a_restart,
+  test_history_is_not_replayed_when_the_offset_is_lost,
+  test_a_queue_created_after_the_script_is_read_from_the_beginning,
   test_a_shorter_queue_restarts_from_the_beginning,
   test_malformed_line_does_not_stop_the_mirror,
   test_missing_queue_is_survivable,
