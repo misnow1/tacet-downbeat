@@ -1,0 +1,59 @@
+# tacet-downbeat site config -- copy to tacet.toml and fill in.
+#
+#     cp tacet.toml.example tacet.toml
+#
+# tacet.toml is gitignored. The console IP, the DCA number and the NAS path are
+# site values and stay out of the repo; docs/gameday.md is where they are
+# written down. This file is the shape, not the values.
+#
+# Everything here is optional, and every key has a flag that overrides it:
+#
+#     built-in default  <  this file  <  the flag on the command line
+#
+# Found in this order, and the tool prints which one it used:
+#
+#     1. --config PATH
+#     2. $TACET_CONFIG
+#     3. ./tacet.toml
+#     4. ~/.config/tacet/tacet.toml
+#
+# An unknown key here is an error rather than a shrug, so a config that is
+# spelled wrong stops the tool instead of quietly driving the wrong fader.
+
+# The DM7. Read by tacet-serve and by verify_dm7.
+[console]
+# Setup > Network > For Mixer Control on the console.
+host = "10.0.0.5"           # --console-host  (verify_dm7: --host)
+port = 49900                # --console-port  (verify_dm7: --port)
+# The band DCA. Getting this wrong rides somebody else's fader.
+dca = 3                     # --dca
+# Leave false until verify_dm7 --granularity has shown the console rounds.
+# Override on the day with --quantized / --no-quantized.
+quantized = false
+
+# Reaper. Read by tacet-serve and by verify_reaper.
+[reaper]
+# Reaper and the box share a machine for now.
+host = "127.0.0.1"          # --reaper-host   (verify_reaper: --host)
+send_port = 8000            # --reaper-port   -- Reaper's "local listen port"
+receive_port = 9000         # --reaper-feedback-port -- Reaper's "device port"
+
+# Where the game is written down.
+[capture]
+# Per game, and the irreplaceable artefact. Usually passed as --log on the day
+# rather than left here, precisely because it changes every time.
+log = "~/games/2026-09-13.jsonl"
+# Stable, and must match the path the ReaScript watches. Mismatching this is the
+# single most common way to have everything look healthy and mirror nothing.
+queue = "~/Library/Application Support/REAPER/tacet/queue.tsv"
+
+[fader]
+# The close fade. Asymmetric by design: fast open, slow close.
+fade_seconds = 2.0          # --fade
+
+# The operator page.
+[ui]
+# 0.0.0.0 or the iPad cannot reach it. 127.0.0.1 serves this machine only,
+# which looks exactly like a firewall problem.
+listen = "0.0.0.0"          # --listen
+port = 8080                 # --http-port

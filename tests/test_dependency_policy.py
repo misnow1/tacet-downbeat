@@ -59,5 +59,20 @@ class TestControlPathIsDependencyFree(unittest.TestCase):
         self.assertNotIn("detector", CONTROL_PATH)
 
 
+class TestConfigStaysImportableFromTheControlPath(unittest.TestCase):
+    """`tacet.config` is not control path, but it is deliberately free to become it.
+
+    Nothing in `osc`, `net`, `dm7` or `state` reads the config today. Keeping it
+    stdlib-only -- TOML is `tomllib` at 3.11, so this costs nothing -- means that
+    if one of them ever needs a site value, the policy above is not what stops
+    it. A dependency added here would close that door quietly.
+    """
+
+    def test_config_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "config.py"):
+            self.assertIn(module, allowed, f"tacet.config imports {module!r}, which is not in the standard library")
+
+
 if __name__ == "__main__":
     unittest.main()

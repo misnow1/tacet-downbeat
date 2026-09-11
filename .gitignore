@@ -2,6 +2,10 @@
 audio/**
 !audio/README.md
 
+# the site config: console IP, DCA number, NAS path. Those live in
+# docs/gameday.md and on the box, never in the repo. The example is tracked.
+/tacet.toml
+
 # python
 __pycache__/
 *.py[cod]

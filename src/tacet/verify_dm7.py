@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+from . import config
 from .dm7 import DEFAULT_PORT, MINUS_INF, TABLE_1, UNITY, Dm7Client, to_db
 
 #: Deliberately not a Table 1 value. -15.50 dB sits between -15 and -16.
@@ -59,19 +60,40 @@ async def _run(args: argparse.Namespace) -> None:
         client.close()
 
 
+#: The console half of the config file. `--fade` is deliberately not here: in
+#: this tool it chooses whether to run the fade probe at all, so a value from a
+#: file would fire one at a console nobody asked to move.
+CONFIG_MAPPING = {
+    "host": "console.host",
+    "port": "console.port",
+    "dca": "console.dca",
+    "quantized": "console.quantized",
+}
+
+
+def parser() -> argparse.ArgumentParser:
+    """Built separately from `main` so the tests can reach it without a console."""
+    p = argparse.ArgumentParser(description=__doc__)
+    config.add_config_argument(p)
+    p.add_argument("--host", help="the console's For Mixer Control IP")
+    p.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p.add_argument("--dca", type=int)
+    p.add_argument("--granularity", action="store_true", help="the -1550 probe")
+    p.add_argument("--fade", type=float, metavar="SECONDS")
+    p.add_argument("--level", type=int, help="send one level and exit")
+    p.add_argument("--quantized", action=argparse.BooleanOptionalAction, default=False, help="snap to Table 1")
+    return p
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", required=True, help="the console's For Mixer Control IP")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--dca", type=int, required=True)
-    parser.add_argument("--granularity", action="store_true", help="the -1550 probe")
-    parser.add_argument("--fade", type=float, metavar="SECONDS")
-    parser.add_argument("--level", type=int, help="send one level and exit")
-    parser.add_argument("--quantized", action="store_true", help="snap to Table 1")
-    args = parser.parse_args(argv)
+    parser_ = parser()
+    args, config_path = config.resolve_or_exit(parser_, CONFIG_MAPPING, argv)
+    config.require(parser_, args, CONFIG_MAPPING, "host", "dca")
 
     if not (args.granularity or args.fade or args.level is not None):
-        parser.error("choose --granularity, --fade or --level")
+        parser_.error("choose --granularity, --fade or --level")
+    if config_path:
+        print(f"config: {config_path}")
     asyncio.run(_run(args))
     return 0
 

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import dm7, mirror, reaper, web
+from . import config, dm7, mirror, reaper, web
 from .annotations import AnnotationLog
 from .app import App
 
@@ -130,12 +130,36 @@ async def _run(args: argparse.Namespace) -> None:
                 queue.close()
 
 
+#: Which config keys stand in for which flags. The whole of this tool's half of
+#: the config file; `tests/test_config.py` checks it against the schema.
+CONFIG_MAPPING = {
+    "console_host": "console.host",
+    "console_port": "console.port",
+    "dca": "console.dca",
+    "quantized": "console.quantized",
+    "reaper_host": "reaper.host",
+    "reaper_port": "reaper.send_port",
+    "reaper_feedback_port": "reaper.receive_port",
+    "log": "capture.log",
+    "queue": "capture.queue",
+    "fade": "fader.fade_seconds",
+    "listen": "ui.listen",
+    "http_port": "ui.port",
+}
+
+#: Needed before the box can run, from wherever. Not `required=True`, because
+#: argparse enforces that before the config file has been read; `config.require`
+#: does it afterwards and names the config key too.
+REQUIRED = ("console_host", "dca", "log")
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--console-host", required=True, help="the DM7's For Mixer Control IP")
+    config.add_config_argument(p)
+    p.add_argument("--console-host", help="the DM7's For Mixer Control IP")
     p.add_argument("--console-port", type=int, default=dm7.DEFAULT_PORT)
-    p.add_argument("--dca", type=int, required=True, help="the band DCA number")
-    p.add_argument("--log", type=Path, required=True, help="annotation log (JSONL)")
+    p.add_argument("--dca", type=int, help="the band DCA number")
+    p.add_argument("--log", type=Path, help="annotation log (JSONL)")
     p.add_argument("--queue", type=Path, help="mirror queue for the Reaper script")
     p.add_argument("--reaper-host", help="omit to run without transport control")
     p.add_argument("--reaper-port", type=int, default=reaper.DEFAULT_SEND_PORT)
@@ -143,16 +167,25 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--listen", default=web.DEFAULT_HOST)
     p.add_argument("--http-port", type=int, default=web.DEFAULT_PORT)
     p.add_argument("--fade", type=float, default=dm7.DEFAULT_FADE_SECONDS)
+    # BooleanOptionalAction, not store_true: a config file that sets
+    # quantized = true has to be refusable from the command line, or the
+    # precedence rule is a lie for this one flag.
     p.add_argument(
         "--quantized",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="snap fader values to Table 1; set this if the console rounds",
     )
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    p = parser()
+    args, config_path = config.resolve_or_exit(p, CONFIG_MAPPING, argv)
+    config.require(p, args, CONFIG_MAPPING, *REQUIRED)
+    # Said out loud: a config picked up from the working directory is otherwise
+    # invisible, and "why is it driving DCA 3" has no answer on the day.
+    print(f"config: {config_path}" if config_path else "config: none (flags only)")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args))
     return 0

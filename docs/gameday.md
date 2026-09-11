@@ -23,6 +23,22 @@ yet. Write them down here the first time they are known.
 | Recording path | `__________` | NAS share; never the repo (`audio/` is gitignored) |
 | Box address on the VLAN | `__________` | `ipconfig getifaddr en0` |
 
+Once they are known, put them in `tacet.toml` on the box rather than retyping
+them into every command. Copy `tacet.toml.example`, fill it in, and the startup
+commands below shrink to the part that actually changes between games. The file
+is gitignored; this table stays the written record.
+
+Every value in it still has a flag, and the flag wins:
+
+```
+built-in default  <  tacet.toml  <  the flag you type
+```
+
+so nothing below stops working if the file is absent, wrong, or deliberately
+overridden mid-game. Each tool prints which config it read on startup -- if that
+line says `none (flags only)` and you expected a file, you are in the wrong
+directory.
+
 **The console has never been driven by this software.** `verify_dm7` has not
 been run against a DM7, so whether the fade is smooth or steps in 0.5 dB
 increments is unknown, and `--quantized` may turn out to be needed. Run the
@@ -31,6 +47,16 @@ granularity check before trusting the fade in front of an audience:
 ```
 python -m tacet.verify_dm7 --host <console IP> --dca <n> --granularity
 ```
+
+or, once `tacet.toml` has the console in it, just:
+
+```
+python -m tacet.verify_dm7 --granularity
+```
+
+`--granularity`, `--fade` and `--level` are never taken from the config file.
+They choose what this tool *does* to a console, and a file that could select one
+of them would move a fader nobody asked to move.
 
 ---
 
@@ -41,6 +67,9 @@ git clone git@github.com:misnow1/tacet-downbeat.git
 cd tacet-downbeat
 make install
 make check          # should be green before a game, not on the day
+
+cp tacet.toml.example tacet.toml
+$EDITOR tacet.toml  # console IP, DCA, queue path -- the table above
 ```
 
 In Reaper, once:
@@ -106,6 +135,18 @@ protecting - only its byte count matters, and only to the script.
 Whatever queue path the script is watching must be the one passed here. This is
 the single most common way to have everything look healthy and mirror nothing.
 
+With `tacet.toml` filled in, the only thing left to type is the game:
+
+```
+tacet-serve --log ~/games/2026-09-13.jsonl
+```
+
+It should print `config: /path/to/tacet.toml` as its first line. If it says
+`none (flags only)`, it did not find the file and everything below is back to
+being your problem.
+
+Without a config file, or to override it, the whole thing is still flags:
+
 ```
 tacet-serve \
     --console-host <console IP> \
@@ -117,11 +158,15 @@ tacet-serve \
     --http-port 8080
 ```
 
-- `--log` is **per game**. It is the irreplaceable artefact.
-- `--queue` is **stable**, and must match step 2.
+- `--log` is **per game**. It is the irreplaceable artefact. Keep it a flag even
+  when everything else lives in the file -- it is the value that changes, and a
+  stale `capture.log` overwrites nothing but does bury today under yesterday's
+  filename.
+- `--queue` is **stable**, and must match step 2. Good candidate for the file.
 - `--listen 0.0.0.0` or the iPad cannot reach the page. `127.0.0.1` serves the
   machine and nothing else, which looks exactly like a firewall problem.
-- Add `--quantized` only once the console is known to round.
+- Add `--quantized` only once the console is known to round. `--no-quantized`
+  turns it back off when the file sets it and you want it gone for one run.
 
 ### 4. The iPad
 

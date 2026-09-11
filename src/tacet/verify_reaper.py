@@ -20,7 +20,7 @@ import time
 from collections import Counter
 from typing import Any
 
-from . import osc
+from . import config, osc
 from .net import UdpSender
 from .reaper import (
     DEFAULT_ADDRESSES,
@@ -104,20 +104,39 @@ def _report(seen: dict[str, list[Any]]) -> None:
         print("\nAddressMap looks right.")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--send-port", type=int, default=DEFAULT_SEND_PORT)
-    parser.add_argument("--recv-port", type=int, default=DEFAULT_RECEIVE_PORT)
-    parser.add_argument("--listen", type=float, default=20.0, metavar="SECONDS")
-    parser.add_argument(
+#: The Reaper half of the config file. `--listen` is a duration here, not the
+#: UI's bind address, so `ui.listen` must not reach it -- same name, different
+#: quantity, and that collision is why this mapping is written out rather than
+#: derived from the flag names.
+CONFIG_MAPPING = {
+    "host": "reaper.host",
+    "send_port": "reaper.send_port",
+    "recv_port": "reaper.receive_port",
+}
+
+
+def parser() -> argparse.ArgumentParser:
+    """Built separately from `main` so the tests can reach it without Reaper."""
+    p = argparse.ArgumentParser(description=__doc__)
+    config.add_config_argument(p)
+    p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument("--send-port", type=int, default=DEFAULT_SEND_PORT)
+    p.add_argument("--recv-port", type=int, default=DEFAULT_RECEIVE_PORT)
+    p.add_argument("--listen", type=float, default=20.0, metavar="SECONDS")
+    p.add_argument(
         "--send",
         action="append",
         default=[],
         metavar="ADDRESS",
         help="send this OSC address before listening; repeatable",
     )
-    args = parser.parse_args(argv)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args, config_path = config.resolve_or_exit(parser(), CONFIG_MAPPING, argv)
+    if config_path:
+        print(f"config: {config_path}")
 
     for address in args.send:
         UdpSender(args.host, args.send_port).send(osc.encode_message(address))
