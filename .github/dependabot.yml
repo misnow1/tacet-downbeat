@@ -1,0 +1,52 @@
+# Version updates run monthly and deliberately quietly: this repo is maintained
+# by one person during football season, and a PR queue nobody reads is worse
+# than no PR queue. Security updates are not on this schedule -- Dependabot
+# opens those as soon as an advisory lands, independent of the cadence here.
+#
+# Nothing auto-merges. aiohttp ships in the box that runs in a press box on a
+# Saturday, so a bump is a decision, not a formality. See CLAUDE.md,
+# "Ask before adding dependencies".
+version: 2
+
+updates:
+  # The actions pinned in ci.yml are the highest-value target here: they are
+  # third-party code that runs with a token, and they go stale silently.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies, area:ci]
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # pyproject.toml. Runtime is aiohttp alone -- the control path takes no
+  # dependencies at all -- so most traffic here will be dev tooling, which is
+  # cheap to accept and never ships.
+  #
+  # Grouped by excluding aiohttp rather than by "dependency-type: development",
+  # which looks like the obvious spelling and silently matches nothing here:
+  # Dependabot does not treat [project.optional-dependencies] as development
+  # dependencies (dependabot-core#10606, still open; #8760 closed not-planned).
+  # A group that matches nothing is not an error, it just quietly degrades into
+  # five separate tooling PRs a month -- the queue this file exists to avoid.
+  # Excluding the one dependency that ships gets the intended shape by the only
+  # means that works: tooling arrives as one PR, aiohttp on its own, because
+  # that one is a decision.
+  #
+  # PEP 735 [dependency-groups] is the real fix and Dependabot now supports it
+  # (dependabot-core#10847), but moving dev tooling there is a pyproject and
+  # CI change, not a config change. Revisit out of season.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies]
+    commit-message:
+      prefix: "deps"
+    groups:
+      dev-tooling:
+        patterns: ["*"]
+        exclude-patterns: ["aiohttp"]
