@@ -229,7 +229,7 @@ port = 8080          # --http-port
 ```
 
 ```
-tacet-serve          # prints: config: /path/to/tacet.toml
+tacet-serve          # banner names the config, console, DCA, Reaper and paths
 ```
 
 Pointing `--console-host` (`console.host`) at loopback is deliberate for a first

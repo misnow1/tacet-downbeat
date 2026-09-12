@@ -35,9 +35,10 @@ built-in default  <  tacet.toml  <  the flag you type
 ```
 
 so nothing below stops working if the file is absent, wrong, or deliberately
-overridden mid-game. Each tool prints which config it read on startup -- if that
-line says `none (flags only)` and you expected a file, you are in the wrong
-directory.
+overridden mid-game. Each tool says which config it read on startup -- `tacet-serve`
+in the `config` row of its banner, the two `verify_` tools on a line of their
+own. If that reads `none (flags only)` and you expected a file, you are in the
+wrong directory.
 
 **The console has never been driven by this software.** `verify_dm7` has not
 been run against a DM7, so whether the fade is smooth or steps in 0.5 dB
@@ -145,9 +146,42 @@ With `tacet.toml` filled in, the only thing left to type is the game:
 tacet-serve --log ~/games/2026-09-13.jsonl
 ```
 
-It should print `config: /path/to/tacet.toml` as its first line. If it says
-`none (flags only)`, it did not find the file and everything below is back to
-being your problem.
+It prints a banner before it binds anything -- what console, what DCA, what
+Reaper, and where the log and queue are going:
+
+```
+==========================================================================
+  tacet       band DCA - Phase 0/1, the detector drives nothing
+  config      /Users/you/tacet.toml
+--------------------------------------------------------------------------
+  console     10.0.0.5:49900   DCA 3
+              commanded, never confirmed - the DM7's OSC is write-only
+  fade        2.0s close, fast open
+  reaper      127.0.0.1   send 8000   feedback 9000
+  log         /Users/you/games/2026-09-13.jsonl
+  queue       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
+  page        http://<this box>:8080
+              bound to 0.0.0.0; use the box's address on the VLAN
+--------------------------------------------------------------------------
+  before kickoff
+    1  Reaper up, OSC device on: listen 8000, device 9000, feedback on
+    2  tacet_mirror.lua running in Reaper, watching exactly this queue:
+       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
+    3  open the page, tap Start recording, confirm a marker lands
+    4  arm when the band is in the stands
+==========================================================================
+```
+
+**Read the `queue` line against what the script said in step 2.** They have to
+be the same path, and the banner repeats it under step 2 of its own checklist so
+the two can be compared without scrolling.
+
+Everything in the banner is what the box was *told*, not what it has confirmed.
+Nothing has been sent to the console at this point, and the console could not
+answer if it had been.
+
+If the `config` row says `none (flags only)`, it did not find a file and
+everything above came from flags and defaults.
 
 Without a config file, or to override it, the whole thing is still flags:
 
@@ -314,7 +348,7 @@ config problems and it says so on the terminal rather than the page:
 
 | The terminal says | What it means | What to do |
 |---|---|---|
-| `config: none (flags only)` | It found no `tacet.toml`. Not an error, but if you expected one you are in the wrong directory | `cd` to the repo, or pass `--config <path>` |
+| `config      none (flags only)` in the banner | It found no `tacet.toml`. Not an error, but if you expected one you are in the wrong directory | `cd` to the repo, or pass `--config <path>` |
 | `unknown key '...' in [...]` | A misspelled key. It refuses rather than silently using a default and driving the wrong fader | Fix the spelling; the message lists the keys that exist |
 | `... must be a whole number` / `must be true or false` | A value of the wrong type, e.g. `dca = "3"` with quotes | Drop the quotes. Numbers and booleans are bare in TOML |
 | `--config names ..., which does not exist` | A config was asked for by name and is not there | Check the path. A file merely looked for and absent is fine; one you named is not |

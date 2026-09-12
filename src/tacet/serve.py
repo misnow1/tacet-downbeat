@@ -16,8 +16,13 @@ one with `--config PATH` or `$TACET_CONFIG`, and `~/.config/tacet/tacet.toml`
 is the last place looked. The file is optional and every flag still wins over
 it -- `--dca 4` drives DCA 4 whatever the file says. `tacet.toml.example` in the
 repo root lists every key; `tacet.config` documents the rules; docs/gameday.md
-is the runbook. The first line of output says which config was used, or
-`none (flags only)`.
+is the runbook.
+
+Because those values no longer have to appear on the command line, the box
+prints a banner at startup naming the console, the DCA, Reaper, the log and the
+queue, followed by the pre-kickoff checklist. The `config` row in it says which
+file was used, or `none (flags only)`. Everything in the banner is what the box
+was told, never what it has confirmed.
 """
 
 from __future__ import annotations
@@ -102,8 +107,9 @@ async def _run(args: argparse.Namespace) -> None:
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, args.listen, args.http_port)
     await site.start()
-    print(f"UI on http://{args.listen}:{args.http_port}  (log: {log.path})")
-    print("the fader is commanded, never confirmed; the DM7 cannot answer")
+    # The banner already said where the page will be and what the fader can and
+    # cannot tell you. This line is the different fact that it actually bound.
+    print(f"serving on {args.listen}:{args.http_port} - ready")
 
     # Handled rather than left to KeyboardInterrupt. The interrupt used to
     # arrive inside `runner.cleanup()` - which waits on websocket handlers, so
@@ -141,6 +147,151 @@ async def _run(args: argparse.Namespace) -> None:
             log.close()
             if queue is not None:
                 queue.close()
+
+
+#: Width of the startup banner's rules. Wide enough for a long path plus its
+#: explanation, narrow enough for a terminal on a shelf in a press box.
+BANNER_WIDTH = 74
+
+#: Column the values line up in, so the labels read as a column and not as prose.
+BANNER_LABEL_WIDTH = 12
+
+#: Indent for the numbered checklist under the rule.
+BANNER_STEP_INDENT = 4
+
+#: Bind addresses the banner has something to say about. `0.0.0.0` is not an
+#: address anyone can open, and `127.0.0.1` is the one that looks like a
+#: firewall problem from the iPad (docs/gameday.md).
+ALL_INTERFACES = web.DEFAULT_HOST
+#: Not `reaper.DEFAULT_HOST`, which is the same string meaning something else
+#: entirely -- where Reaper is. This one is about what a browser can open.
+LOOPBACK = "127.0.0.1"
+
+#: What the config row says when there is no config file. Pinned here because
+#: docs/gameday.md quotes it in the table of things that go wrong.
+NO_CONFIG = "none (flags only)"
+
+
+def _rule(character: str = "-") -> str:
+    return character * BANNER_WIDTH
+
+
+def _row(label: str, value: str) -> str:
+    return f"  {label:<{BANNER_LABEL_WIDTH}}{value}"
+
+
+def _note(text: str) -> str:
+    """A continuation under a row: a caveat about the value, not a value."""
+    return _row("", text)
+
+
+def _page_lines(listen: str, port: int) -> list[str]:
+    """How to reach the page, and the two bind addresses worth a warning.
+
+    `0.0.0.0` is a wildcard rather than somewhere to point a browser, so
+    printing it as a URL sends the operator to a dead link.
+    """
+    if listen == ALL_INTERFACES:
+        return [
+            _row("page", f"http://<this box>:{port}"),
+            _note(f"bound to {ALL_INTERFACES}; use the box's address on the VLAN"),
+        ]
+    if listen == LOOPBACK:
+        return [
+            _row("page", f"http://{listen}:{port}"),
+            _note("this machine only - the iPad cannot reach it, which looks"),
+            _note("exactly like a firewall problem and is not one"),
+        ]
+    return [_row("page", f"http://{listen}:{port}")]
+
+
+def _checklist(args: argparse.Namespace) -> list[str]:
+    """The things that are already true by the time this runs, or should be.
+
+    Order follows docs/gameday.md: Reaper, then the script, then the box. The
+    box is what is printing this, so every line here is a thing to confirm
+    rather than a thing to go and do.
+    """
+    steps: list[str] = []
+    if args.reaper_host:
+        # The ports this box will actually use, not the documented defaults:
+        # if they have been changed, the defaults are the wrong thing to check.
+        steps.append(
+            f"Reaper up, OSC device on: listen {args.reaper_port}, device {args.reaper_feedback_port}, feedback on"
+        )
+    if args.queue:
+        steps.append("tacet_mirror.lua running in Reaper, watching exactly this queue:")
+        steps.append(f"  {args.queue}")
+    # A step nobody can carry out is worse than a shorter list, so the page step
+    # only promises what is actually wired up. The rows above already say what
+    # is missing; repeating it as a numbered step would be saying it twice.
+    if args.reaper_host and args.queue:
+        steps.append("open the page, tap Start recording, confirm a marker lands")
+    elif args.reaper_host:
+        steps.append("open the page and tap Start recording")
+    else:
+        steps.append("open the page")
+    steps.append("arm when the band is in the stands")
+
+    lines = ["  before kickoff"]
+    number = 0
+    pad = " " * BANNER_STEP_INDENT
+    for step in steps:
+        # A continuation line (the queue path) hangs under its step rather than
+        # taking a number of its own.
+        if step.startswith("  "):
+            lines.append(f"{pad}   {step.strip()}")
+            continue
+        number += 1
+        lines.append(f"{pad}{number}  {step}")
+    return lines
+
+
+def startup_lines(args: argparse.Namespace, config_path: Path | None) -> list[str]:
+    """The banner, as a list of lines. Pure, so the wording is testable.
+
+    Exists because the values no longer have to appear on the command line. A
+    box configured from a file is a box whose settings are invisible at the
+    moment they matter most, so it says them out loud instead.
+
+    Everything here is what the box was *told*. None of it is confirmed: the
+    console cannot answer at all, and Reaper has not been asked yet.
+    """
+    lines = [
+        _rule("="),
+        _row("tacet", "band DCA - Phase 0/1, the detector drives nothing"),
+        _row("config", str(config_path) if config_path else NO_CONFIG),
+        _rule(),
+        _row("console", f"{args.console_host}:{args.console_port}   DCA {args.dca}"),
+        _note("commanded, never confirmed - the DM7's OSC is write-only"),
+    ]
+    if args.quantized:
+        lines.append(_note("fader values snapped to Table 1"))
+    lines.append(_row("fade", f"{args.fade:.1f}s close, fast open"))
+
+    if args.reaper_host:
+        lines.append(
+            _row(
+                "reaper",
+                f"{args.reaper_host}   send {args.reaper_port}   feedback {args.reaper_feedback_port}",
+            )
+        )
+    else:
+        lines.append(_row("reaper", "not configured"))
+        lines.append(_note("no transport control; recording state stays unknown"))
+
+    lines.append(_row("log", str(args.log)))
+    if args.queue:
+        lines.append(_row("queue", str(args.queue)))
+    else:
+        lines.append(_row("queue", "not set"))
+        lines.append(_note("annotations are logged, but no markers reach Reaper"))
+
+    lines.extend(_page_lines(args.listen, args.http_port))
+    lines.append(_rule())
+    lines.extend(_checklist(args))
+    lines.append(_rule("="))
+    return lines
 
 
 #: Which config keys stand in for which flags. The whole of this tool's half of
@@ -199,9 +350,11 @@ def main(argv: list[str] | None = None) -> int:
     p = parser()
     args, config_path = config.resolve_or_exit(p, CONFIG_MAPPING, argv)
     config.require(p, args, CONFIG_MAPPING, *REQUIRED)
-    # Said out loud: a config picked up from the working directory is otherwise
-    # invisible, and "why is it driving DCA 3" has no answer on the day.
-    print(f"config: {config_path}" if config_path else "config: none (flags only)")
+    # Said out loud, because a box configured from a file has no visible
+    # command line: "why is it driving DCA 3" otherwise has no answer on the
+    # day. Printed before anything binds, so it survives a failure to start.
+    for line in startup_lines(args, config_path):
+        print(line)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args))
     return 0
