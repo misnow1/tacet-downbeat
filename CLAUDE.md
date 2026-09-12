@@ -210,18 +210,39 @@ would rot the moment the matrix changed. Review approval is *not* required: a
 solo maintainer cannot approve their own PR, and demanding one would make every
 merge a bypass.
 
-**Repository admins bypass all of it**, deliberately, so direct commits to
-`main` still work and there is a break-glass path on a Saturday. That makes the
-protection a guardrail rather than a gate: a red `make check` is still blocking
-by convention when you push straight to `main`, so run it before committing
-rather than relying on the badge.
+**Repository admins bypass all of it**, deliberately, as the break-glass path
+on a Saturday — a fix that has to land before kickoff cannot wait on a CI
+queue. It is not the everyday path. A bypassed push still wants a green `make
+check` first, and an issue afterwards saying what was pushed and why.
+
+## Changes: issues and pull requests
+
+Phase 0 shipped and went through a game (2026-09-12). From there on, changes
+are tracked rather than committed straight to `main`.
+
+- **Every change starts from an issue.** If there is no issue, file one first.
+  Decisions made in conversation go into the issue body, not only the PR.
+- **One branch per issue**, named `<issue>-<slug>`: `23-issues-and-prs`.
+- **The PR says `Closes #n`** so the issue closes on merge.
+- **`CI passing` gates the merge.** Run `make check` before pushing anyway; CI
+  is the gate, not the first place a failure is seen.
+- **Squash merge**, so `main` reads one commit per change. Branches are deleted
+  on merge.
+- **Docs-only changes go through a PR too**, so the history lives in one place.
+- **Labels:** one `area:*`, one `phase:*` where it applies, plus `safety`,
+  `hard-constraint` or `gameday` when they fit. `hard-constraint` means read
+  `docs/design.md` before touching it.
+- **One milestone per home game** (`Game 3`, `Game 4`, ...) holding what must
+  land before it. Home games are numbered by the season, so 2026-09-12 is game
+  2 — the first with the operator page — even though its review lives in
+  `docs/game-1.md` until #22 renames it.
+
+For an agent working here: branch, commit, push and open the PR when asked to
+work an issue. **Never merge** — merging is the maintainer's call — and never
+push to `main` directly.
 
 ## Working notes
 
-- **Commits go straight to `main`.** Solo repo; no branch or PR ceremony — the
-  ruleset above admits admins precisely so this keeps working. Use a PR when you
-  want CI to gate the merge, not as a matter of course. Commit only when asked,
-  and do not push unless asked.
 - `docs/gameday.md` is the operating runbook: startup order, what the page
   should read before kickoff, and what each failure message means. Anything
   learned by running the system on a Saturday belongs there, not in a commit
