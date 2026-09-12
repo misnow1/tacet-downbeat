@@ -264,3 +264,54 @@ class TestReading(LogTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPriorAnchorIsNoticed(LogTestCase):
+    """A log that already holds a recording anchors today's entries to that one.
+
+    Appending is legitimate and nothing is lost, so this is a thing to say, not
+    a thing to refuse. What it must never be is quiet: the positions that come
+    out are positive and plausible.
+    """
+
+    def test_a_missing_log_has_no_prior_anchor(self):
+        # The ordinary case: a fresh game, a filename nothing has written yet.
+        self.assertIsNone(ann.find_prior_anchor(self.path))
+
+    def test_a_log_without_a_recording_has_no_prior_anchor(self):
+        with self.log() as log:
+            log.record("band-enters-stadium")
+        self.assertIsNone(ann.find_prior_anchor(self.path))
+
+    def test_a_log_with_a_recording_reports_it(self):
+        with self.log() as log:
+            log.record(ann.ANCHOR_EVENT)
+        found = ann.find_prior_anchor(self.path)
+        assert found is not None
+        self.assertEqual(found.event, ann.ANCHOR_EVENT)
+
+    def test_the_first_recording_is_the_one_reported(self):
+        # Matching markers.find_anchor, which is what the warning is about.
+        with self.log() as log:
+            log.record(ann.ANCHOR_EVENT)
+            log.record("band-enters-stands")
+            log.record(ann.ANCHOR_EVENT)
+        found = ann.find_prior_anchor(self.path)
+        assert found is not None
+        self.assertEqual(found.seq, 1)
+
+    def test_a_fresh_log_opens_with_no_prior_anchor(self):
+        with self.log() as log:
+            log.record(ann.ANCHOR_EVENT)
+            self.assertIsNone(log.prior_anchor)
+
+    def test_reopening_a_log_notices_the_recording_already_in_it(self):
+        with self.log() as log:
+            log.record(ann.ANCHOR_EVENT)
+        with self.log() as reopened:
+            self.assertIsNotNone(reopened.prior_anchor)
+
+    def test_the_anchor_event_is_in_the_vocabulary(self):
+        # The warning, the box's own entry and markers.find_anchor all key on
+        # this string. A copy that drifted would silence the warning.
+        self.assertIn(ann.ANCHOR_EVENT, ann.EVENTS)

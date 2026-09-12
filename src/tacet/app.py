@@ -37,7 +37,10 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
 ARMED = "armed"
 STOOD_DOWN = "stood-down"
 COMMANDED = "commanded"
-RECORDING_STARTED = "recording-started"
+#: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
+#: this event and the box warns when a log already holds one, so all of them
+#: have to agree or the warning goes quiet.
+RECORDING_STARTED = ann.ANCHOR_EVENT
 
 
 class App:

@@ -85,6 +85,50 @@ In Reaper, once:
 
 ---
 
+## One recording, one log, started early
+
+The rule the rest of this file assumes: **one continuous recording per game, in
+one Reaper project, with its own `--log`, started before the crowd arrives and
+not stopped until the band is out.**
+
+It is tempting to record a test, stop, and start properly when the band arrives.
+Do not, unless you also take a fresh `--log` -- `tacet.markers` anchors the whole
+timeline to the **first** `recording-started` in a log, so a second recording in
+the same log places every later annotation the length of the gap away from the
+audio. The box now warns when the log you name already holds a recording, but
+the cheapest fix is not to need the warning.
+
+Two things make starting early the easy choice rather than a sacrifice:
+
+- **The empty-but-filling stands are data**, not waste. A stadium filling up with
+  no band playing is the cleanest negative sample there is, and it cannot be
+  collected any other way.
+- **`band-enters-stadium` and `band-enters-stands` have nowhere to land** if the
+  recording starts after them. Audio started late loses audio; annotation
+  started late loses the annotation permanently.
+
+The same goes for halftime. The stand mics then carry your band on the field,
+the visiting band on the field, and cadences on the way out and back -- music
+present while the fader must stay **closed**, which is the single hardest case
+the detector has to learn and the reason `other-band-on-field` is in the
+vocabulary at all. A halftime is 20-30 minutes, about 2.4-3.6 GB against a
+33-44 GB game. If space ever genuinely bites, trim the `halftime` span
+afterwards; it is already delimited in the log.
+
+If you want a genuine throwaway test first, make it a throwaway in both places:
+
+```
+tacet-serve --log /tmp/preflight.jsonl      # scratch project, scratch log
+```
+
+then stop in Reaper, close that project, Ctrl-C the box twice, and start again
+against the game project and the game log. Run `tacet_mirror.lua` in the new
+project **before** the box, or the queue lines written before it comes up are
+never mirrored. The script keeps its byte offset in `ExtState`, so a new project
+will not re-stamp the test's markers.
+
+---
+
 ## Starting up, in order
 
 Order matters in two places, both called out below. Everything else is
@@ -196,10 +240,11 @@ tacet-serve \
     --http-port 8080
 ```
 
-- `--log` is **per game**. It is the irreplaceable artefact. Keep it a flag even
-  when everything else lives in the file -- it is the value that changes, and a
-  stale `capture.log` overwrites nothing but does bury today under yesterday's
-  filename.
+- `--log` is **per game**, and per *recording*. It is the irreplaceable artefact.
+  Keep it a flag even when everything else lives in the file -- it is the value
+  that changes, and a stale `capture.log` overwrites nothing but does bury today
+  under yesterday's filename. If the log already holds a recording the banner
+  says so in a `WARNING` row; see *When it goes wrong*.
 - `--queue` is **stable**, and must match step 2. Good candidate for the file.
 - `--listen 0.0.0.0` or the iPad cannot reach the page. `127.0.0.1` serves the
   machine and nothing else, which looks exactly like a firewall problem.
@@ -349,6 +394,7 @@ config problems and it says so on the terminal rather than the page:
 | The terminal says | What it means | What to do |
 |---|---|---|
 | `config      none (flags only)` in the banner | It found no `tacet.toml`. Not an error, but if you expected one you are in the wrong directory | `cd` to the repo, or pass `--config <path>` |
+| `WARNING     this log already contains a recording` | The `--log` you gave already holds a `recording-started` -- yesterday's game, or the pre-flight test. Markers derived from it will anchor to **that** recording, so today's entries land wrong | Stop and pass a fresh `--log`, unless you genuinely meant to append. Nothing is lost either way; the log is append-only and can be split afterwards |
 | `unknown key '...' in [...]` | A misspelled key. It refuses rather than silently using a default and driving the wrong fader | Fix the spelling; the message lists the keys that exist |
 | `... must be a whole number` / `must be true or false` | A value of the wrong type, e.g. `dca = "3"` with quotes | Drop the quotes. Numbers and booleans are bare in TOML |
 | `--config names ..., which does not exist` | A config was asked for by name and is not there | Check the path. A file merely looked for and absent is fine; one you named is not |

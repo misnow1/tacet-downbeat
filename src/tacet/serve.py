@@ -36,7 +36,8 @@ from pathlib import Path
 from aiohttp import web as aiohttp_web
 
 from . import config, dm7, mirror, reaper, web
-from .annotations import AnnotationLog
+from .annotations import AnnotationLog, find_prior_anchor
+from .annotations import Entry as AnnotationEntry
 from .app import App
 
 #: How long a Ctrl-C stays armed, waiting for the one that confirms it.
@@ -247,7 +248,35 @@ def _checklist(args: argparse.Namespace) -> list[str]:
     return lines
 
 
-def startup_lines(args: argparse.Namespace, config_path: Path | None) -> list[str]:
+def _prior_anchor_lines(prior: AnnotationEntry) -> list[str]:
+    """The loud block for a log that already holds a recording.
+
+    Appending is not a fault -- the log is append-only and nothing is lost -- so
+    this warns rather than refusing. A box that will not start twenty minutes
+    before kickoff is worse than a log that needs splitting afterwards, and the
+    operator is the supervisor here, not the fallback.
+
+    What it must not do is stay quiet. `markers.find_anchor` takes the *first*
+    recording in a log, so today's entries would be positioned against that one:
+    positive, plausible, and wrong by however long ago it was.
+    """
+    return [
+        _rule(),
+        _row("WARNING", "this log already contains a recording"),
+        _note(f"the earlier one started {prior.wall}"),
+        _note("markers derived from this log anchor to THAT recording, so"),
+        _note("today's entries would be placed wrong, and nothing downstream"),
+        _note("would report it"),
+        _note("a fresh game wants a fresh --log; carry on only if you meant"),
+        _note("to append to this one"),
+    ]
+
+
+def startup_lines(
+    args: argparse.Namespace,
+    config_path: Path | None,
+    prior_anchor: AnnotationEntry | None = None,
+) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
     Exists because the values no longer have to appear on the command line. A
@@ -288,6 +317,8 @@ def startup_lines(args: argparse.Namespace, config_path: Path | None) -> list[st
         lines.append(_note("annotations are logged, but no markers reach Reaper"))
 
     lines.extend(_page_lines(args.listen, args.http_port))
+    if prior_anchor is not None:
+        lines.extend(_prior_anchor_lines(prior_anchor))
     lines.append(_rule())
     lines.extend(_checklist(args))
     lines.append(_rule("="))
@@ -353,7 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     # Said out loud, because a box configured from a file has no visible
     # command line: "why is it driving DCA 3" otherwise has no answer on the
     # day. Printed before anything binds, so it survives a failure to start.
-    for line in startup_lines(args, config_path):
+    # Read before the log is opened for appending, so "already contains a
+    # recording" still means *before this run*.
+    for line in startup_lines(args, config_path, find_prior_anchor(args.log)):
         print(line)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args))

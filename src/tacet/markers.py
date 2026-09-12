@@ -21,6 +21,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from .annotations import (
+    ANCHOR_EVENT,
     PHASE_END,
     PHASE_START,
     AnnotationError,
@@ -28,9 +29,6 @@ from .annotations import (
     marker_name,
     project_seconds,
 )
-
-#: The event whose position defines project time zero.
-ANCHOR_EVENT = "recording-started"
 
 CSV_FIELDS = ("name", "start", "end")
 
@@ -60,11 +58,18 @@ class DerivedMarkers:
     skipped_before_anchor: tuple[Entry, ...] = ()
     unclosed_spans: tuple[str, ...] = ()
     orphan_ends: tuple[str, ...] = ()
+    #: Recordings after the first one in this log. The whole timeline is
+    #: measured from the first anchor, so entries logged after a stop and
+    #: restart are placed the length of the gap away from the audio they
+    #: describe. They are not dropped and their positions are not negative, so
+    #: nothing else here would notice: without this they are silently wrong,
+    #: which is the one outcome CLAUDE.md rules out.
+    extra_anchors: tuple[Entry, ...] = ()
 
     @property
     def is_clean(self) -> bool:
-        """True when every entry landed somewhere. Show the operator otherwise."""
-        return not (self.skipped_before_anchor or self.unclosed_spans or self.orphan_ends)
+        """True when every entry landed somewhere, correctly. Show the operator otherwise."""
+        return not (self.skipped_before_anchor or self.unclosed_spans or self.orphan_ends or self.extra_anchors)
 
 
 def find_anchor(entries: Iterable[Entry]) -> Entry:
@@ -102,9 +107,15 @@ def derive(
     orphans: list[str] = []
     open_spans: dict[str, float] = {}
     span_names: dict[str, str] = {}
+    extra_anchors: list[Entry] = []
     latest = 0.0
 
     for entry in entries:
+        # Every later recording in this log. Reported rather than placed on:
+        # the arithmetic below is measured from `anchor`, so everything after a
+        # restart is out by the length of the stop.
+        if entry.event == ANCHOR_EVENT and entry.seq != anchor.seq:
+            extra_anchors.append(entry)
         position = position_of(entry, anchor)
         if position < 0:
             skipped.append(entry)
@@ -137,6 +148,7 @@ def derive(
         skipped_before_anchor=tuple(skipped),
         unclosed_spans=tuple(open_spans),
         orphan_ends=tuple(orphans),
+        extra_anchors=tuple(extra_anchors),
     )
 
 

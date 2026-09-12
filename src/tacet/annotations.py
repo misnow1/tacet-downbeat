@@ -120,12 +120,21 @@ def _span(key: str, label: str, category: Category, *, button: bool = True) -> E
     return EventType(key, label, category, Kind.SPAN, button=button)
 
 
+#: The entry every other position in the log is measured from.
+#:
+#: Named once, here, because three things now depend on it meaning the same
+#: string: the box writes it, `tacet.markers` anchors the whole timeline to the
+#: first one, and the box warns at startup when a log already contains one. A
+#: second copy of this string that drifted would break the warning silently,
+#: which is the exact failure the warning exists to prevent.
+ANCHOR_EVENT = "recording-started"
+
 #: The event vocabulary. Extend it freely - unknown-unknowns are the point
 #: (design.md 5.6). Keys are stable and machine-facing; labels are what the
 #: operator sees on a button and may be reworded without breaking old logs.
 VOCABULARY: tuple[EventType, ...] = (
     # Session. Written by the box, not tapped by anyone.
-    _instant("recording-started", "Recording started", Category.SESSION, button=False),
+    _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),
     _instant("recording-stopped", "Recording stopped", Category.SESSION, button=False),
     _instant("armed", "Armed", Category.SESSION, button=False),
     _instant("stood-down", "Stood down", Category.SESSION, button=False),
@@ -332,6 +341,11 @@ class AnnotationLog:
         self._handle: Any = None
         self._seq = 0
         self._open_spans: dict[str, Entry] = {}
+        #: The first `recording-started` already in the file when it was opened,
+        #: or None for a log this run started. Not a fault -- appending is what
+        #: an append-only log is for -- but it means `tacet.markers` will anchor
+        #: today's entries to an earlier recording, so the box says so.
+        self.prior_anchor: Entry | None = None
 
     # -- lifecycle --------------------------------------------------------
 
@@ -347,6 +361,8 @@ class AnnotationLog:
             return
         for entry in read_entries(self.path):
             self._seq = max(self._seq, entry.seq)
+            if entry.event == ANCHOR_EVENT and self.prior_anchor is None:
+                self.prior_anchor = entry
             if entry.span_id is None:
                 continue
             if entry.phase == PHASE_START:
@@ -455,6 +471,22 @@ class AnnotationLog:
         if self._mirror is not None:
             self._mirror.append(entry)
         return entry
+
+
+def find_prior_anchor(path: Path | str) -> Entry | None:
+    """The first `recording-started` already in a log, or None.
+
+    Answered before the log is opened for writing, so the box can say at startup
+    that today's entries will be positioned against an earlier recording. A
+    missing file is not a problem -- that is the ordinary case, a fresh game.
+    """
+    path = Path(path)
+    if not path.exists():
+        return None
+    for entry in read_entries(path):
+        if entry.event == ANCHOR_EVENT:
+            return entry
+    return None
 
 
 def read_entries(path: Path | str) -> Iterator[Entry]:

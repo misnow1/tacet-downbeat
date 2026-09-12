@@ -176,3 +176,46 @@ class TestCsv(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARestartedRecordingIsReported(unittest.TestCase):
+    """The silent one. Everything after a restart is placed the length of the
+    stop away from the audio it describes, with a positive, plausible position
+    that no other field here would flag."""
+
+    def entries(self, clock):
+        return [
+            build(clock, 1, "recording-started"),
+            build(clock, 2, "band-enters-stands"),
+            build(clock, 3, "recording-started"),
+            build(clock, 4, "drumline-cadence"),
+        ]
+
+    def test_the_later_recording_is_reported(self):
+        clock = StepClock()
+        entries = self.entries(clock)
+        result = markers.derive(entries, markers.find_anchor(entries))
+        self.assertEqual([entry.seq for entry in result.extra_anchors], [3])
+
+    def test_that_makes_the_result_unclean(self):
+        clock = StepClock()
+        entries = self.entries(clock)
+        result = markers.derive(entries, markers.find_anchor(entries))
+        self.assertFalse(result.is_clean)
+
+    def test_nothing_is_dropped_and_no_position_goes_negative(self):
+        # Precisely why it needed its own field: the existing reports stay
+        # empty, so the old is_clean would have called this fine.
+        clock = StepClock()
+        entries = self.entries(clock)
+        result = markers.derive(entries, markers.find_anchor(entries))
+        self.assertEqual(result.skipped_before_anchor, ())
+        self.assertEqual(result.orphan_ends, ())
+        self.assertEqual(result.unclosed_spans, ())
+
+    def test_one_recording_reports_nothing_and_stays_clean(self):
+        clock = StepClock()
+        entries = [build(clock, 1, "recording-started"), build(clock, 2, "band-enters-stands")]
+        result = markers.derive(entries, markers.find_anchor(entries))
+        self.assertEqual(result.extra_anchors, ())
+        self.assertTrue(result.is_clean)

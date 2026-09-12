@@ -87,6 +87,10 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertIn(label, self.runbook)
 
+    def test_the_runbook_documents_the_reused_log_warning(self) -> None:
+        # The warning is only useful if the table says what to do about it.
+        self.assertIn("this log already contains a recording", self.runbook)
+
     def test_the_runbook_reproduces_the_checklist_steps(self) -> None:
         for phrase in ("before kickoff", "tacet_mirror.lua running in Reaper", "arm when the band is in the stands"):
             with self.subTest(phrase=phrase):

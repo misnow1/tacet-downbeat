@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from tacet import dm7, serve
+from tacet import annotations, dm7, serve
 
 
 class TestStopConfirmation(unittest.TestCase):
@@ -178,3 +178,52 @@ class TestStartupBannerShape(unittest.TestCase):
         # A blank line in a banner reads as the end of it.
         for line in serve.startup_lines(serve.parser().parse_args(FULL), None):
             self.assertTrue(line.strip(), "banner has an empty line")
+
+
+class TestStartupBannerWarnsAboutAReusedLog(unittest.TestCase):
+    """Yesterday's log, or a log the pre-flight test already wrote to.
+
+    Both produce a timeline anchored to a recording that is not today's, and
+    both look completely healthy at every other point in the system.
+    """
+
+    WALL = "2026-09-12T19:00:00+00:00"
+
+    def prior(self):
+        event = annotations.lookup(annotations.ANCHOR_EVENT)
+        return annotations.Entry(
+            seq=1,
+            event=event.key,
+            category=str(event.category),
+            kind=str(event.kind),
+            label=event.label,
+            wall=self.WALL,
+            monotonic=0.0,
+        )
+
+    def test_a_clean_log_gets_no_warning(self):
+        self.assertNotIn("WARNING", banner())
+
+    def test_a_log_with_a_recording_in_it_is_called_out(self):
+        args = serve.parser().parse_args(FULL)
+        text = "\n".join(serve.startup_lines(args, None, self.prior()))
+        self.assertIn("WARNING", text)
+        self.assertIn("already contains a recording", text)
+
+    def test_it_says_when_the_earlier_recording_was(self):
+        args = serve.parser().parse_args(FULL)
+        prior = self.prior()
+        text = "\n".join(serve.startup_lines(args, None, prior))
+        self.assertIn(prior.wall, text)
+
+    def test_it_says_what_to_do(self):
+        args = serve.parser().parse_args(FULL)
+        text = "\n".join(serve.startup_lines(args, None, self.prior()))
+        self.assertIn("--log", text)
+
+    def test_it_does_not_refuse_to_start(self):
+        # A box that will not start 20 minutes before kickoff is worse than a
+        # log that needs splitting afterwards. The operator is the supervisor.
+        args = serve.parser().parse_args(FULL)
+        lines = serve.startup_lines(args, None, self.prior())
+        self.assertIn("arm when the band is in the stands", "\n".join(lines))
