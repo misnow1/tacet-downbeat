@@ -360,7 +360,13 @@ margin:4px 0 0}
 /* These move the fader as well as recording why, so they must not read as more
    annotation buttons: the grid is tapped without looking. */
 .grid button[data-action]{border-width:2px;font-weight:700}
-.grid button[data-action="open"]{border-color:var(--open);color:var(--open)}
+/* Both openers are green, because the colour says which way the fader goes and
+   both of these send it up. That `up-slow` rides in rather than snapping is a
+   difference in the gesture, not in the direction, and the button already says
+   so in words. Listed rather than matched on a prefix so a new action has to be
+   given a colour deliberately instead of inheriting one. */
+.grid button[data-action="open"],
+.grid button[data-action="open-slow"]{border-color:var(--open);color:var(--open)}
 .grid button[data-action="release"]{border-color:var(--fade);color:var(--fade)}
 /* Three link states, not two. An open socket that has not delivered anything
    is a connection attempt and reads as one; a silence past the box's own

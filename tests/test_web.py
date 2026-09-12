@@ -334,3 +334,35 @@ class TestBroadcastThrottle(unittest.TestCase):
     def test_an_identical_snapshot_still_waits(self):
         snapshot = self.app.snapshot()
         self.assertFalse(web.should_broadcast(snapshot, snapshot, elapsed=0.1, interval=1.0))
+
+
+class TestEveryFaderActionIsColoured(unittest.TestCase):
+    """The grid is tapped without looking, so colour carries the meaning.
+
+    This exists because it did not: adding `open-slow` to the vocabulary left
+    `up-slow` matching no colour rule, so the one button that moves the fader
+    most gently rendered as an ordinary annotation button. Nothing failed - the
+    page was simply wrong, which is the kind of thing a stadium is bad at
+    forgiving.
+    """
+
+    def test_every_action_has_a_rule_in_the_page(self):
+        for action in ann.Action:
+            with self.subTest(action=action):
+                self.assertIn(f'[data-action="{action.value}"]', web.PAGE)
+
+    def test_every_action_a_button_carries_is_in_that_set(self):
+        # The vocabulary is the source: a button with an action the stylesheet
+        # has never heard of is the failure above, one release later.
+        for event in ann.BUTTONS:
+            if event.action is not None:
+                with self.subTest(event=event.key):
+                    self.assertIn(f'[data-action="{event.action.value}"]', web.PAGE)
+
+    def test_the_two_openers_share_the_colour_that_means_up(self):
+        # Direction, not gesture: both send the fader up, and the button says in
+        # words which of them rides in.
+        self.assertIn(
+            '.grid button[data-action="open"],\n.grid button[data-action="open-slow"]{border-color:var(--open)',
+            web.PAGE,
+        )
