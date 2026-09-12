@@ -630,12 +630,16 @@ confirms the band is in the stands.
 - **Confirm the 10–20 ms delay is inaudible** in the live room, and whether hype
   and band paths need independent delay.
 - **Confirm the band whistle's fundamental** from multitrack.
-- **Confirm DCA fader granularity.** The spec gives `min -32768 / max 1000 /
-  scaling 100`, implying arbitrary hundredths of a dB, but the parameter notes
-  point at Table 1 — a 43-entry list whose steps are 1 dB near unity, 2 dB from
-  −10 to −30, 5 dB below that. If only Table 1 values are accepted, a 2 s close
-  from 0 dB to −∞ is 32 steps, ~62 ms apart. Send `-1550` and see whether the
-  console lands on −15.50 or snaps to −16.
+- ~~**Confirm DCA fader granularity.**~~ **Answered 2026-09-12: arbitrary
+  hundredths.** The spec gives `min -32768 / max 1000 / scaling 100`, implying
+  arbitrary hundredths of a dB, while the parameter notes point at Table 1 — a
+  43-entry list whose steps are 1 dB near unity, 2 dB from −10 to −30, 5 dB
+  below that. Had only Table 1 values been accepted, a 2 s close from 0 dB to −∞
+  would have been 32 steps, ~62 ms apart. `verify_dm7 --granularity` sent
+  `-1550`; the console displayed −15.50 rather than snapping to −16.00. So the
+  spec governs and Table 1 is a display convention. `quantize()` and
+  `Dm7Client(quantized=True)` stay in the code as a contingency for a different
+  console or a firmware change, and are unused here.
 - **Whether MIDI offers state readback**, which OSC does not (§5.3). Needs the
   DM7 MIDI data format document.
 - Obtain ACC-specific amplification guidance if it exists.

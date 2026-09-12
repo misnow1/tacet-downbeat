@@ -63,9 +63,11 @@ MIN_RAMP_TICKS = 1
 
 #: Table 1 of the OSC spec, in hundredths of a dB, ascending.
 #:
-#: Whether the console accepts arbitrary values or snaps to these is an open
-#: question (design.md section 7). Ramping through `quantize` makes the two cases
-#: behave identically, at the cost of a coarser fade below -10 dB.
+#: The console at this site does NOT snap to these: `verify_dm7 --granularity`
+#: sent -1550 and the DM7 displayed -15.50 (2026-09-12), so the spec's scaling
+#: governs and Table 1 is a display convention. Kept as a contingency for a
+#: different console or a firmware change - ramping through `quantize` makes both
+#: cases behave identically, at the cost of a coarser fade below -10 dB.
 TABLE_1 = (
     -32768,
     -13800,

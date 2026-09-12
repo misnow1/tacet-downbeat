@@ -13,8 +13,9 @@ checklist, not the reasoning.
 
 ## Site values to fill in
 
-These are not in the repo because nobody has stood in the press box with them
-yet. Write them down here the first time they are known.
+These live here and nowhere else in the repo. As of 2026-09-12 the console has
+been reached, so the IP and the DCA number are both known good - write them in.
+An empty row below now means nobody wrote it down, not that nobody knows.
 
 | | Value | Where it comes from |
 |---|---|---|
@@ -40,10 +41,24 @@ in the `config` row of its banner, the two `verify_` tools on a line of their
 own. If that reads `none (flags only)` and you expected a file, you are in the
 wrong directory.
 
-**The console has never been driven by this software.** `verify_dm7` has not
-been run against a DM7, so whether the fade is smooth or steps in 0.5 dB
-increments is unknown, and `--quantized` may turn out to be needed. Run the
-granularity check before trusting the fade in front of an audience:
+**The console has been driven by this software** (2026-09-12). `verify_dm7
+--granularity` sent `-1550` and the DM7 displayed **−15.50**, not −16.00: it
+takes arbitrary hundredths of a dB and does not snap to Table 1. So the 2 s
+close is a smooth 50 Hz ramp rather than a 32-step staircase, and **`--quantized`
+is not needed at this site.** Leave it off; `quantized = false` in `tacet.toml`.
+
+That one probe also retired the largest assumption in the repo. The fader moving
+at all proves the OSC packet format is accepted, the address
+`MIXER:Current/DCA/Fader/Level` is right, the IP and port 49900 are right, and
+the DCA number is right. None of that had ever been confirmed against hardware.
+
+A `--fade 2` close was watched on StageMix the same day and glided rather than
+stepping. Read that as ruling out gross stepping, not as proof of sample-accurate
+tracking: StageMix's own refresh over wifi is the slower of the two things being
+observed, so it could hide a fine stagger. Nothing suggests one.
+
+Re-run the check after any console firmware update, and at a new venue - this is
+a fact about *this* DM7, not about DM7s:
 
 ```
 python -m tacet.verify_dm7 --host <console IP> --dca <n> --granularity
@@ -258,7 +273,7 @@ tacet-serve \
 - `--queue` is **stable**, and must match step 2. Good candidate for the file.
 - `--listen 0.0.0.0` or the iPad cannot reach the page. `127.0.0.1` serves the
   machine and nothing else, which looks exactly like a firewall problem.
-- Add `--quantized` only once the console is known to round. `--no-quantized`
+- Leave `--quantized` off: this console does not round (2026-09-12). `--no-quantized`
   turns it back off when the file sets it and you want it gone for one run.
 
 ### 4. The iPad
@@ -494,9 +509,15 @@ log.
 
 Honest state of things, so nothing here reads as more settled than it is.
 
-- **The console.** Never driven by this software. Addresses are verified
-  against the spec, not against a DM7.
-- **Fade granularity.** Unknown until `verify_dm7 --granularity` runs.
+- **The console under a full cycle.** The write path is proven (2026-09-12:
+  addresses, IP, port and DCA all confirmed, arbitrary levels accepted, a 2 s
+  fade watched gliding). What has still never happened is the box driving that
+  fader through a whole game while an operator works, which is a different
+  claim from a bench probe on a quiet afternoon.
+- **The console's packet-rate headroom.** The ramp sends 50 levels a second and
+  nothing has measured whether any are dropped. The observed fade was smooth on
+  StageMix, whose refresh is slower than the ramp, so a fine stagger would not
+  have shown. No reason to think there is one.
 - **RTD.** Not implemented. Game timing is operator-tapped for now. One thing
   about it is known in advance and will bite on the first attempt: the
   scoreboard console **does not send its state when something connects**. It

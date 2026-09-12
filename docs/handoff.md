@@ -4,7 +4,7 @@ Working state for a session on another machine. Everything else a new session
 needs is already in `CLAUDE.md` and `docs/design.md`, which travel with the repo
 and load automatically.
 
-**Last updated:** 2026-09-08 (Session A run on the Mac; results below)
+**Last updated:** 2026-09-12 (Session B run in the press box; the console answers)
 
 ## Getting set up on a fresh machine
 
@@ -51,7 +51,7 @@ Two flags are deliberately **not** config keys, because they select what a tool
 | Piece | State |
 |---|---|
 | `tacet.osc` | OSC 1.0 codec. Verified against the spec's worked example. |
-| `tacet.dm7` | DCA fader control and ramps. Addresses verified against the spec PDF; **never exercised against a console.** |
+| `tacet.dm7` | DCA fader control and ramps. Addresses verified against the spec PDF **and against a DM7** (2026-09-12): arbitrary levels accepted, so no quantizing. |
 | `tacet.annotations` | Append-only JSONL log. The source of truth. |
 | `tacet.markers` | Offline derivation of markers and regions. Pure. |
 | `tacet.mirror` | The TSV queue the Lua script tails. |
@@ -303,10 +303,14 @@ The console IP is the one under Setup → Network → For Mixer Control. Port 49
    read as clearly different. **Partly done** - a desktop browser has rendered
    it and agreed with the stub (2026-09-10). The tablet has not, and the
    questions that need one are still open.
-4. The granularity answer, if the press box happened. **Still open.**
+4. ~~The granularity answer, if the press box happened.~~ - done (2026-09-12).
+   `-1550` landed on **−15.50**, so the console takes arbitrary hundredths and
+   `--quantized` stays off. The move also confirmed the address, IP, port and
+   DCA number, none of which had been exercised before.
 
-Reaper is no longer a guess and neither is the rendering. What is left is the
-console, and a tablet.
+Reaper is no longer a guess, neither is the rendering, and neither is the
+console. What is left is a tablet - and the console under a whole game rather
+than a bench probe.
 
 Operating the thing on a Saturday is `docs/gameday.md`, which is where the
 startup order and the site-specific values live.
