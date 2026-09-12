@@ -77,7 +77,9 @@ In Reaper, once:
 1. DVS as the audio device, at 48 kHz, with the band channels mapped.
 2. Preferences > Control/OSC/web > add an OSC device. **Listen port 8000**,
    **device port 9000**, feedback enabled. These are the defaults the box
-   assumes; anything else needs `--reaper-port` / `--reaper-feedback-port`.
+   assumes; anything else needs `--reaper-port` / `--reaper-feedback-port`, or
+   `reaper.send_port` / `reaper.receive_port` in `tacet.toml` so it survives
+   into next game.
 3. Copy `reaper/tacet_mirror.lua` into `REAPER/Scripts`.
 
 ---
@@ -114,7 +116,9 @@ line needs from you.
 - **Leave the file alone between games.** It is append-only and the script
   remembers its position, so a new Reaper project each game resumes exactly
   where the last one stopped and places nothing from an earlier game.
-- Match `--queue` in step 3 to the path entered here.
+- Match `--queue` in step 3 to the path entered here. Better, set it once as
+  `capture.queue` in `tacet.toml`: it is stable for the life of the setup, and
+  a value in the file cannot be mistyped in a hurry the way a flag can.
 
 **Do not:**
 
@@ -304,6 +308,17 @@ The box fails visible. Anything it cannot confirm, it says.
 | `Console unreachable` | The DM7 did not accept a packet | The operator has the fader. Ride it from the iPad and keep going |
 | `Reaper is already recording` | Second press of the record button | Nothing. It refused on purpose |
 | `not armed` | A fader button while standing down | Arm first. The tap was still logged |
+
+The box can also refuse to start at all, before any of the above. Those are
+config problems and it says so on the terminal rather than the page:
+
+| The terminal says | What it means | What to do |
+|---|---|---|
+| `config: none (flags only)` | It found no `tacet.toml`. Not an error, but if you expected one you are in the wrong directory | `cd` to the repo, or pass `--config <path>` |
+| `unknown key '...' in [...]` | A misspelled key. It refuses rather than silently using a default and driving the wrong fader | Fix the spelling; the message lists the keys that exist |
+| `... must be a whole number` / `must be true or false` | A value of the wrong type, e.g. `dca = "3"` with quotes | Drop the quotes. Numbers and booleans are bare in TOML |
+| `--config names ..., which does not exist` | A config was asked for by name and is not there | Check the path. A file merely looked for and absent is fine; one you named is not |
+| `--console-host is required or console.host in the config file` | Neither the flag nor the file supplied it | Give it either way |
 
 The top banner is about the iPad's link to the box. `LINK LOST` on the
 recording line is about the box's link to Reaper. They are different failures

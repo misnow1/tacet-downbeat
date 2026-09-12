@@ -20,6 +20,11 @@
   Install: put this in REAPER/Scripts, add it via Actions > Load ReaScript, and
   run it. It will ask for the queue path once and remember it.
 
+  Whatever path you enter here has to be the one the box writes to: either
+  `tacet-serve --queue <path>` or, better, `capture.queue` in its tacet.toml,
+  since the path is stable for the life of the setup. A mismatch looks entirely
+  healthy on both sides and mirrors nothing.
+
   Stop it from the Actions list, or by running it again.
 ]]
 

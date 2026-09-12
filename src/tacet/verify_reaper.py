@@ -9,6 +9,15 @@ with a fact.
     python -m tacet.verify_reaper --listen 20
 
 Then, in Reaper: press play, stop, and record-arm. Paste the output back.
+
+`--host`, `--send-port` and `--recv-port` can come from the config file instead,
+as `reaper.host`, `reaper.send_port` and `reaper.receive_port`. A `tacet.toml`
+in the working directory is used automatically; `--config PATH` or
+`$TACET_CONFIG` names one elsewhere, and a flag beats the file either way.
+
+`--listen` is NOT a config key. Here it is a duration in seconds, not the UI's
+bind address that `ui.listen` sets, and the two must not reach each other. See
+`tacet.config`.
 """
 
 from __future__ import annotations
@@ -117,7 +126,8 @@ CONFIG_MAPPING = {
 
 def parser() -> argparse.ArgumentParser:
     """Built separately from `main` so the tests can reach it without Reaper."""
-    p = argparse.ArgumentParser(description=__doc__)
+    # Raw, so the example commands survive --help intact. See tacet.serve.
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     config.add_config_argument(p)
     p.add_argument("--host", default=DEFAULT_HOST)
     p.add_argument("--send-port", type=int, default=DEFAULT_SEND_PORT)

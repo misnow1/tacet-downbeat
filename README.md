@@ -42,9 +42,36 @@ docs/vendors/       vendor specs (Yamaha DM7 OSC, plus a text extraction)
 src/tacet/          the box: OSC codec, console and Reaper clients, state
                     machine, annotation log, web UI
 reaper/             ReaScript that mirrors annotations into Reaper markers
+tacet.toml.example  every config key, commented; copy to tacet.toml (gitignored)
 tests/
 audio/              multitrack sources for offline analysis (gitignored)
 ```
+
+## Configuration
+
+`tacet-serve`, `verify_dm7` and `verify_reaper` all want the same site values —
+which console, which DCA, which Reaper — so they share one **optional** TOML
+file:
+
+```
+cp tacet.toml.example tacet.toml
+tacet-serve --log ~/games/2026-09-13.jsonl     # the rest comes from the file
+```
+
+A `tacet.toml` in the working directory is sourced automatically. Otherwise name
+one with `--config PATH` or `$TACET_CONFIG`; `~/.config/tacet/tacet.toml` is the
+last place looked. Nothing requires the file — every value still has a flag, and
+the flag wins:
+
+```
+built-in default  <  tacet.toml  <  explicit flag
+```
+
+Each tool prints which config it read on startup. Unknown sections and keys are
+errors rather than silently ignored, so a file that says `dca_number` stops the
+tool instead of leaving it on a default and driving the wrong fader. The real
+`tacet.toml` is gitignored: console IP, DCA number and NAS path stay out of the
+repo and live in `docs/gameday.md`.
 
 ## Development
 

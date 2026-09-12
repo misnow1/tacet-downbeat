@@ -19,6 +19,33 @@ make check       # should be green before you change anything
 Python 3.11+. The control path takes no dependencies; the web UI takes
 `aiohttp`. `make install` handles both, plus the dev tooling.
 
+### The config file
+
+Every command below can take its addresses from one optional TOML file instead
+of flags, which saves retyping the same console and Reaper details all session:
+
+```
+cp tacet.toml.example tacet.toml
+$EDITOR tacet.toml
+```
+
+A `tacet.toml` in the working directory is found automatically; `--config PATH`
+or `$TACET_CONFIG` names one elsewhere, and `~/.config/tacet/tacet.toml` is the
+last place looked. Every tool prints which config it used. The file is never
+required, and precedence is
+
+```
+built-in default  <  tacet.toml  <  explicit flag
+```
+
+so each command below is written out in full and keeps working verbatim with no
+config file at all. Where a flag can come from the file, the key is named
+alongside it. Unknown keys are errors, not silent no-ops.
+
+Two flags are deliberately **not** config keys, because they select what a tool
+*does* rather than where it points: `verify_dm7 --fade` / `--granularity` /
+`--level`, and `verify_reaper --listen` (a duration here, unlike `ui.listen`).
+
 ## What is built
 
 | Piece | State |
@@ -34,6 +61,7 @@ Python 3.11+. The control path takes no dependencies; the web UI takes
 | `tacet.app` | Everything wired together, transport-free. |
 | `tacet.web` | aiohttp UI. Smoke-tested end to end against a dead console. |
 | `tacet.serve` | `tacet-serve`, the entry point. |
+| `tacet.config` | The optional `tacet.toml`. Standard library only; a flag always beats it. |
 
 ## Session A — Mac with Reaper
 
@@ -89,6 +117,12 @@ To check the sending direction too:
 python -m tacet.verify_reaper --send /play --listen 10
 ```
 
+Both assume Reaper on `127.0.0.1:8000/9000`, which are the built-in defaults. If
+this machine differs, set `reaper.host`, `reaper.send_port` and
+`reaper.receive_port` in `tacet.toml` once instead of passing `--host`,
+`--send-port` and `--recv-port` every run. `--listen` stays a flag: it is the
+number of seconds to sit there, not an address.
+
 ### 2. Try the mirror script
 
 Its logic is tested against a stubbed Reaper API — `make test-lua`, or
@@ -121,7 +155,9 @@ The gaps reproduce the driving script's sleeps. Confirmed: argument order,
 2. Actions → Show action list → New action → Load ReaScript, then run it.
    ("Load ReaScript" is not a top-level action; on current Reaper you reach it
    through the action list.) It asks once for the queue path and remembers it in
-   `ExtState`, so point `tacet-serve --queue` at whatever you enter. Anything
+   `ExtState`, so point `tacet-serve --queue` -- or `capture.queue` in
+   `tacet.toml`, which is the better home for it since the path never
+   changes -- at whatever you enter. Anything
    under a path you can write to is fine.
 3. Generate some events:
 
@@ -171,14 +207,43 @@ tacet-serve --console-host 127.0.0.1 --dca 3 \
     --reaper-host 127.0.0.1 --listen 0.0.0.0 --http-port 8080
 ```
 
-Pointing `--console-host` at loopback is deliberate for a first run: UDP goes
-nowhere and nothing moves a real fader. Open `http://127.0.0.1:8080` on the
-laptop, then on the iPad against the machine's real address.
+The same run from a config file, which is worth setting up if you are going to
+restart the box repeatedly while poking at the page:
 
-`--listen` is the bind address, and it governs the HTTP site and the Reaper
-feedback socket together. `--listen 127.0.0.1` reaches the UI from the machine
-itself and **from nowhere else**, so the iPad cannot see it; that looks like a
-firewall problem and is not one. Use `0.0.0.0` for anything off-box.
+```toml
+# tacet.toml
+[console]
+host = "127.0.0.1"   # --console-host
+dca = 3              # --dca
+
+[reaper]
+host = "127.0.0.1"   # --reaper-host
+
+[capture]
+log = "/tmp/tacet/game.jsonl"    # --log
+queue = "/tmp/tacet/queue.tsv"   # --queue
+
+[ui]
+listen = "0.0.0.0"   # --listen
+port = 8080          # --http-port
+```
+
+```
+tacet-serve          # prints: config: /path/to/tacet.toml
+```
+
+Pointing `--console-host` (`console.host`) at loopback is deliberate for a first
+run: UDP goes nowhere and nothing moves a real fader. Open
+`http://127.0.0.1:8080` on the laptop, then on the iPad against the machine's
+real address.
+
+`--listen` (`ui.listen`) is the bind address, and it governs the HTTP site and
+the Reaper feedback socket together. `--listen 127.0.0.1` reaches the UI from the
+machine itself and **from nowhere else**, so the iPad cannot see it; that looks
+like a firewall problem and is not one. Use `0.0.0.0` for anything off-box.
+
+Note that `verify_reaper --listen` is a different thing entirely -- a duration in
+seconds -- which is why `ui.listen` is not shared with it.
 
 Worth checking:
 
@@ -213,6 +278,11 @@ Worth checking:
 ```
 python -m tacet.verify_dm7 --host <console IP> --dca <n> --granularity
 ```
+
+With the console in a `tacet.toml` (`console.host`, `console.dca`), that is just
+`python -m tacet.verify_dm7 --granularity`. The probe flags are never config
+keys, so the tool still does nothing to a fader unless you ask on the command
+line.
 
 Sends `-1550`, which is deliberately not a Table 1 value. Read the console:
 

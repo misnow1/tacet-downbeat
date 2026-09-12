@@ -5,6 +5,19 @@
 Everything is optional except the console. Without `--reaper-host` there is no
 transport control and recording state reads as unknown, which is honest rather
 than broken.
+
+Most of that repeats every game. Put the site values in a config file and only
+the game is left to type:
+
+    tacet-serve --log ~/games/2026-09-13.jsonl
+
+A `tacet.toml` in the working directory is picked up on its own; otherwise name
+one with `--config PATH` or `$TACET_CONFIG`, and `~/.config/tacet/tacet.toml`
+is the last place looked. The file is optional and every flag still wins over
+it -- `--dca 4` drives DCA 4 whatever the file says. `tacet.toml.example` in the
+repo root lists every key; `tacet.config` documents the rules; docs/gameday.md
+is the runbook. The first line of output says which config was used, or
+`none (flags only)`.
 """
 
 from __future__ import annotations
@@ -154,7 +167,10 @@ REQUIRED = ("console_host", "dca", "log")
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description=__doc__)
+    # Raw, or argparse reflows the docstring into one paragraph and the example
+    # command lines -- the part someone actually came to --help to copy -- come
+    # out wrapped mid-flag.
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     config.add_config_argument(p)
     p.add_argument("--console-host", help="the DM7's For Mixer Control IP")
     p.add_argument("--console-port", type=int, default=dm7.DEFAULT_PORT)

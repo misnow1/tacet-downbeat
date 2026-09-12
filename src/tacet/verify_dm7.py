@@ -9,6 +9,17 @@ Nothing here can confirm anything: the DM7's OSC is write-only, so the console
 is the only display. Read it.
 
     python -m tacet.verify_dm7 --host 10.0.0.5 --dca 3 --granularity
+
+`--host`, `--port`, `--dca` and `--quantized` can come from the config file
+instead, as `console.host`, `console.port`, `console.dca` and
+`console.quantized`. With a `tacet.toml` in the working directory -- or named
+by `--config PATH` or `$TACET_CONFIG` -- that shortens to:
+
+    python -m tacet.verify_dm7 --granularity
+
+`--granularity`, `--fade` and `--level` are deliberately NOT config keys. They
+choose what this tool does to a console, and a file able to select one of them
+would move a fader nobody asked to move. See `tacet.config`.
 """
 
 from __future__ import annotations
@@ -73,7 +84,8 @@ CONFIG_MAPPING = {
 
 def parser() -> argparse.ArgumentParser:
     """Built separately from `main` so the tests can reach it without a console."""
-    p = argparse.ArgumentParser(description=__doc__)
+    # Raw, so the example commands survive --help intact. See tacet.serve.
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     config.add_config_argument(p)
     p.add_argument("--host", help="the console's For Mixer Control IP")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)

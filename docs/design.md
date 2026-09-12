@@ -301,6 +301,14 @@ phone, or laptop; nothing to install, nothing extra to maintain.
 Implemented in `tacet.web`, with the logic in `tacet.app` so the operator flow
 is testable without a server. Run it with `tacet-serve`.
 
+The site values it needs — console IP, DCA number, Reaper host, queue path —
+are flags, and optionally an `tacet.toml` read by `tacet.config` and shared with
+`verify_dm7` and `verify_reaper`. The file is a convenience, never a
+requirement: a flag always beats it, so nothing about the operating path depends
+on a file being present or correct. Deliberately, no flag that *initiates*
+anything is a config key; the file supplies addresses, not actions. Keys are
+listed in `tacet.toml.example` and the runbook is docs/gameday.md.
+
 Minimum during-game requirements:
 
 - Current DCA level as **last commanded by the box**, labelled as commanded

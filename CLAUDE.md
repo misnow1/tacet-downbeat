@@ -89,6 +89,16 @@ Full detail in design.md §5.
 - **UI** — web, served over the control VLAN. Works on iPad, phone, laptop.
   Open/fade buttons, last commanded DCA level, plain-language "why" line, and
   annotation buttons. Commanded and confirmed values must render differently.
+- **Config** — an *optional* `tacet.toml`, read by `tacet.config` and shared by
+  `tacet-serve`, `verify_dm7` and `verify_reaper`, so the site values are not
+  retyped as flags every game. Standard library only (`tomllib`), so it adds no
+  dependency and stays importable from the control path. Precedence is
+  `built-in default < config file < explicit flag`, asserted per tool. Unknown
+  sections and keys are errors, never silent no-ops. **No flag that initiates
+  something is ever a config key** — the file supplies addresses, not actions,
+  which is why `verify_dm7 --fade/--granularity/--level` and `verify_reaper
+  --listen` are excluded. Keys live in `tacet.toml.example`; the real
+  `tacet.toml` is gitignored and its values belong in `docs/gameday.md`.
 - **AES67 is not available** on this Dante domain and is out of scope.
 
 ## State machine
