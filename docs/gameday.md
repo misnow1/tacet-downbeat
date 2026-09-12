@@ -210,7 +210,7 @@ Reaper, and where the log and queue are going:
 --------------------------------------------------------------------------
   console     10.0.0.5:49900   DCA 3
               commanded, never confirmed - the DM7's OSC is write-only
-  fade        2.0s close, fast open
+  fade        2.0s close, fast open, 1.5s ride-in
   reaper      127.0.0.1   send 8000   feedback 9000
   log         /Users/you/games/2026-09-13.jsonl
   queue       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
@@ -376,6 +376,13 @@ Three kinds of button:
   why, in one tap. `Up on whistle`, `Up on drums`, `Up slow`, `Faded out`.
   Prefer these: the move can be reconstructed afterwards from the post-DCA
   reference channel, but nothing reconstructs why.
+
+  `Up slow` is the one that moves differently. `Up on whistle` and `Up on
+  drums` snap open, because a missed downbeat is unrecoverable. `Up slow` rides
+  in over **1.5 seconds** instead: it is for the case where the first phrase was
+  already missed, where snapping open under a phrase in progress is its own kind
+  of wrong. Retune it with `fader.slow_open_seconds` or `--slow-open`; the other
+  two are unaffected.
 - **Everything else** - records only, moves nothing.
 
 Buttons marked `(start)` are spans: tap once to open the region, again to close
@@ -391,8 +398,8 @@ StageMix will not appear. During a close the line reads
 ```
 
 — the left figure sweeping as the ramp goes out, the right one where it is
-headed. When the fader is settled there is no arrow, because there is nowhere
-else to be. To check the expectation against reality, look at the DCA in
+headed. `Up slow` does the same thing upward, `-∞ dB → 0.00 dB`. When the fader
+is settled there is no arrow, because there is nowhere else to be. To check the expectation against reality, look at the DCA in
 StageMix; that comparison is the only thing that can catch a wrong DCA number or
 a console that is not listening.
 

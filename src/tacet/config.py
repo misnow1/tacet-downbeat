@@ -105,6 +105,7 @@ SCHEMA: tuple[Option, ...] = (
     Option("capture", "log", "path", "annotation log (JSONL); per game"),
     Option("capture", "queue", "path", "mirror queue the ReaScript watches"),
     Option("fader", "fade_seconds", "float", "close fade length"),
+    Option("fader", "slow_open_seconds", "float", "ride-in for up-slow, when the start was missed"),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "int", "port the web UI binds to"),
 )

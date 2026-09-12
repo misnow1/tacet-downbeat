@@ -88,7 +88,13 @@ def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQu
         quantized=args.quantized,
     )
     recorder = reaper.ReaperClient(args.reaper_host, args.reaper_port) if args.reaper_host else None
-    app = App(console=console, log=log, recorder=recorder, fade_seconds=args.fade)
+    app = App(
+        console=console,
+        log=log,
+        recorder=recorder,
+        fade_seconds=args.fade,
+        slow_open_seconds=args.slow_open,
+    )
     return app, log, queue
 
 
@@ -296,7 +302,7 @@ def startup_lines(
     ]
     if args.quantized:
         lines.append(_note("fader values snapped to Table 1"))
-    lines.append(_row("fade", f"{args.fade:.1f}s close, fast open"))
+    lines.append(_row("fade", f"{args.fade:.1f}s close, fast open, {args.slow_open:.1f}s ride-in"))
 
     if args.reaper_host:
         lines.append(
@@ -338,6 +344,7 @@ CONFIG_MAPPING = {
     "log": "capture.log",
     "queue": "capture.queue",
     "fade": "fader.fade_seconds",
+    "slow_open": "fader.slow_open_seconds",
     "listen": "ui.listen",
     "http_port": "ui.port",
 }
@@ -365,6 +372,13 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--listen", default=web.DEFAULT_HOST)
     p.add_argument("--http-port", type=int, default=web.DEFAULT_PORT)
     p.add_argument("--fade", type=float, default=dm7.DEFAULT_FADE_SECONDS)
+    p.add_argument(
+        "--slow-open",
+        type=float,
+        default=dm7.DEFAULT_SLOW_OPEN_SECONDS,
+        metavar="SECONDS",
+        help="ride-in for the 'up slow' button, used when the start was missed",
+    )
     # BooleanOptionalAction, not store_true: a config file that sets
     # quantized = true has to be refusable from the command line, or the
     # precedence rule is a lie for this one flag.

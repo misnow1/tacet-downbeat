@@ -51,6 +51,12 @@ DEFAULT_FADE_SECONDS = 2.0
 #: A fast open is not instantaneous: design.md section 6.1 buys 10-20 ms of ramp, which
 #: takes the edge off the step without being audible as a late entry.
 DEFAULT_OPEN_SECONDS = 0.02
+#: The ride-in for `up-slow`: the operator missed the first phrase and is
+#: disguising the late entry rather than snapping the fader open under a
+#: phrase already in progress (design.md section 4). Long enough to read as
+#: deliberate, short enough that the band is audible within the phrase.
+#: Retunable per site as `fader.slow_open_seconds`.
+DEFAULT_SLOW_OPEN_SECONDS = 1.5
 DEFAULT_TICK_HZ = 50.0
 #: A ramp always emits at least one step, however short its duration.
 MIN_RAMP_TICKS = 1

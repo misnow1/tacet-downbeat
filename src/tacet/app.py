@@ -30,6 +30,9 @@ from .reaper import Liveness, ReaperClient, record_refusal
 #: What an operator button that also moves the fader asks the machine to do.
 _ACTIONS: Mapping[ann.Action, state.Command] = {
     ann.Action.OPEN: state.Command.TRIGGER,
+    # The same command: a ride-in reaches the same state by a slower route, and
+    # the machine has no opinion about how long a move takes.
+    ann.Action.OPEN_SLOW: state.Command.TRIGGER,
     ann.Action.RELEASE: state.Command.RELEASE,
 }
 
@@ -39,7 +42,7 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
 #: across a link that is stadium wifi. Ten a second reads as movement and is an
 #: order of magnitude less traffic; the exact number on the way down is not what
 #: anyone is reading, only that it is going.
-FADE_PUSH_SECONDS = 0.1
+MOVE_PUSH_SECONDS = 0.1
 
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
@@ -60,6 +63,7 @@ class App:
         recorder: ReaperClient | None = None,
         machine: state.Machine | None = None,
         fade_seconds: float = dm7.DEFAULT_FADE_SECONDS,
+        slow_open_seconds: float = dm7.DEFAULT_SLOW_OPEN_SECONDS,
         open_level: int = dm7.UNITY,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -68,11 +72,16 @@ class App:
         self._recorder = recorder
         self.machine = machine if machine is not None else state.Machine()
         self._fade_seconds = fade_seconds
+        self._slow_open_seconds = slow_open_seconds
         self._open_level = open_level
         self._monotonic = monotonic
 
-        self._fade_task: asyncio.Task[None] | None = None
-        self._fade_push: asyncio.Task[None] | None = None
+        self._move_task: asyncio.Task[None] | None = None
+        #: Where the move in flight is heading, or None when nothing is
+        #: moving. Set when the tap lands rather than read back from the
+        #: ramp, so the first frame the page gets already carries it.
+        self._move_target: int | None = None
+        self._move_push: asyncio.Task[None] | None = None
         self._last_refusal: str | None = None
         #: Whether `_last_refusal` came from the record button. That refusal is
         #: derived from Reaper's state, so it has to clear itself when the
@@ -102,13 +111,14 @@ class App:
         source: state.Source = state.Source.OPERATOR,
         detail: str = "",
         annotation: str | None = None,
+        open_seconds: float | None = None,
     ) -> state.Outcome:
         outcome = state.step(self.machine, state.Event(command, source=source, detail=detail))
         self.machine = outcome.machine
         self._last_refusal = outcome.refusal
 
         if outcome.fader is not None:
-            await self._move_fader(outcome.fader, source=source, detail=detail)
+            await self._move_fader(outcome.fader, source=source, detail=detail, open_seconds=open_seconds)
         if annotation is not None and outcome.changed:
             self._log.record(
                 annotation,
@@ -118,13 +128,31 @@ class App:
         self._notify()
         return outcome
 
-    async def _move_fader(self, command: state.FaderCommand, *, source: state.Source, detail: str) -> None:
+    async def _move_fader(
+        self,
+        command: state.FaderCommand,
+        *,
+        source: state.Source,
+        detail: str,
+        open_seconds: float | None = None,
+    ) -> None:
         # A console that cannot be reached must not take the box down with it.
         # The fault is recorded and shown; the operator stays in control.
         try:
             if command is state.FaderCommand.OPEN:
-                self._cancel_fade()
-                await self._console.open(self._open_level)
+                self._cancel_move()
+                if open_seconds is None:
+                    # The ordinary open, awaited: it is one packet and 20 ms,
+                    # and a missed downbeat is unrecoverable, so it goes out
+                    # before anything else gets a turn.
+                    await self._console.open(self._open_level)
+                else:
+                    # A ride-in takes over a second, and `annotate` deliberately
+                    # moves the fader before writing the log. Awaiting it here
+                    # would hold the annotation - and the playhead stamped on
+                    # it - back by the whole length of the ramp, timestamping
+                    # the tap where the ramp ended rather than where it began.
+                    self._start_slow_open(open_seconds)
             else:
                 self._start_fade()
         except TransportError:
@@ -152,22 +180,51 @@ class App:
     # -- the fade ---------------------------------------------------------
 
     def _start_fade(self) -> None:
-        self._cancel_fade()
-        self._fade_task = asyncio.ensure_future(self._run_fade())
-        self._fade_push = asyncio.ensure_future(self._push_while_fading())
+        self._cancel_move()
+        # After the cancel, which is what clears the last destination.
+        self._move_target = dm7.MINUS_INF
+        self._move_task = asyncio.ensure_future(self._run_fade())
+        self._move_push = asyncio.ensure_future(self._push_while_moving())
 
-    def _cancel_fade(self) -> None:
-        if self._fade_task is not None and not self._fade_task.done():
-            self._fade_task.cancel()
-        self._fade_task = None
-        self._stop_fade_push()
+    def _start_slow_open(self, seconds: float) -> None:
+        """Ride the fader up over `seconds` instead of snapping it.
 
-    def _stop_fade_push(self) -> None:
-        if self._fade_push is not None and not self._fade_push.done():
-            self._fade_push.cancel()
-        self._fade_push = None
+        Runs as a task for the same reason the fade does: the operator has
+        already tapped, and everything after the tap - the log entry, its
+        playhead, the page - must not wait for the ramp to finish.
+        """
+        self._move_target = self._open_level
+        self._move_task = asyncio.ensure_future(self._run_slow_open(seconds))
+        self._move_push = asyncio.ensure_future(self._push_while_moving())
 
-    async def _push_while_fading(self) -> None:
+    async def _run_slow_open(self, seconds: float) -> None:
+        try:
+            await self._console.open(self._open_level, seconds=seconds)
+        except TransportError:
+            return
+        except asyncio.CancelledError:
+            return
+        finally:
+            # However this ended, stop sweeping and push the settled value once.
+            # No command follows: the machine reached OPEN when the tap landed,
+            # and only the gesture was still running.
+            self._stop_move_push()
+            self._move_target = None
+            self._notify()
+
+    def _cancel_move(self) -> None:
+        if self._move_task is not None and not self._move_task.done():
+            self._move_task.cancel()
+        self._move_task = None
+        self._move_target = None
+        self._stop_move_push()
+
+    def _stop_move_push(self) -> None:
+        if self._move_push is not None and not self._move_push.done():
+            self._move_push.cancel()
+        self._move_push = None
+
+    async def _push_while_moving(self) -> None:
         """Send the sweeping level to the page while the close runs.
 
         The console client already moves `commanded_level` as it sends each ramp
@@ -177,11 +234,11 @@ class App:
         they are looking at it.
 
         Never the only thing that stops: `_run_fade` cancels this in a finally
-        and `_cancel_fade` cancels it when a trigger snaps back to OPEN, so it
+        and `_cancel_move` cancels it when a trigger snaps back to OPEN, so it
         cannot outlive the move it is describing.
         """
         while True:
-            await asyncio.sleep(FADE_PUSH_SECONDS)
+            await asyncio.sleep(MOVE_PUSH_SECONDS)
             self._notify()
 
     async def _run_fade(self) -> None:
@@ -193,7 +250,8 @@ class App:
             return
         finally:
             # However this ended, stop sweeping and push the settled value once.
-            self._stop_fade_push()
+            self._stop_move_push()
+            self._move_target = None
             self._notify()
         # Only complete the fade if nothing snapped back to OPEN meanwhile.
         if self.machine.state is state.State.RELEASING:
@@ -201,7 +259,7 @@ class App:
 
     async def wait_for_fade(self) -> None:
         """Block until any fade in flight has finished. For tests and shutdown."""
-        task = self._fade_task
+        task = self._move_task
         if task is None:
             return
         with contextlib.suppress(asyncio.CancelledError):
@@ -222,7 +280,11 @@ class App:
         if event.action is not None:
             # The move goes first. A missed downbeat is unrecoverable and must
             # not wait behind a log write.
-            await self._command(_ACTIONS[event.action], detail=event_key)
+            await self._command(
+                _ACTIONS[event.action],
+                detail=event_key,
+                open_seconds=self._slow_open_seconds if event.action is ann.Action.OPEN_SLOW else None,
+            )
         # Recorded whatever the machine did with it, including a refusal: the
         # operator saw what they saw, and a log that only kept the accepted
         # taps would misrepresent the night.
@@ -323,11 +385,10 @@ class App:
         refusal = self._last_refusal
         if self._refused_recording and self.record_refusal is None:
             refusal = None
-        # RELEASING is the one state with a destination the operator cannot read
-        # off the current number: the fade is on its way to -inf and takes two
-        # seconds to get there. Everywhere else the commanded level *is* the
-        # expectation, so there is nothing to point at.
-        target = dm7.MINUS_INF if self.machine.state is state.State.RELEASING else None
+        # Straight from the console client, so a ride-in points at where it is
+        # going exactly as a close does. A settled fader has nothing to point
+        # at: the commanded level already *is* the expectation.
+        target = self._move_target
         return {
             "state": self.machine.state.value,
             "why": state.describe(self.machine),

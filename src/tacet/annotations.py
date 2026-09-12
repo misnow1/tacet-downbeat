@@ -88,6 +88,12 @@ class Action(StrEnum):
     """
 
     OPEN = "open"
+    #: Open, but ridden up rather than snapped. The operator missed the first
+    #: phrase and is disguising the late entry, which is existing practice the
+    #: box is meant to reproduce (design.md section 4). The same state
+    #: transition as OPEN - only the gesture differs, which is why this lives
+    #: here and not in `state`.
+    OPEN_SLOW = "open-slow"
     RELEASE = "release"
 
 
@@ -182,7 +188,7 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("commanded", "Fader commanded", Category.FADER, button=False),
     _instant("up-whistle", "Up on whistle", Category.FADER, action=Action.OPEN),
     _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
-    _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN),
+    _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN_SLOW),
     _instant("out", "Faded out", Category.FADER, action=Action.RELEASE),
     # Detector was wrong. Useful long before a detector exists, because the
     # operator can mark what one would have got wrong.

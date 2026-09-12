@@ -631,7 +631,7 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
         await app.annotate("out")
         await app.wait_for_fade()
         await asyncio.sleep(0)
-        self.assertIsNone(app._fade_push)
+        self.assertIsNone(app._move_push)
 
     async def test_snapping_back_to_open_stops_the_pusher(self):
         # A trigger during the close cancels the fade; nothing should still be
@@ -641,5 +641,93 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
         await app.annotate("up-drums")
         await app.annotate("out")
         await app.annotate("up-whistle")
-        self.assertIsNone(app._fade_push)
+        self.assertIsNone(app._move_push)
         self.assertIsNone(app.snapshot()["fader"]["target"])
+
+
+class TestUpSlowRidesIn(AppTestCase):
+    """`up-slow` is a gesture, not only a reason.
+
+    design.md section 4, in the practice the box reproduces: "If the first
+    phrase is missed, the operator brings the mix up more slowly to disguise
+    the late entry." It used to snap open exactly like the other two.
+    """
+
+    def entries(self):
+        self.log.close()
+        return list(ann.read_entries(self.log.path))
+
+    async def test_the_other_open_buttons_still_snap(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-drums")
+        self.assertEqual(app._console.commanded_level, dm7.UNITY)
+        self.assertIsNone(app._move_target)
+
+    async def test_up_slow_does_not_arrive_immediately(self):
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        # Still on its way up: a snap would already be at unity.
+        self.assertLess(app._console.commanded_level, dm7.UNITY)
+        await app.wait_for_fade()
+
+    async def test_up_slow_gets_all_the_way_there(self):
+        app = self.build()
+        app._slow_open_seconds = 0.2
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertEqual(app._console.commanded_level, dm7.UNITY)
+
+    async def test_the_ride_in_shows_where_it_is_going(self):
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        fader = app.snapshot()["fader"]
+        self.assertEqual(fader["target"], dm7.UNITY)
+        await app.wait_for_fade()
+        self.assertIsNone(app.snapshot()["fader"]["target"])
+
+    async def test_the_page_is_pushed_to_during_the_ride_in(self):
+        pushes = []
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        app.on_change(lambda: pushes.append(app.snapshot()["fader"]["db"]))
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertGreater(len(pushes), 2)
+
+    async def test_the_annotation_is_not_held_back_by_the_ramp(self):
+        # The whole reason the ride-in runs as a task. `annotate` moves the
+        # fader before writing the log, so awaiting a 1.5s ramp would timestamp
+        # the tap - and stamp its playhead - where the ramp ended.
+        app = self.build()
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-slow")
+        self.log.close()
+        events = [entry.event for entry in ann.read_entries(self.log.path)]
+        self.assertIn("up-slow", events)
+        app._cancel_move()
+
+    async def test_a_close_during_the_ride_in_takes_over(self):
+        app = self.build(fade=0.2)
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.annotate("out")
+        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        await app.wait_for_fade()
+        self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
+
+    async def test_up_slow_is_still_an_open_to_the_machine(self):
+        app = self.build()
+        app._slow_open_seconds = 0.2
+        await app.arm()
+        await app.annotate("up-slow")
+        self.assertEqual(app.snapshot()["state"], state.State.OPEN.value)
+        await app.wait_for_fade()
