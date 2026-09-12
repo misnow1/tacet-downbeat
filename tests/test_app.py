@@ -485,3 +485,86 @@ class TestRecorder(AppTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThePlayheadIsStamped(AppTestCase):
+    """Every entry carries Reaper's own position when Reaper is streaming it.
+
+    `markers.position_of` prefers it over arithmetic on our clock, which is
+    what stops a three-hour game accumulating drift and what makes a restarted
+    recording untidy rather than wrong.
+    """
+
+    def entries(self):
+        self.log.close()
+        return list(ann.read_entries(self.log.path))
+
+    def last(self):
+        return self.entries()[-1]
+
+    async def test_an_annotation_carries_the_reported_position(self):
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/time", 1234.5))
+        await app.annotate("band-enters-stands")
+        self.assertEqual(self.last().project_seconds, 1234.5)
+
+    async def test_it_is_reaper_s_number_and_not_extrapolated(self):
+        # Never adjusted forward by the time since the packet arrived: that
+        # would put our clock back into the answer.
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/time", 90.0))
+        await app.annotate("drumline-cadence")
+        self.assertEqual(self.last().project_seconds, 90.0)
+
+    async def test_nothing_is_stamped_before_reaper_has_said_anything(self):
+        app = self.build()
+        await app.annotate("band-enters-stadium")
+        self.assertIsNone(self.last().project_seconds)
+
+    async def test_a_stale_position_is_not_stamped(self):
+        # Reaper is silent whenever it is parked, so an old reading is wherever
+        # the transport was last seen. Stamping it would place a marker at a
+        # confidently wrong point; unstamped falls back to the arithmetic.
+        now = [100.0]
+        app = self.build(monotonic=lambda: now[0])
+        app.handle_recorder_packet(osc.encode_message("/time", 55.0))
+        now[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT + 1.0
+        await app.annotate("band-exits-stands")
+        self.assertIsNone(self.last().project_seconds)
+
+    async def test_spans_are_stamped_at_both_ends(self):
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/time", 10.0))
+        span = await app.start_span("q1")
+        app.handle_recorder_packet(osc.encode_message("/time", 900.0))
+        await app.end_span(span)
+        entries = self.entries()
+        self.assertEqual(entries[-2].project_seconds, 10.0)
+        self.assertEqual(entries[-1].project_seconds, 900.0)
+
+    async def test_a_fader_move_is_stamped(self):
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/time", 42.0))
+        await app.arm()
+        await app.annotate("up-drums")
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+        self.assertTrue(commanded)
+        self.assertEqual(commanded[-1].project_seconds, 42.0)
+
+    async def test_the_anchor_itself_is_not_stamped(self):
+        # The command has just gone out; Reaper has not begun rolling, so its
+        # last position is where the transport was parked.
+        app = self.build()
+        # Reaper says stopped, then streams a position: the record button is
+        # allowed and there is a fresh playhead available to stamp.
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        app.handle_recorder_packet(osc.encode_message("/time", 77.0))
+        await app.start_recording()
+        anchor = [e for e in self.entries() if e.event == ann.ANCHOR_EVENT][-1]
+        self.assertIsNone(anchor.project_seconds)
+
+    async def test_no_recorder_means_no_stamp(self):
+        self.build()  # sets up the console and the log
+        app = tacet_app.App(console=self.console, log=self.log, recorder=None)
+        await app.annotate("band-enters-stands")
+        self.assertIsNone(self.last().project_seconds)

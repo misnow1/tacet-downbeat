@@ -345,6 +345,16 @@ The same UI carries one-tap **event annotation**, timestamped against the same
 clock as audio, RTD, and OSC state. §5.9 describes how that shared clock is
 obtained.
 
+Each entry also carries **Reaper's own playhead** as it is written, whenever
+Reaper is streaming one. That is the shared clock made explicit: the position
+comes from the recorder rather than from arithmetic on ours, so it cannot drift
+across a three-hour game and does not depend on which recording in the log the
+timeline is being measured from. It is recorded as-is and never extrapolated -
+`/time` arrives about eleven times a second while the transport moves, which is
+an order of magnitude finer than the operator's reaction time already in the
+tap. Reaper is silent while parked, so an entry made then carries no position
+and falls back to the arithmetic from the anchor.
+
 This is not a convenience feature. Most band state is **not recoverable after
 the fact** — it is not in the multitrack, not in RTD, and not in the fader
 moves. A game that is not annotated live is permanently unlabeled. Everything

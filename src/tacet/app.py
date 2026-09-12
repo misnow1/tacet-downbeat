@@ -101,7 +101,11 @@ class App:
         if outcome.fader is not None:
             await self._move_fader(outcome.fader, source=source, detail=detail)
         if annotation is not None and outcome.changed:
-            self._log.record(annotation, data={"state": self.machine.state.value})
+            self._log.record(
+                annotation,
+                data={"state": self.machine.state.value},
+                project_seconds=self._playhead(),
+            )
         self._notify()
         return outcome
 
@@ -133,6 +137,7 @@ class App:
                 "state": self.machine.state.value,
                 "delivered": self._console.healthy,
             },
+            project_seconds=self._playhead(),
         )
 
     # -- the fade ---------------------------------------------------------
@@ -184,19 +189,51 @@ class App:
         # Recorded whatever the machine did with it, including a refusal: the
         # operator saw what they saw, and a log that only kept the accepted
         # taps would misrepresent the night.
-        entry = self._log.record(event_key, data=data)
+        entry = self._log.record(event_key, data=data, project_seconds=self._playhead())
         self._notify()
         return entry
 
     async def start_span(self, event_key: str) -> str:
-        span_id = self._log.start_span(event_key)
+        span_id = self._log.start_span(event_key, project_seconds=self._playhead())
         self._notify()
         return span_id
 
     async def end_span(self, span_id: str) -> ann.Entry:
-        entry = self._log.end_span(span_id)
+        entry = self._log.end_span(span_id, project_seconds=self._playhead())
         self._notify()
         return entry
+
+    def _playhead(self) -> float | None:
+        """Reaper's project position, or None when it cannot be trusted.
+
+        Stamped onto every entry as it is written, so the log carries Reaper's
+        own number rather than depending on arithmetic over our clock across a
+        three-hour game. `markers.position_of` prefers it, which is also what
+        makes a restarted recording merely untidy instead of wrong: entries
+        placed by playhead do not care which recording the anchor came from.
+
+        Freshness is the whole test. Reaper streams `/time` while the transport
+        moves and is otherwise silent, so a reading that arrived within the
+        timeout is current by construction; one older than that is wherever the
+        transport was last seen, and stamping it would place a marker at a
+        confidently wrong point. Unstamped falls back to the arithmetic, which
+        is what happened before this existed.
+
+        The reported position is used as-is, never extrapolated forward by the
+        time since it arrived. `/time` lands about eleven times a second while
+        rolling, so the residual is tens of milliseconds - far below the
+        operator's reaction time, which the annotation already carries - and
+        inventing the difference would put our clock back in the answer and be
+        wrong outright in the moment after the transport parks.
+        """
+        if self._recorder is None:
+            return None
+        transport = self._recorder.state
+        if transport.position is None:
+            return None
+        if transport.liveness(self._monotonic()) is not Liveness.LIVE:
+            return None
+        return transport.position
 
     # -- recorder ---------------------------------------------------------
 
@@ -215,6 +252,11 @@ class App:
             return
         if self._recorder is not None:
             self._recorder.start_recording()
+        # Deliberately not stamped with a playhead. The command has just gone
+        # out and Reaper has not begun rolling, so whatever position it last
+        # reported is where the transport was parked, not where this recording
+        # starts. The anchor is the one entry whose position is genuinely not
+        # known yet, and guessing it would misplace everything measured from it.
         self._log.record(RECORDING_STARTED)
         self._last_refusal = None
         self._refused_recording = False

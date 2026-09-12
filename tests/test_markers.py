@@ -219,3 +219,45 @@ class TestARestartedRecordingIsReported(unittest.TestCase):
         result = markers.derive(entries, markers.find_anchor(entries))
         self.assertEqual(result.extra_anchors, ())
         self.assertTrue(result.is_clean)
+
+
+class TestAStampedPlayheadBeatsTheArithmetic(unittest.TestCase):
+    """The reason the box stamps Reaper's position onto every entry.
+
+    Without it, positions are our clock's arithmetic from the anchor: they
+    accumulate drift over a three-hour game, and after a stop and restart they
+    are out by the whole length of the gap while still looking plausible.
+    """
+
+    def test_a_stamped_entry_ignores_the_anchor(self):
+        clock = StepClock()
+        entries = [
+            build(clock, 1, "recording-started"),
+            build(clock, 2, "band-enters-stands", project_seconds=1234.5),
+        ]
+        result = markers.derive(entries, markers.find_anchor(entries))
+        self.assertEqual(result.markers[-1].start, 1234.5)
+
+    def test_a_restarted_recording_is_placed_correctly_when_stamped(self):
+        # The whole point. The anchor is still the first recording, so this is
+        # reported as untidy - but the position is Reaper's own, so the marker
+        # lands on the audio it describes instead of the length of the gap away.
+        clock = StepClock()
+        entries = [
+            build(clock, 1, "recording-started"),
+            build(clock, 2, "recording-started"),
+            build(clock, 3, "drumline-cadence", project_seconds=12.0),
+        ]
+        result = markers.derive(entries, markers.find_anchor(entries))
+        placed = {marker.name: marker.start for marker in result.markers}
+        self.assertEqual(placed[ann.marker_name(entries[2])], 12.0)
+        self.assertEqual([entry.seq for entry in result.extra_anchors], [2])
+        self.assertFalse(result.is_clean)
+
+    def test_an_unstamped_entry_still_uses_the_arithmetic(self):
+        # The fallback has to keep working: Reaper is silent while parked, so
+        # entries made then carry no position at all.
+        clock = StepClock()
+        entries = [build(clock, 1, "recording-started"), build(clock, 2, "band-enters-stands")]
+        result = markers.derive(entries, markers.find_anchor(entries))
+        self.assertEqual(result.markers[-1].start, 1.0)

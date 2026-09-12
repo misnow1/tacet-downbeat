@@ -92,11 +92,21 @@ one Reaper project, with its own `--log`, started before the crowd arrives and
 not stopped until the band is out.**
 
 It is tempting to record a test, stop, and start properly when the band arrives.
-Do not, unless you also take a fresh `--log` -- `tacet.markers` anchors the whole
-timeline to the **first** `recording-started` in a log, so a second recording in
-the same log places every later annotation the length of the gap away from the
-audio. The box now warns when the log you name already holds a recording, but
-the cheapest fix is not to need the warning.
+Prefer not to, and take a fresh `--log` if you do. `tacet.markers` anchors the
+whole timeline to the **first** `recording-started` in a log, so a second
+recording in the same log is measured from the wrong place. The box warns when
+the log you name already holds a recording.
+
+That is now **untidy rather than wrong**: every entry is stamped with Reaper's
+own playhead as it is written, and a stamped position is used in preference to
+any arithmetic, so an annotation lands on the audio it describes whichever
+recording it belongs to. The warning still fires, and `tacet.markers` still
+reports the extra recording, because a log covering two recordings is a thing
+you want to know about. But it no longer silently misplaces anything.
+
+The stamp is missing only when Reaper is not streaming its position -- it is
+silent whenever the transport is parked -- and those entries fall back to the
+arithmetic, which is the case the warning is really about.
 
 Two things make starting early the easy choice rather than a sacrifice:
 
@@ -394,7 +404,7 @@ config problems and it says so on the terminal rather than the page:
 | The terminal says | What it means | What to do |
 |---|---|---|
 | `config      none (flags only)` in the banner | It found no `tacet.toml`. Not an error, but if you expected one you are in the wrong directory | `cd` to the repo, or pass `--config <path>` |
-| `WARNING     this log already contains a recording` | The `--log` you gave already holds a `recording-started` -- yesterday's game, or the pre-flight test. Markers derived from it will anchor to **that** recording, so today's entries land wrong | Stop and pass a fresh `--log`, unless you genuinely meant to append. Nothing is lost either way; the log is append-only and can be split afterwards |
+| `WARNING     this log already contains a recording` | The `--log` you gave already holds a `recording-started` -- yesterday's game, or the pre-flight test. Markers derived from it anchor to **that** recording. Entries stamped with Reaper's playhead still land correctly; any made while Reaper was parked fall back to arithmetic from the wrong anchor | Stop and pass a fresh `--log`, unless you genuinely meant to append. Nothing is lost either way; the log is append-only and can be split afterwards |
 | `unknown key '...' in [...]` | A misspelled key. It refuses rather than silently using a default and driving the wrong fader | Fix the spelling; the message lists the keys that exist |
 | `... must be a whole number` / `must be true or false` | A value of the wrong type, e.g. `dca = "3"` with quotes | Drop the quotes. Numbers and booleans are bare in TOML |
 | `--config names ..., which does not exist` | A config was asked for by name and is not there | Check the path. A file merely looked for and absent is fine; one you named is not |
