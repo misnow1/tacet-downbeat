@@ -312,6 +312,48 @@ Reaper is no longer a guess, neither is the rendering, and neither is the
 console. What is left is a tablet - and the console under a whole game rather
 than a bench probe.
 
+## Open: the press box Reaper is never silent
+
+Found 2026-09-12, worked around, not fixed. The record button is greyed out from
+the moment the box starts, and stays that way until a recording is rolled in
+Reaper and stopped. `docs/gameday.md` carries the workaround; this is the part
+that needs an afternoon.
+
+`record_refusal` rests on one inference: Reaper streams `/time` while the
+transport moves and is **otherwise completely silent**, so silence means parked,
+and `/record` - a toggle - can only start a recording rather than stop one. That
+was measured here on 2026-09-08 and held.
+
+It does not hold in the press box. Something in that Reaper's OSC device
+transmits continuously while parked. `TransportState.handle_packet` stamps
+`last_packet` for **any** decodable packet, before it looks at the address
+(`reaper.py`, "state = replace(state, last_packet=now)"), so unrecognised
+chatter renews liveness exactly as `/time` would. The box then sees a link that
+is permanently live and has never mentioned the record state, and refuses
+forever. Reproduced offline: a single unknown address, resent, holds `can_start`
+false indefinitely.
+
+Two things to do, in this order:
+
+1. **Name the chatter.** `python -m tacet.verify_reaper --listen 20` with the
+   transport parked prints every address Reaper sends. One run answers it. The
+   standing suspicion is an **armed track** metering its input - Reaper's OSC
+   feedback carries meter data, and arming is the one thing about that rig's
+   project that differs from the Mac test. Untested because disarming to check
+   would also disable the recording.
+2. **Make liveness care which address arrived.** Renewing `last_packet` on
+   packets the box does not recognise is what turns a chatty control surface
+   into a permanent lockout. Counting only `/play`, `/record` and `/time` would
+   restore the inference and close the whole class. It is a control-path change
+   with a safety property attached - the refusal exists so a blind `/record`
+   cannot stop a live recording - so it wants tests written first and a bench,
+   not a Saturday.
+
+Worth considering alongside: a greyed-out record button currently shows **no
+reason**. The refusal text only reaches the page once the button is tapped, and
+a disabled button cannot be tapped, so the one sentence that explains this is
+withheld exactly when it is needed. `/api/state` has it; the screen does not.
+
 Operating the thing on a Saturday is `docs/gameday.md`, which is where the
 startup order and the site-specific values live.
 

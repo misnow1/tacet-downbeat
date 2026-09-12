@@ -164,6 +164,11 @@ preference.
 Open the game project, confirm DVS is the audio device, arm the band tracks,
 and point the record path at the NAS. Do not start recording yet.
 
+Arming is also the current suspect for the greyed-out record button below, so
+expect that detour every session until it is chased down. Do not skip the arming
+to avoid it: an unarmed track records nothing, which is the one failure with no
+recovery at all.
+
 ### 2. The mirror script
 
 Actions > Show action list > New action > Load ReaScript > `tacet_mirror.lua`,
@@ -308,9 +313,17 @@ changes, so the box has genuinely not been told anything yet.
 
 Then, in order:
 
+0. **If Start recording is greyed out, roll a short recording in Reaper and
+   stop it.** On this rig that is expected every session, not a fault - see
+   *The record button is greyed out before you touch anything* below. The
+   throwaway take at the top of the project can be deleted later.
 1. **Tap Start recording.** The recording line should go to `ROLLING`, tagged
    **confirmed**, with a playhead counting up. That single tap also proves the
    OSC link in both directions.
+   **Start it here, not in Reaper.** `recording-started` is written only by this
+   button, and it is the anchor the whole log is measured from. Start the
+   recording in Reaper instead and the log has no anchor, so markers cannot be
+   derived from it afterwards at all.
 2. **Check a marker lands.** Tap any annotation button and confirm a marker
    appears in Reaper at the playhead. This is the only check that covers the
    whole chain - box, queue, script, Reaper.
@@ -435,6 +448,7 @@ The box fails visible. Anything it cannot confirm, it says.
 | `Console unreachable` | The DM7 did not accept a packet | The operator has the fader. Ride it from the iPad and keep going |
 | `Reaper is already recording` | Second press of the record button | Nothing. It refused on purpose |
 | `not armed` | A fader button while standing down | Arm first. The tap was still logged |
+| **Start recording** greyed out, Reaper stopped | Expected on this rig. Reaper is never silent, so the box cannot infer the transport is parked and will not send a toggle blind | Roll a recording in Reaper and stop it. See *The record button is greyed out before you touch anything* |
 
 The box can also refuse to start at all, before any of the above. Those are
 config problems and it says so on the terminal rather than the page:
@@ -473,6 +487,33 @@ on the script at all.
 `/time` but no transport change, so it cannot tell whether Reaper is rolling,
 and will not risk stopping a live recording to find out. Start or stop in Reaper
 directly; the box will pick the state up from that change.
+
+**The record button is greyed out before you touch anything.** Observed in the
+press box, 2026-09-12, with Reaper open and stopped and the box freshly started.
+
+*Do this:* start a recording in Reaper and stop it again. The button enables and
+stays enabled for the session. Then tap **Start recording** in the UI for the
+real one. Roughly a five second detour, and worth doing during setup rather than
+discovering it at kickoff.
+
+*Why:* the box will not send `/record` unless it knows the transport is stopped,
+because `/record` is a toggle and sending it blind could stop a recording rather
+than start one. It infers "stopped" from silence, since Reaper is normally
+silent when parked and streams `/time` only while the transport moves.
+
+On this rig Reaper is **never silent.** Something in its OSC device transmits
+continuously while parked, so the link always reads live, and the box has been
+told nothing about the record state - so it refuses. `/api/state` shows the
+signature: `liveness: "live"` with `position: null` and `known: false`. Waiting
+does not help, and neither does Play/Stop: the missing message is `/record`, and
+Reaper sends transport state only when it *changes*. Rolling a recording is what
+makes it say the word.
+
+*Suspected cause, untested:* an **armed** track. An armed track meters its input
+whether or not the transport is moving, and Reaper's OSC feedback carries meter
+data. That would produce exactly this - a steady stream that never mentions the
+transport. Disarming to test would also disable the recording, so it needs a
+quiet afternoon rather than a game day.
 
 **If the mirror script dies**, the markers stop and the data does not. The
 annotation log is the source of truth and every marker is derivable from it
