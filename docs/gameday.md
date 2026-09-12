@@ -281,6 +281,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 |---|---|
 | State | `STANDING DOWN` |
 | Fader | `-∞ dB`, tagged **commanded** |
+| Fader during a close | `-3.00 dB → -∞ dB` — sweeping, with its destination |
 | Recording | `unknown`, tagged **no feedback** |
 | Top of the screen | Nothing. No banner is the healthy state |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
@@ -379,6 +380,21 @@ Three kinds of button:
 
 Buttons marked `(start)` are spans: tap once to open the region, again to close
 it. They read `(end)` while open.
+
+**The fader line is what the box expects, never what the console reports.** It
+is tagged **commanded** for that reason and the tag never changes: the DM7's OSC
+is write-only, so nothing here is ever a readback, and an iPad move made in
+StageMix will not appear. During a close the line reads
+
+```
+-3.00 dB → -∞ dB
+```
+
+— the left figure sweeping as the ramp goes out, the right one where it is
+headed. When the fader is settled there is no arrow, because there is nowhere
+else to be. To check the expectation against reality, look at the DCA in
+StageMix; that comparison is the only thing that can catch a wrong DCA number or
+a console that is not listening.
 
 ---
 

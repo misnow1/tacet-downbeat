@@ -107,7 +107,17 @@ function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
     why: "Standing down.",
     refusal: null,
     detector_enabled: false,
-    fader: { commanded: -32768, db: null, confirmed: false, healthy: true, error: null, ...fader },
+    fader: {
+      commanded: -32768,
+      db: null,
+      confirmed: false,
+      healthy: true,
+      error: null,
+      target: null,
+      target_db: null,
+      moving: false,
+      ...fader,
+    },
     recording: {
       known: false,
       recording: false,
@@ -289,6 +299,35 @@ check(
   rendered({}, { db: -12.5 }).get("level").textContent,
   "-12.50 dB",
 );
+// A close takes two seconds, so the number on its own reads as a fader that is
+// not moving. The destination is shown beside it while the move is in flight.
+check(
+  "a fade in flight shows where it is heading",
+  rendered({}, { commanded: -300, db: -3.0, target: -32768, target_db: null, moving: true })
+    .get("level")
+    .textContent,
+  "-3.00 dB \u2192 -\u221E dB",
+);
+check(
+  "and nothing is pointed at when the fader is settled",
+  rendered({}, { db: -3.0 }).get("level").textContent,
+  "-3.00 dB",
+);
+check(
+  "a fade that has arrived does not point at itself",
+  rendered({}, { commanded: -32768, db: null, target: -32768, target_db: null, moving: true })
+    .get("level")
+    .textContent,
+  "-\u221E dB",
+);
+check(
+  "an open in flight points at its destination too",
+  rendered({}, { commanded: -6000, db: -60.0, target: 0, target_db: 0.0, moving: true })
+    .get("level")
+    .textContent,
+  "-60.00 dB \u2192 0.00 dB",
+);
+
 check(
   "an unreachable console says so",
   rendered({}, { healthy: false, error: "no route to host" }).get("fader-error").textContent,

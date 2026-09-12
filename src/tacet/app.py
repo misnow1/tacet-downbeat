@@ -33,6 +33,14 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
     ann.Action.RELEASE: state.Command.RELEASE,
 }
 
+#: How often the page is told where a fade has reached.
+#:
+#: The ramp ticks at 50 Hz, so pushing every step would be a hundred frames
+#: across a link that is stadium wifi. Ten a second reads as movement and is an
+#: order of magnitude less traffic; the exact number on the way down is not what
+#: anyone is reading, only that it is going.
+FADE_PUSH_SECONDS = 0.1
+
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
 STOOD_DOWN = "stood-down"
@@ -64,6 +72,7 @@ class App:
         self._monotonic = monotonic
 
         self._fade_task: asyncio.Task[None] | None = None
+        self._fade_push: asyncio.Task[None] | None = None
         self._last_refusal: str | None = None
         #: Whether `_last_refusal` came from the record button. That refusal is
         #: derived from Reaper's state, so it has to clear itself when the
@@ -145,11 +154,35 @@ class App:
     def _start_fade(self) -> None:
         self._cancel_fade()
         self._fade_task = asyncio.ensure_future(self._run_fade())
+        self._fade_push = asyncio.ensure_future(self._push_while_fading())
 
     def _cancel_fade(self) -> None:
         if self._fade_task is not None and not self._fade_task.done():
             self._fade_task.cancel()
         self._fade_task = None
+        self._stop_fade_push()
+
+    def _stop_fade_push(self) -> None:
+        if self._fade_push is not None and not self._fade_push.done():
+            self._fade_push.cancel()
+        self._fade_push = None
+
+    async def _push_while_fading(self) -> None:
+        """Send the sweeping level to the page while the close runs.
+
+        The console client already moves `commanded_level` as it sends each ramp
+        step, but nothing was telling the page, so it held the pre-fade number
+        for the whole two seconds and then jumped to -inf. That number is the
+        one the operator reads against the console, and a close is exactly when
+        they are looking at it.
+
+        Never the only thing that stops: `_run_fade` cancels this in a finally
+        and `_cancel_fade` cancels it when a trigger snaps back to OPEN, so it
+        cannot outlive the move it is describing.
+        """
+        while True:
+            await asyncio.sleep(FADE_PUSH_SECONDS)
+            self._notify()
 
     async def _run_fade(self) -> None:
         try:
@@ -158,6 +191,10 @@ class App:
             return
         except asyncio.CancelledError:
             return
+        finally:
+            # However this ended, stop sweeping and push the settled value once.
+            self._stop_fade_push()
+            self._notify()
         # Only complete the fade if nothing snapped back to OPEN meanwhile.
         if self.machine.state is state.State.RELEASING:
             await self._command(state.Command.FADE_COMPLETE)
@@ -286,6 +323,11 @@ class App:
         refusal = self._last_refusal
         if self._refused_recording and self.record_refusal is None:
             refusal = None
+        # RELEASING is the one state with a destination the operator cannot read
+        # off the current number: the fade is on its way to -inf and takes two
+        # seconds to get there. Everywhere else the commanded level *is* the
+        # expectation, so there is nothing to point at.
+        target = dm7.MINUS_INF if self.machine.state is state.State.RELEASING else None
         return {
             "state": self.machine.state.value,
             "why": state.describe(self.machine),
@@ -298,6 +340,13 @@ class App:
                 "confirmed": False,
                 "healthy": self._console.healthy,
                 "error": self._console.last_error,
+                # Where a move in flight is heading, or None when nothing is
+                # moving. Still expectation, not confirmation: it is where the
+                # box intends to put the fader, which is the most the write-only
+                # protocol can ever support.
+                "target": target,
+                "target_db": None if target is None else _finite(dm7.to_db(target)),
+                "moving": self._console.is_ramping,
             },
             "recording": {
                 "known": believed and transport is not None and transport.recording is not None,

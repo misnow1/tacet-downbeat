@@ -1,3 +1,4 @@
+import asyncio
 import time
 import unittest
 from pathlib import Path
@@ -568,3 +569,77 @@ class TestThePlayheadIsStamped(AppTestCase):
         app = tacet_app.App(console=self.console, log=self.log, recorder=None)
         await app.annotate("band-enters-stands")
         self.assertIsNone(self.last().project_seconds)
+
+
+class TestTheExpectedFaderStateIsVisible(AppTestCase):
+    """The page carries where the fader is going, not only where it was.
+
+    Still expectation and never confirmation - the DM7's OSC is write-only, so
+    `confirmed` stays false whatever this says.
+    """
+
+    async def test_nothing_is_moving_so_there_is_no_target(self):
+        app = self.build()
+        fader = app.snapshot()["fader"]
+        self.assertIsNone(fader["target"])
+        self.assertIsNone(fader["target_db"])
+
+    async def test_a_close_shows_where_it_is_heading(self):
+        app = self.build(fade=0.4)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        fader = app.snapshot()["fader"]
+        self.assertEqual(fader["target"], dm7.MINUS_INF)
+        # -inf has no JSON spelling; the page renders null as "-oo dB".
+        self.assertIsNone(fader["target_db"])
+        await app.wait_for_fade()
+
+    async def test_the_target_is_gone_once_the_fade_finishes(self):
+        app = self.build(fade=0.05)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        await app.wait_for_fade()
+        self.assertIsNone(app.snapshot()["fader"]["target"])
+
+    async def test_the_expectation_is_never_dressed_up_as_confirmation(self):
+        app = self.build(fade=0.4)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        self.assertFalse(app.snapshot()["fader"]["confirmed"])
+        await app.wait_for_fade()
+
+    async def test_the_page_is_pushed_to_while_the_fade_runs(self):
+        # Without this the number holds its pre-fade value for the whole close
+        # and then jumps, which reads as a fader that never moved.
+        pushes = []
+        app = self.build(fade=0.4)
+        app.on_change(lambda: pushes.append(app.snapshot()["fader"]["db"]))
+        await app.arm()
+        await app.annotate("up-drums")
+        before = len(pushes)
+        await app.annotate("out")
+        await app.wait_for_fade()
+        self.assertGreater(len(pushes) - before, 2)
+
+    async def test_no_pusher_survives_a_finished_fade(self):
+        app = self.build(fade=0.05)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        await app.wait_for_fade()
+        await asyncio.sleep(0)
+        self.assertIsNone(app._fade_push)
+
+    async def test_snapping_back_to_open_stops_the_pusher(self):
+        # A trigger during the close cancels the fade; nothing should still be
+        # describing a move that is no longer happening.
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        await app.annotate("up-whistle")
+        self.assertIsNone(app._fade_push)
+        self.assertIsNone(app.snapshot()["fader"]["target"])

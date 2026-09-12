@@ -112,6 +112,13 @@ function timecode(seconds) {
 // Reaper is also silent whenever it is parked, so silence alone is not a fault:
 // "quiet" is a believed reading from a stopped Reaper, while "lost" is silence
 // where the /time stream should have been, and only that one is.
+// A fader level for the screen. Null is -inf - a closed fader, not a missing
+// reading - because JSON cannot carry -inf and a blank there would read as a
+// link problem rather than a closed DCA.
+function faderDb(db) {
+  return db === null ? "-∞ dB" : db.toFixed(2) + " dB";
+}
+
 function recordingTag(liveness, known) {
   if (liveness === "lost") return ["unknown", "LINK LOST"];
   if (liveness === "unknown") return ["unknown", "no feedback"];
@@ -127,7 +134,14 @@ function render(next) {
   showRefusal(next.refusal);
 
   const fader = next.fader;
-  $("level").textContent = fader.db === null ? "-\u221E dB" : fader.db.toFixed(2) + " dB";
+  // While a fade runs the number on the left sweeps, so the destination is
+  // shown beside it: a close takes two seconds and "-3.00 dB" on its own reads
+  // as a fader that is not moving. Null dB is -inf, never a missing reading.
+  // Compared as console units, not dB: -inf has no number to compare with.
+  const arrived = fader.target === null || fader.target === fader.commanded;
+  $("level").textContent = arrived
+    ? faderDb(fader.db)
+    : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db);
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
 
   const rec = next.recording;
