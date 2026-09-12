@@ -202,15 +202,26 @@ Pre-commit runs lint and formatting only — a hook that takes a minute stops
 getting used. CI (`.github/workflows/ci.yml`) runs the full suite on Linux and
 macOS, on every push to `main` and on every pull request.
 
-**Branch protection is not enabled**, so CI reports and does not block — a push
-to `main` lands whether the checks passed or not. A required status check is
-deferred until after Phase 0 ships. Until then a red `make check` is blocking by
-convention only, so run it before committing rather than relying on the badge.
+**`main` is protected by a ruleset.** Pull requests into `main` require the
+`CI passing` check to be green, and `main` cannot be deleted or force-pushed.
+`CI passing` is a single aggregate job that fails unless every matrix leg
+succeeded — the matrix job names are generated, so requiring them individually
+would rot the moment the matrix changed. Review approval is *not* required: a
+solo maintainer cannot approve their own PR, and demanding one would make every
+merge a bypass.
+
+**Repository admins bypass all of it**, deliberately, so direct commits to
+`main` still work and there is a break-glass path on a Saturday. That makes the
+protection a guardrail rather than a gate: a red `make check` is still blocking
+by convention when you push straight to `main`, so run it before committing
+rather than relying on the badge.
 
 ## Working notes
 
-- **Commits go straight to `main`.** Solo repo; no branch or PR ceremony. Commit
-  only when asked, and do not push unless asked.
+- **Commits go straight to `main`.** Solo repo; no branch or PR ceremony — the
+  ruleset above admits admins precisely so this keeps working. Use a PR when you
+  want CI to gate the merge, not as a matter of course. Commit only when asked,
+  and do not push unless asked.
 - `docs/gameday.md` is the operating runbook: startup order, what the page
   should read before kickoff, and what each failure message means. Anything
   learned by running the system on a Saturday belongs there, not in a commit

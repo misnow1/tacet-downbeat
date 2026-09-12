@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing here needs to write to the repo. Stated explicitly so the workflow
+# carries its own answer rather than inheriting whatever the repo default is.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -62,3 +67,22 @@ jobs:
       - name: Test browser script
         if: runner.os == 'Linux'
         run: node tests/test_app_js.mjs
+
+  # The single context branch protection requires. The matrix job names are
+  # generated -- "ubuntu-latest / py3.12" and friends -- so requiring them by
+  # name means a required check goes stale the moment the matrix changes, and a
+  # stale required check blocks every merge waiting for a run that never comes.
+  # This job's name is fixed, so the matrix stays free to change.
+  ci:
+    name: CI passing
+    # always(), or this is skipped when the matrix fails and a skipped required
+    # check reads as success.
+    if: always()
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every matrix leg succeeded
+        if: needs.check.result != 'success'
+        run: |
+          echo "check result: ${{ needs.check.result }}"
+          exit 1
