@@ -233,9 +233,8 @@ are tracked rather than committed straight to `main`.
   `hard-constraint` or `gameday` when they fit. `hard-constraint` means read
   `docs/design.md` before touching it.
 - **One milestone per home game** (`Game 3`, `Game 4`, ...) holding what must
-  land before it. Home games are numbered by the season, so 2026-09-12 is game
-  2 — the first with the operator page — even though its review lives in
-  `docs/game-1.md` until #22 renames it.
+  land before it. Home games are numbered through the season, so 2026-09-12 is
+  game 2 — the first with the operator page.
 
 For an agent working here: branch, commit, push and open the PR when asked to
 work an issue. **Never merge** — merging is the maintainer's call — and never
