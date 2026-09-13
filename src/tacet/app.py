@@ -48,6 +48,7 @@ MOVE_PUSH_SECONDS = 0.1
 ARMED = "armed"
 STOOD_DOWN = "stood-down"
 COMMANDED = "commanded"
+MOVE_FAILED = "move-failed"
 #: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
 #: this event and the box warns when a log already holds one, so all of them
 #: have to agree or the warning goes quiet.
@@ -138,6 +139,7 @@ class App:
     ) -> None:
         # A console that cannot be reached must not take the box down with it.
         # The fault is recorded and shown; the operator stays in control.
+        failed = False
         try:
             if command is state.FaderCommand.OPEN:
                 self._cancel_move()
@@ -156,7 +158,7 @@ class App:
             else:
                 self._start_fade()
         except TransportError:
-            pass
+            failed = True
         # A fade is asynchronous, so `level` is where the fader was when the
         # command was issued. `target` is where it is going, which is the
         # unambiguous half when reading a log back.
@@ -173,6 +175,31 @@ class App:
                 "detail": detail,
                 "state": self.machine.state.value,
                 "delivered": self._console.healthy,
+            },
+            project_seconds=self._playhead(),
+        )
+        if failed:
+            self._move_failed(target)
+
+    def _move_failed(self, target: int) -> None:
+        """A send failed partway through a move.
+
+        The machine is told, so the command that started the move retries it
+        rather than being ignored as already done (#27), and the log is told,
+        because the `commanded` entry before this one describes a move that did
+        not happen. Deliberately not a refusal: nothing was declined, and the
+        why line already says what to do.
+        """
+        self.machine = state.step(self.machine, state.Event(state.Command.MOVE_FAILED)).machine
+        self._log.record(
+            MOVE_FAILED,
+            data={
+                "level": self._console.commanded_level,
+                "db": _finite(dm7.to_db(self._console.commanded_level)),
+                "target": target,
+                "target_db": _finite(dm7.to_db(target)),
+                "error": self._console.last_error,
+                "state": self.machine.state.value,
             },
             project_seconds=self._playhead(),
         )
@@ -201,6 +228,7 @@ class App:
         try:
             await self._console.open(self._open_level, seconds=seconds)
         except TransportError:
+            self._move_failed(self._open_level)
             return
         except asyncio.CancelledError:
             return
@@ -245,6 +273,7 @@ class App:
         try:
             await self._console.fade_out(self._fade_seconds)
         except TransportError:
+            self._move_failed(dm7.MINUS_INF)
             return
         except asyncio.CancelledError:
             return

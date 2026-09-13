@@ -445,7 +445,7 @@ The box fails visible. Anything it cannot confirm, it says.
 | `No word from the box for Ns` | The socket still looks open and nothing is arriving through it, which is what stadium wifi does as the stands fill | Treat the whole page as stale. The link usually drops properly a moment later and the retry takes over |
 | `LINK LOST` | Reaper stopped answering while its transport should have been streaming | Check Reaper is alive. The audio may still be recording |
 | `not yet reported` | Link is fine, Reaper has not said whether it is recording | Normal after a box restart. Any transport change in Reaper resolves it |
-| `Console unreachable` | The DM7 did not accept a packet | The operator has the fader. Ride it from the iPad and keep going |
+| `Console unreachable` | The DM7 did not accept a packet. If it happened partway through a fade or ride-in, the fader stopped wherever it had got to, and the why line adds *The last fader move did not finish; tap it again to retry* | The operator has the fader. Ride it from the iPad and keep going. Once the link is back, tapping the same button again finishes the move from where it stopped - FADE OUT fades down from there, it does not jump back up first |
 | `Reaper is already recording` | Second press of the record button | Nothing. It refused on purpose |
 | `not armed` | A fader button while standing down | Arm first. The tap was still logged |
 | **Start recording** greyed out, Reaper stopped | Expected on this rig. Reaper is never silent, so the box cannot infer the transport is parked and will not send a toggle blind | Roll a recording in Reaper and stop it. See *The record button is greyed out before you touch anything* |

@@ -186,6 +186,9 @@ VOCABULARY: tuple[EventType, ...] = (
     # reason that depends on the operator finding a second button is a reason
     # that goes missing on a busy night, and Phase 1 exists to collect it.
     _instant("commanded", "Fader commanded", Category.FADER, button=False),
+    # Written by the box when a send fails partway through a move, so a
+    # `commanded` entry is never the only word on a move that did not happen.
+    _instant("move-failed", "Fader move failed", Category.FADER, button=False),
     _instant("up-whistle", "Up on whistle", Category.FADER, action=Action.OPEN),
     _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
     _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN_SLOW),

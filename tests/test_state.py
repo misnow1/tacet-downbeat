@@ -159,6 +159,67 @@ class TestDetectorGate(unittest.TestCase):
         self.assertTrue(m.allow_detector)
 
 
+class TestAFailedMoveCanBeRetried(unittest.TestCase):
+    """A send that fails mid-move leaves the fader short of where the state says.
+
+    Without this, RELEASING swallowed every further RELEASE as "already fading"
+    and OPEN swallowed every TRIGGER, so a fade that died at -14 dB could only be
+    escaped by slamming the band up to unity first.
+    """
+
+    def test_a_failed_fade_marks_the_machine_stalled(self):
+        outcome = send(releasing(), st.Command.MOVE_FAILED)
+        self.assertEqual(outcome.machine.state, st.State.RELEASING)
+        self.assertTrue(outcome.machine.stalled)
+        self.assertIsNone(outcome.fader)
+
+    def test_a_failed_open_marks_the_machine_stalled(self):
+        outcome = send(opened(), st.Command.MOVE_FAILED)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertTrue(outcome.machine.stalled)
+
+    def test_release_after_a_failed_fade_fades_again(self):
+        outcome = send(releasing(stalled=True), st.Command.RELEASE)
+        self.assertEqual(outcome.fader, st.FaderCommand.FADE)
+        self.assertEqual(outcome.machine.state, st.State.RELEASING)
+        self.assertFalse(outcome.machine.stalled)
+
+    def test_trigger_after_a_failed_open_opens_again(self):
+        outcome = send(opened(stalled=True), st.Command.TRIGGER)
+        self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+        self.assertFalse(outcome.machine.stalled)
+
+    def test_a_healthy_fade_is_still_not_restarted_by_another_release(self):
+        # The panic taps from game 2: six on "out" in seven seconds. Retrying is
+        # for a move that failed, never for one still running.
+        outcome = send(releasing(stalled=False), st.Command.RELEASE)
+        self.assertIsNone(outcome.fader)
+
+    def test_a_retry_keeps_a_pending_stand_down(self):
+        outcome = send(releasing(stalled=True, pending_stand_down=True), st.Command.RELEASE)
+        self.assertTrue(outcome.machine.pending_stand_down)
+
+    def test_the_other_direction_clears_the_stall_too(self):
+        # Snapping back open after a failed fade is a new move; the old failure
+        # no longer describes the fader.
+        self.assertFalse(send(releasing(stalled=True), st.Command.TRIGGER).machine.stalled)
+        self.assertFalse(send(opened(stalled=True), st.Command.RELEASE).machine.stalled)
+
+    def test_a_completed_fade_clears_the_stall(self):
+        self.assertFalse(send(releasing(stalled=True), st.Command.FADE_COMPLETE).machine.stalled)
+
+    def test_a_failure_while_closed_changes_nothing(self):
+        for m in (machine(), armed()):
+            outcome = send(m, st.Command.MOVE_FAILED)
+            self.assertFalse(outcome.changed)
+            self.assertFalse(outcome.machine.stalled)
+
+    def test_the_why_line_says_to_tap_again(self):
+        text = st.describe(releasing(stalled=True))
+        self.assertIn("did not finish", text)
+        self.assertNotEqual(text, st.describe(releasing()))
+
+
 class TestNeverMutes(unittest.TestCase):
     def test_the_only_fader_commands_are_open_and_fade(self):
         # Faders only, never mutes. There is no mute to reach for.
