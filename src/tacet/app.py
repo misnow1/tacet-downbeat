@@ -459,7 +459,9 @@ class App:
                 }
                 for event in ann.BUTTONS
             ],
-            "open_spans": list(self._log.open_spans()),
+            # Each names its event, so the page matches a button to its span
+            # without parsing an id (see AnnotationLog.open_spans).
+            "open_spans": [{"span_id": span_id, "event": event} for span_id, event in self._log.open_spans().items()],
             "log": str(self._log.path),
         }
 

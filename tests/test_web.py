@@ -138,7 +138,7 @@ class TestAnnotation(WebTestCase):
     async def test_spans_open_and_close(self):
         opened = await (await self.client.post("/api/span/start", json={"key": "q1"})).json()
         span_id = opened["span_id"]
-        self.assertIn(span_id, opened["state"]["open_spans"])
+        self.assertIn({"span_id": span_id, "event": "q1"}, opened["state"]["open_spans"])
         closed = await (await self.client.post("/api/span/end", json={"span_id": span_id})).json()
         self.assertEqual(closed["state"]["open_spans"], [])
 
