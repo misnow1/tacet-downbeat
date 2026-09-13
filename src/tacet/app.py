@@ -228,20 +228,34 @@ class App:
         self._move_push = asyncio.ensure_future(self._push_while_moving())
 
     async def _run_slow_open(self, seconds: float) -> None:
+        this = asyncio.current_task()
         try:
             await self._console.open(self._open_level, seconds=seconds)
         except TransportError:
-            self._move_failed(self._open_level)
+            if self._move_task is this:
+                self._move_failed(self._open_level)
             return
         except asyncio.CancelledError:
             return
         finally:
-            # However this ended, stop sweeping and push the settled value once.
             # No command follows: the machine reached OPEN when the tap landed,
             # and only the gesture was still running.
-            self._stop_move_push()
-            self._move_target = None
-            self._notify()
+            self._settle(this)
+
+    def _settle(self, move: asyncio.Task[Any] | None) -> None:
+        """However a move ended, stop sweeping and push the settled value once -
+        if it is still the current move.
+
+        Cancelling a move only asks. The cancelled task wakes a loop iteration
+        later, after its replacement has started, and by then the push and the
+        target belong to the replacement: clearing them stopped a ride-in's
+        updates and blanked a close's destination (#34).
+        """
+        if self._move_task is not move:
+            return
+        self._stop_move_push()
+        self._move_target = None
+        self._notify()
 
     def _cancel_move(self) -> None:
         if self._move_task is not None and not self._move_task.done():
@@ -264,8 +278,8 @@ class App:
         one the operator reads against the console, and a close is exactly when
         they are looking at it.
 
-        Never the only thing that stops: `_run_fade` cancels this in a finally
-        and `_cancel_move` cancels it when a trigger snaps back to OPEN, so it
+        Never the only thing that stops: the move's own task cancels this as it
+        settles and `_cancel_move` cancels it when a newer move takes over, so it
         cannot outlive the move it is describing.
         """
         while True:
@@ -273,20 +287,21 @@ class App:
             self._notify()
 
     async def _run_fade(self) -> None:
+        this = asyncio.current_task()
         try:
             await self._console.fade_out(self._fade_seconds)
         except TransportError:
-            self._move_failed(dm7.MINUS_INF)
+            if self._move_task is this:
+                self._move_failed(dm7.MINUS_INF)
             return
         except asyncio.CancelledError:
             return
         finally:
-            # However this ended, stop sweeping and push the settled value once.
-            self._stop_move_push()
-            self._move_target = None
-            self._notify()
-        # Only complete the fade if nothing snapped back to OPEN meanwhile.
-        if self.machine.state is state.State.RELEASING:
+            self._settle(this)
+        # Only complete the fade if nothing replaced it meanwhile. RELEASING on
+        # its own is not enough: a snap back to OPEN and a second close leave
+        # the machine RELEASING again, for a fade that is still running.
+        if self._move_task is this and self.machine.state is state.State.RELEASING:
             await self._command(state.Command.FADE_COMPLETE)
 
     async def wait_for_fade(self) -> None:

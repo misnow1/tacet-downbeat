@@ -210,6 +210,25 @@ class TestMoves(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(message.args), 1)
             self.assertIsInstance(message.args[0], int)
 
+    async def test_a_move_superseded_by_another_returns_quietly(self):
+        c, _ = client(initial_level=dm7.UNITY)
+        fade = asyncio.ensure_future(c.fade_out(seconds=5.0))
+        await asyncio.sleep(0.05)
+        await c.open(seconds=0.01)
+        await fade  # does not raise
+
+    async def test_cancelling_the_caller_is_not_swallowed(self):
+        # Only the ramp's own cancellation is a newer move superseding it. A
+        # cancel aimed at whoever awaited the move has to reach them, or a
+        # cancelled fade carries on as though it had finished (#34).
+        c, _ = client(initial_level=dm7.UNITY)
+        fade = asyncio.ensure_future(c.fade_out(seconds=5.0))
+        await asyncio.sleep(0.05)
+        fade.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await fade
+        self.assertFalse(c.is_ramping)
+
     async def test_cancel_ramp_leaves_the_last_commanded_value_in_place(self):
         c, _ = client(initial_level=dm7.UNITY)
         fade = asyncio.ensure_future(c.fade_out(seconds=5.0))

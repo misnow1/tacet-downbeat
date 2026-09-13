@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import time
 import unittest
 from pathlib import Path
@@ -61,6 +62,17 @@ class FlakySender(FakeSender):
         self.fail_after = None
 
 
+#: Long enough for a cancelled move's task to wake and run its cleanup - it
+#: needs a loop iteration or two, not wall time - and short next to every ramp
+#: the tests below use, so the newer move is still running when it is checked.
+SUPERSEDED_WAKES = 0.03
+
+#: How long to let a move run before replacing it, so the fader has left where
+#: it started. A move from where the fader already is has nowhere to go, and
+#: finishes - and settles - at once.
+UNDER_WAY = 0.1
+
+
 class AppTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()
@@ -69,12 +81,22 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         self.console_sender = FakeSender()
         self.reaper_sender = FakeSender()
 
-    def build(self, *, console_sender=None, fade=0.05, monotonic=None, reaper_sender=None, opener=None, queue=None):
+    def build(
+        self,
+        *,
+        console_sender=None,
+        fade=0.05,
+        monotonic=None,
+        reaper_sender=None,
+        opener=None,
+        queue=None,
+        console_class=dm7.Dm7Client,
+    ):
         options = {} if opener is None else {"opener": opener}
         self.log = ann.AnnotationLog(self.root / "game.jsonl", mirror=queue, **options)
         self.log.open()
         self.addCleanup(self.log.close)
-        self.console = dm7.Dm7Client(
+        self.console = console_class(
             "192.0.2.1",
             dca=3,
             sender=console_sender or self.console_sender,
@@ -1002,7 +1024,11 @@ class TestUpSlowRidesIn(AppTestCase):
         app._slow_open_seconds = 5.0
         await app.arm()
         await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
         await app.annotate("out")
+        # After the superseded ride-in has had its turn to clean up, not before:
+        # that cleanup is what used to clear the close's target (#34).
+        await asyncio.sleep(SUPERSEDED_WAKES)
         self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
         await app.wait_for_fade()
         self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
@@ -1014,3 +1040,99 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.annotate("up-slow")
         self.assertEqual(app.snapshot()["state"], state.State.OPEN.value)
         await app.wait_for_fade()
+
+
+class SwallowingConsole(dm7.Dm7Client):
+    """The console client as it was before #34: a fade whose caller was
+    cancelled returned as though it had finished. Here so the app's own guard
+    is tested on its own rather than only behind the client's fix."""
+
+    async def fade_out(self, seconds=dm7.DEFAULT_FADE_SECONDS):
+        with contextlib.suppress(asyncio.CancelledError):
+            await super().fade_out(seconds)
+
+
+class TestASupersededMove(AppTestCase):
+    """A move replaced by a newer one must leave the newer one alone.
+
+    Cancelling a move only asks. The old task wakes a loop iteration later,
+    after its replacement has started, and its cleanup used to act as though it
+    were still the current move: it stopped the replacement's page push,
+    cleared its target, and - since the console client swallowed the
+    cancellation - a stale fade could go on to complete a fade that was still
+    running (#34).
+    """
+
+    def watch(self, app):
+        pushed = []
+        app.on_change(lambda: pushed.append(app.snapshot()["fader"]))
+        return pushed
+
+    async def test_a_superseded_fade_does_not_stop_the_ride_in_push(self):
+        app = self.build(fade=5.0)
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        await app.trigger()
+        await app.annotate("out")
+        await asyncio.sleep(UNDER_WAY)
+        await app.annotate("up-slow")
+        pushed = self.watch(app)
+        await asyncio.sleep(SUPERSEDED_WAKES + 3 * tacet_app.MOVE_PUSH_SECONDS)
+        self.assertEqual(app.snapshot()["fader"]["target"], dm7.UNITY)
+        self.assertGreaterEqual(len(pushed), 2)
+        self.assertEqual(pushed[-1]["target"], dm7.UNITY)
+        app._cancel_move()
+
+    async def test_a_superseded_ride_in_does_not_stop_the_fade_push(self):
+        app = self.build(fade=5.0)
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        await app.annotate("out")
+        pushed = self.watch(app)
+        await asyncio.sleep(SUPERSEDED_WAKES + 3 * tacet_app.MOVE_PUSH_SECONDS)
+        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        self.assertGreaterEqual(len(pushed), 2)
+        self.assertEqual(pushed[-1]["target"], dm7.MINUS_INF)
+        app._cancel_move()
+
+    async def test_a_stale_fade_task_cannot_complete_a_newer_fade(self):
+        # A snap back to OPEN and a second close, landing in the same loop
+        # iteration - two taps arriving together over stalled wifi.
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await asyncio.sleep(UNDER_WAY)
+        await asyncio.gather(app.trigger(), app.release())
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        self.assertTrue(self.console.is_ramping)
+        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        app._cancel_move()
+
+    async def test_a_replaced_fade_that_returns_anyway_does_not_complete(self):
+        # RELEASING alone does not say the fade that finished is the one the
+        # machine is waiting on.
+        app = self.build(fade=5.0, console_class=SwallowingConsole)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await asyncio.sleep(UNDER_WAY)
+        await asyncio.gather(app.trigger(), app.release())
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        app._cancel_move()
+
+    async def test_the_current_fade_still_completes(self):
+        # The guard must not be so keen that nothing ever completes.
+        app = self.build(fade=0.05)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await asyncio.gather(app.trigger(), app.release())
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertIsNone(app.snapshot()["fader"]["target"])
