@@ -214,9 +214,23 @@ class TestSpans(LogTestCase):
     def test_open_spans_are_visible(self):
         with self.log() as log:
             span = log.start_span("q1")
-            self.assertEqual(log.open_spans(), (span,))
+            self.assertEqual(log.open_spans(), {span: "q1"})
             log.end_span(span)
-            self.assertEqual(log.open_spans(), ())
+            self.assertEqual(log.open_spans(), {})
+
+    def test_open_spans_name_their_event_rather_than_leaving_it_in_the_id(self):
+        # Keys contain hyphens and ids are `<key>-<seq>`, so an id cannot say
+        # whether "timeout-home-12" belongs to "timeout" or "timeout-home".
+        with self.log() as log:
+            home = log.start_span("timeout-home")
+            unspecified = log.start_span("timeout")
+            self.assertEqual(log.open_spans(), {home: "timeout-home", unspecified: "timeout"})
+
+    def test_resumed_open_spans_keep_their_event(self):
+        with self.log() as log:
+            span = log.start_span("halftime-exodus")
+        with self.log() as log:
+            self.assertEqual(log.open_spans(), {span: "halftime-exodus"})
 
 
 class TestReading(LogTestCase):

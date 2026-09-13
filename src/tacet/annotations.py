@@ -547,10 +547,15 @@ class AnnotationLog:
             project_seconds=project_seconds,
         )
 
-    def open_spans(self) -> tuple[str, ...]:
-        """Span ids still awaiting an end. A game may legitimately finish with
-        some open; the mirror runs them to the end of the timeline."""
-        return tuple(self._open_spans)
+    def open_spans(self) -> dict[str, str]:
+        """Span ids still awaiting an end, each mapped to its event key. A game
+        may legitimately finish with some open; the mirror runs them to the end
+        of the timeline.
+
+        The key is given rather than left in the id: ids are `<key>-<seq>` and
+        keys contain hyphens, so "timeout-home-12" cannot say whether it belongs
+        to "timeout" or "timeout-home"."""
+        return {span_id: start.event for span_id, start in self._open_spans.items()}
 
     def _append(
         self,

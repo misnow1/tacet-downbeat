@@ -74,6 +74,13 @@ function buttonLabel(label, kind, open) {
   return label + (open ? " (end)" : " (start)");
 }
 
+// The open span a button owns, if any. Matched on the event the box names, never
+// by parsing the id: ids are `<key>-<seq>` and keys contain hyphens, so a prefix
+// match let "timeout" claim a running "timeout-home" and close it.
+function openSpan(snap, key) {
+  return ((snap && snap.open_spans) || []).find(span => span.event === key);
+}
+
 function activate(item, node) {
   if (item.kind !== "span") {
     const data = item.key === "note"
@@ -82,8 +89,8 @@ function activate(item, node) {
     post("/api/annotate", {key: item.key, data});
     return;
   }
-  const open = (snapshot.open_spans || []).find(id => id.startsWith(item.key + "-"));
-  if (open) post("/api/span/end", {span_id: open});
+  const open = openSpan(snapshot, item.key);
+  if (open) post("/api/span/end", {span_id: open.span_id});
   else post("/api/span/start", {key: item.key});
 }
 
@@ -171,7 +178,7 @@ function render(next) {
     renderedButtons = signature;
   }
   for (const node of document.querySelectorAll("#buttons button")) {
-    const open = (next.open_spans || []).some(id => id.startsWith(node.dataset.key + "-"));
+    const open = openSpan(next, node.dataset.key) !== undefined;
     node.classList.toggle("on", open);
     node.textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
   }

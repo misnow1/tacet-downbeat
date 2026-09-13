@@ -54,6 +54,7 @@ function browser() {
   const nodes = new Map();
   const created = [];
   const sockets = [];
+  const posted = [];
   const context = createContext({
     console,
     document: {
@@ -85,8 +86,12 @@ function browser() {
     // directly instead.
     setInterval() {},
     // The page boots on load. Neither of these may resolve, or the tests would
-    // be racing the page's own first render.
-    fetch: () => new Promise(() => {}),
+    // be racing the page's own first render. What was asked for is kept, so a
+    // tap can be checked by what it sent.
+    fetch: (path, options = {}) => {
+      posted.push({ path, body: options.body ? JSON.parse(options.body) : undefined });
+      return new Promise(() => {});
+    },
     WebSocket: class {
       constructor(url) {
         this.url = url;
@@ -98,7 +103,7 @@ function browser() {
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes, created, sockets };
+  return { context, nodes, created, sockets, posted };
 }
 
 function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
@@ -346,6 +351,10 @@ const BUTTONS = [
   { key: "band-enters-stands", label: "Band enters stands", category: "BAND", kind: "instant" },
 ];
 
+// An open span as the box sends it: the id to end it by, and the event it
+// belongs to. The id is the box's to mint and the page never parses it.
+const open = (event, seq) => ({ span_id: `${event}-${seq}`, event });
+
 function buttons(openSpans = []) {
   const { context, created } = browser();
   context.render(snapshot({}, {}, BUTTONS, openSpans));
@@ -355,7 +364,7 @@ function buttons(openSpans = []) {
 }
 
 check("a closed span says it starts", buttons().get("q1").textContent, "Q1 (start)");
-check("an open span says it ends", buttons(["q1-2"]).get("q1").textContent, "Q1 (end)");
+check("an open span says it ends", buttons([open("q1", 2)]).get("q1").textContent, "Q1 (end)");
 check(
   "an instant carries no start or end",
   buttons().get("band-enters-stands").textContent,
@@ -363,14 +372,14 @@ check(
 );
 check(
   "an instant is never marked open, whatever spans are running",
-  buttons(["q1-2"]).get("band-enters-stands").classList.contains("on"),
+  buttons([open("q1", 2)]).get("band-enters-stands").classList.contains("on"),
   false,
 );
-check("an open span is highlighted", buttons(["q1-2"]).get("q1").classList.contains("on"), true);
+check("an open span is highlighted", buttons([open("q1", 2)]).get("q1").classList.contains("on"), true);
 check("a closed span is not highlighted", buttons().get("q1").classList.contains("on"), false);
 check(
   "one open span does not open another",
-  buttons(["q1-2"]).get("timeout-injury").textContent,
+  buttons([open("q1", 2)]).get("timeout-injury").textContent,
   "Timeout: injury (start)",
 );
 check(
@@ -378,6 +387,70 @@ check(
   buttons().get("q1").dataset.kind,
   "span",
 );
+
+// Span ids are `<key>-<seq>` and keys contain hyphens, so a key that prefixes
+// another looked like it owned that key's span: with a home timeout running,
+// "Timeout: unspecified" read (end) and tapping it closed the *home* timeout,
+// and Halftime could never open during the exodus. Real vocabulary keys, since
+// those are the pairs that collide.
+const PREFIXED = [
+  { key: "halftime", label: "Halftime", category: "GAME", kind: "span" },
+  { key: "halftime-exodus", label: "Halftime exodus", category: "GAME", kind: "span" },
+  { key: "timeout-home", label: "Timeout: home", category: "GAME", kind: "span" },
+  { key: "timeout", label: "Timeout: unspecified", category: "GAME", kind: "span" },
+];
+
+function prefixed(openSpans) {
+  const { context, created, posted } = browser();
+  context.render(snapshot({}, {}, PREFIXED, openSpans));
+  const found = new Map();
+  for (const node of created.filter((n) => n.tag === "button")) found.set(node.dataset.key, node);
+  const tap = (key) => {
+    posted.length = 0;
+    found.get(key).onclick();
+    return posted;
+  };
+  return { found, tap };
+}
+
+{
+  const { found, tap } = prefixed([open("timeout-home", 12), open("halftime-exodus", 40)]);
+  check(
+    "a span key that prefixes another does not claim its open span",
+    found.get("timeout").textContent,
+    "Timeout: unspecified (start)",
+  );
+  check("nor is it highlighted by it", found.get("timeout").classList.contains("on"), false);
+  check(
+    "halftime is not taken for open during the exodus",
+    found.get("halftime").textContent,
+    "Halftime (start)",
+  );
+  check("the longer key still owns its own span", found.get("timeout-home").textContent,
+        "Timeout: home (end)");
+  check(
+    "tapping the shorter key opens its own span",
+    tap("timeout"),
+    [{ path: "/api/span/start", body: { key: "timeout" } }],
+  );
+  check(
+    "tapping the longer key ends the span it owns",
+    tap("timeout-home"),
+    [{ path: "/api/span/end", body: { span_id: "timeout-home-12" } }],
+  );
+}
+
+// And the other way round: the shorter key's span says nothing about the longer.
+{
+  const { found, tap } = prefixed([open("halftime", 7)]);
+  check("an open halftime does not end the exodus", found.get("halftime-exodus").textContent,
+        "Halftime exodus (start)");
+  check(
+    "tapping halftime ends halftime",
+    tap("halftime"),
+    [{ path: "/api/span/end", body: { span_id: "halftime-7" } }],
+  );
+}
 
 // -- fader buttons --------------------------------------------------------
 
@@ -487,7 +560,7 @@ check(
 {
   const { context, created } = browser();
   context.render(snapshot({}, {}, BUTTONS, []));
-  context.render(snapshot({}, {}, BUTTONS, ["q1-2"]));
+  context.render(snapshot({}, {}, BUTTONS, [open("q1", 2)]));
   const buttons = created.filter((node) => node.tag === "button");
   const q1 = buttons.find((node) => node.dataset.key === "q1");
   check("an opened span still updates", q1.textContent, "Q1 (end)");

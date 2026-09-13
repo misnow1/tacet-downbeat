@@ -595,9 +595,23 @@ class TestAnnotation(AppTestCase):
     async def test_spans_open_and_close(self):
         app = self.build()
         span = await app.start_span("q1")
-        self.assertIn(span, app.snapshot()["open_spans"])
+        self.assertIn({"span_id": span, "event": "q1"}, app.snapshot()["open_spans"])
         await app.end_span(span)
         self.assertEqual(app.snapshot()["open_spans"], [])
+
+    async def test_an_open_span_names_the_button_that_owns_it(self):
+        # The page matches a button to its span on this, and never parses the
+        # id -- a prefix match let "timeout" claim "timeout-home-12".
+        app = self.build()
+        home = await app.start_span("timeout-home")
+        exodus = await app.start_span("halftime-exodus")
+        keys = {button["key"] for button in app.snapshot()["buttons"]}
+        self.assertEqual(
+            app.snapshot()["open_spans"],
+            [{"span_id": home, "event": "timeout-home"}, {"span_id": exodus, "event": "halftime-exodus"}],
+        )
+        for span in app.snapshot()["open_spans"]:
+            self.assertIn(span["event"], keys)
 
 
 class TestRecorder(AppTestCase):
