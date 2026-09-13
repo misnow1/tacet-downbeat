@@ -133,12 +133,37 @@ function recordingTag(liveness, known) {
   return ["confirmed", liveness === "quiet" ? "confirmed (idle)" : "confirmed"];
 }
 
+// Whether annotations are reaching the disk. A full disk leaves the fader
+// buttons working and nothing else on the page looking wrong, while every
+// annotation from then on is lost - the half nothing can recover afterwards
+// (design.md 5.6). So it stays up for as long as it is true, and a log that
+// recovered still says what it cost. The log outranks the Reaper markers,
+// which are rebuilt from it; a fault now outranks entries lost earlier.
+function savingBanner(log, mirror) {
+  if (!log.healthy) {
+    return ["fault", "Log not saving: " + log.error
+      + ". The fader buttons still work, but annotations are being lost."];
+  }
+  if (!mirror.healthy) {
+    return ["warn", "Reaper markers not updating: " + mirror.error
+      + ". The log is still saving; markers can be rebuilt from it."];
+  }
+  if (log.failures > 0) {
+    const entries = log.failures === 1 ? " log entry was" : " log entries were";
+    return ["note", log.failures + entries + " not saved earlier. Saving again now."];
+  }
+  return null;
+}
+
 function render(next) {
   if (!next) return;
   snapshot = next;
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
   showRefusal(next.refusal);
+  const saving = savingBanner(next.log, next.mirror);
+  $("saving").className = saving ? saving[0] : "";
+  $("saving").textContent = saving ? saving[1] : "";
 
   const fader = next.fader;
   // While a fade runs the number on the left sweeps, so the destination is

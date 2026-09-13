@@ -135,6 +135,8 @@ function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
     },
     buttons,
     open_spans: openSpans,
+    log: { path: "/games/game.jsonl", healthy: true, error: null, failures: 0 },
+    mirror: { healthy: true, error: null, failures: 0 },
   };
 }
 
@@ -566,6 +568,62 @@ check(
   check("an opened span still updates", q1.textContent, "Q1 (end)");
   check("and is still highlighted", q1.classList.contains("on"), true);
   check("without anything being rebuilt to do it", buttons.length, BUTTONS.length);
+}
+
+// -- saving -----------------------------------------------------------------
+
+// The disk fills in the third quarter. The fader buttons still move the fader,
+// so nothing else on the page looks wrong - and every annotation from then on
+// is gone. The operator is the only one placed to notice, so it stays on screen
+// for as long as it is true.
+{
+  const { context } = browser();
+  const saving = context.savingBanner;
+  const log = (over = {}) => ({ healthy: true, error: null, failures: 0, ...over });
+  const full = "could not write game.jsonl: No space left on device";
+
+  check("a log that is saving shows nothing", saving(log(), log()), null);
+  check("a log that is not saving is a fault", saving(log({ healthy: false, error: full, failures: 1 }), log())[0],
+        "fault");
+  check(
+    "and says why, and what it costs",
+    saving(log({ healthy: false, error: full, failures: 1 }), log())[1],
+    "Log not saving: " + full + ". The fader buttons still work, but annotations are being lost.",
+  );
+  check(
+    "the log outranks the markers, which can be rebuilt from it",
+    saving(log({ healthy: false, error: full, failures: 1 }), log({ healthy: false, error: "x", failures: 1 }))[0],
+    "fault",
+  );
+  check(
+    "markers that are not updating say the log is fine",
+    saving(log(), log({ healthy: false, error: "could not write queue.tsv: No space left on device", failures: 1 })),
+    ["warn", "Reaper markers not updating: could not write queue.tsv: No space left on device."
+      + " The log is still saving; markers can be rebuilt from it."],
+  );
+  check(
+    "a log that recovered still says what it lost",
+    saving(log({ failures: 3 }), log()),
+    ["note", "3 log entries were not saved earlier. Saving again now."],
+  );
+  check("in the singular too", saving(log({ failures: 1 }), log())[1],
+        "1 log entry was not saved earlier. Saving again now.");
+  check(
+    "a mirror failing now outranks entries lost earlier",
+    saving(log({ failures: 2 }), log({ healthy: false, error: "x", failures: 1 }))[0],
+    "warn",
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  snap.log = { ...snap.log, healthy: false, error: "No space left on device", failures: 1 };
+  context.render(snap);
+  check("the page shows it", nodes.get("saving").className, "fault");
+  context.render(snapshot());
+  check("and clears it when it is no longer true", nodes.get("saving").className, "");
+  check("text and all", nodes.get("saving").textContent, "");
 }
 
 // -- the link banner --------------------------------------------------------

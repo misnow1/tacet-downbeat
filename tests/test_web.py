@@ -13,6 +13,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, osc, reaper, web
+from tests.disk import Disk
 
 
 class FakeSender:
@@ -150,6 +151,58 @@ class TestAnnotation(WebTestCase):
     async def test_ending_an_unknown_span_is_a_client_error(self):
         response = await self.client.post("/api/span/end", json={"span_id": "q1-999"})
         self.assertEqual(response.status, 400)
+
+
+class RefusingSender:
+    def send(self, packet: bytes) -> None:
+        from tacet.net import TransportError
+
+        raise TransportError("connection refused")
+
+
+class TestFailures(WebTestCase):
+    """A write or a send that fails is not a 500. The tap was acted on, and the
+    state that comes back says what did not happen."""
+
+    async def get_application(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.disk = Disk()
+        self.log = ann.AnnotationLog(self.root / "game.jsonl", opener=self.disk.open)
+        self.log.open()
+        self.addCleanup(self.log.close)
+        self.tacet = tacet_app.App(
+            console=dm7.Dm7Client("192.0.2.1", dca=3, sender=FakeSender(), tick_hz=200.0),
+            log=self.log,
+            recorder=reaper.ReaperClient(sender=RefusingSender()),
+            fade_seconds=0.05,
+        )
+        return web.create_app(self.tacet)
+
+    async def test_an_annotation_that_was_not_saved_says_so(self):
+        await self.client.post("/api/arm")
+        self.disk.full = True
+        response = await self.client.post("/api/annotate", json={"key": "up-drums"})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertIsNone(payload["entry"])
+        self.assertEqual(payload["state"]["state"], "open")
+        self.assertFalse(payload["state"]["log"]["healthy"])
+
+    async def test_a_span_that_was_not_saved_says_so(self):
+        self.disk.full = True
+        response = await self.client.post("/api/span/start", json={"key": "q3"})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertIsNone(payload["span_id"])
+        self.assertFalse(payload["state"]["log"]["healthy"])
+
+    async def test_a_record_send_that_fails_is_a_refusal_not_a_500(self):
+        response = await self.client.post("/api/record")
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertIn("connection refused", payload["refusal"])
 
 
 class TestWebSocket(WebTestCase):

@@ -6,7 +6,8 @@ from tempfile import TemporaryDirectory
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, osc, reaper, state
+from tacet import dm7, mirror, osc, reaper, state
+from tests.disk import Disk
 
 
 class FakeSender:
@@ -68,8 +69,9 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         self.console_sender = FakeSender()
         self.reaper_sender = FakeSender()
 
-    def build(self, *, console_sender=None, fade=0.05, monotonic=None):
-        self.log = ann.AnnotationLog(self.root / "game.jsonl")
+    def build(self, *, console_sender=None, fade=0.05, monotonic=None, reaper_sender=None, opener=None, queue=None):
+        options = {} if opener is None else {"opener": opener}
+        self.log = ann.AnnotationLog(self.root / "game.jsonl", mirror=queue, **options)
         self.log.open()
         self.addCleanup(self.log.close)
         self.console = dm7.Dm7Client(
@@ -79,7 +81,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             tick_hz=200.0,
         )
         clock = monotonic if monotonic is not None else time.monotonic
-        self.reaper = reaper.ReaperClient(sender=self.reaper_sender, monotonic=clock)
+        self.reaper = reaper.ReaperClient(sender=reaper_sender or self.reaper_sender, monotonic=clock)
         return tacet_app.App(
             console=self.console,
             log=self.log,
@@ -93,6 +95,131 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
 
     def keys(self):
         return [e.event for e in self.entries()]
+
+
+class TestAFailingDisk(AppTestCase):
+    """The disk fills in the third quarter.
+
+    A log write used to raise out of the request after the fader had already
+    moved: no push, a bare 500, and a page still showing IDLE at -inf with the
+    console at unity. Inside a fade it was worse - the exception ended the fade
+    task before FADE_COMPLETE, and the machine sat in RELEASING. Nothing a log
+    write does may stop the fader, the machine or the page.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.disk = Disk()
+
+    def build(self, **options):
+        return super().build(opener=self.disk.open, **options)
+
+    def watch(self, app):
+        pushed = []
+        app.on_change(lambda: pushed.append(app.snapshot()))
+        return pushed
+
+    async def test_a_failing_log_is_shown_and_still_notifies(self):
+        app = self.build()
+        await app.arm()
+        pushed = self.watch(app)
+        self.disk.full = True
+        entry = await app.annotate("up-drums")
+        self.assertIsNone(entry)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertTrue(pushed)
+        log = pushed[-1]["log"]
+        self.assertFalse(log["healthy"])
+        self.assertIn("No space left on device", log["error"])
+
+    async def test_a_failing_log_does_not_strand_a_fade(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        self.disk.full = True
+        await app.release()
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_failing_log_does_not_stop_arming(self):
+        app = self.build()
+        self.disk.full = True
+        await app.arm()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+    async def test_a_span_that_was_not_saved_says_so_and_is_not_open(self):
+        app = self.build()
+        pushed = self.watch(app)
+        self.disk.full = True
+        self.assertIsNone(await app.start_span("q3"))
+        self.assertEqual(len(app.snapshot()["open_spans"]), 0)
+        self.assertFalse(pushed[-1]["log"]["healthy"])
+
+    async def test_an_end_that_was_not_saved_leaves_the_span_open_to_retap(self):
+        app = self.build()
+        span = await app.start_span("q3")
+        self.disk.full = True
+        self.assertIsNone(await app.end_span(span))
+        self.assertEqual(len(app.snapshot()["open_spans"]), 1)
+        self.disk.full = False
+        self.assertIsNotNone(await app.end_span(span))
+        self.assertEqual(len(app.snapshot()["open_spans"]), 0)
+
+    async def test_the_page_says_when_saving_resumes_and_what_it_cost(self):
+        app = self.build()
+        self.disk.full = True
+        await app.annotate("note", data={"text": "lost"})
+        await app.annotate("note", data={"text": "also lost"})
+        self.disk.full = False
+        await app.annotate("note", data={"text": "saved"})
+        log = app.snapshot()["log"]
+        self.assertEqual((log["healthy"], log["error"], log["failures"]), (True, None, 2))
+
+    async def test_a_healthy_log_says_so(self):
+        log = self.build().snapshot()["log"]
+        self.assertEqual((log["healthy"], log["error"], log["failures"]), (True, None, 0))
+        self.assertEqual(log["path"], str(self.root / "game.jsonl"))
+
+    async def test_a_failing_mirror_is_shown_and_costs_no_log_entry(self):
+        queue_disk = Disk()
+        queue = mirror.MirrorQueue(self.root / "queue.tsv", opener=queue_disk.open).open()
+        self.addCleanup(queue.close)
+        app = super().build(queue=queue)
+        queue_disk.full = True
+        entry = await app.annotate("note", data={"text": "kept"})
+        self.assertIsNotNone(entry)
+        self.assertIn("note", self.keys())
+        snapshot = app.snapshot()
+        self.assertTrue(snapshot["log"]["healthy"])
+        self.assertFalse(snapshot["mirror"]["healthy"])
+        self.assertIn("No space left on device", snapshot["mirror"]["error"])
+
+
+class TestARecordSendThatFails(AppTestCase):
+    """Sending `/record` raised out of the request: a 500, and no refusal to
+    say what happened."""
+
+    async def test_it_is_refused_visibly_and_logs_no_start(self):
+        app = self.build(reaper_sender=FailingSender())
+        await app.start_recording()
+        snapshot = app.snapshot()
+        self.assertIn("console unreachable", snapshot["refusal"])
+        self.assertNotIn(tacet_app.RECORDING_STARTED, self.keys())
+
+    async def test_it_can_be_tried_again(self):
+        # Nothing reached Reaper, so there is nothing a second tap could stop.
+        app = self.build(reaper_sender=FailingSender())
+        await app.start_recording()
+        self.assertTrue(app.snapshot()["recording"]["can_start"])
+
+    async def test_it_notifies(self):
+        app = self.build(reaper_sender=FailingSender())
+        pushed = []
+        app.on_change(lambda: pushed.append(app.snapshot()))
+        await app.start_recording()
+        self.assertTrue(pushed)
 
 
 class TestArming(AppTestCase):
