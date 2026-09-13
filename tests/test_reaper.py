@@ -176,6 +176,78 @@ class TestFeedback(unittest.TestCase):
         self.assertTrue(state.recording)
 
 
+class TestRecordReports(unittest.TestCase):
+    def test_every_record_report_is_counted(self):
+        state = feed(reaper.TransportState(), "/record", 1.0)
+        state = feed(state, "/record", 0.0)
+        self.assertEqual(state.record_reports, 2)
+
+    def test_other_traffic_is_not_a_record_report(self):
+        state = feed(reaper.TransportState(), "/time", 3.0)
+        state = feed(state, "/play", 1.0)
+        self.assertEqual(state.record_reports, 0)
+
+
+class TestRecordLatch(unittest.TestCase):
+    """#28: a start the box sent and Reaper has not yet answered.
+
+    `/record` is a toggle. Two taps that both go out before Reaper's first
+    `/record 1` comes back are a start and a stop.
+    """
+
+    def pending(self, state, sent_at=10.0):
+        return reaper.RecordRequest(sent_at=sent_at, reports_before=state.record_reports)
+
+    def test_an_unanswered_start_refuses_another_on_a_silent_reaper(self):
+        state = reaper.TransportState()
+        refusal = reaper.record_refusal(state, 10.1, request=self.pending(state))
+        self.assertIsNotNone(refusal)
+
+    def test_an_unanswered_start_refuses_another_on_a_live_reaper_that_is_not_recording(self):
+        # This rig after the greyed-button workaround: never silent, and it last
+        # said it was not recording. That reading alone would allow a send.
+        state = feed(reaper.TransportState(), "/record", 0.0, now=10.0)
+        self.assertIsNone(reaper.record_refusal(state, 10.0))
+        refusal = reaper.record_refusal(state, 10.1, request=self.pending(state))
+        self.assertIsNotNone(refusal)
+
+    def test_the_answer_releases_the_latch(self):
+        state = reaper.TransportState()
+        request = self.pending(state)
+        state = feed(state, "/record", 1.0, now=10.2)
+        refusal = reaper.record_refusal(state, 10.3, request=request)
+        self.assertIn("already recording", refusal or "")
+
+    def test_a_report_that_says_it_is_not_recording_also_answers(self):
+        # An explicit answer either way means the state is known again.
+        state = reaper.TransportState()
+        request = self.pending(state)
+        state = feed(state, "/record", 0.0, now=10.2)
+        self.assertIsNone(reaper.record_refusal(state, 10.3, request=request))
+
+    def test_a_report_from_before_the_send_does_not_answer_it(self):
+        state = feed(reaper.TransportState(), "/record", 0.0, now=9.0)
+        request = self.pending(state)
+        self.assertIsNotNone(reaper.record_refusal(state, 9.5, request=request))
+
+    def test_the_latch_never_times_out(self):
+        # A timed release is what would let a lost confirmation turn the next
+        # tap into a stop. Starting by hand in Reaper is the recoverable cost.
+        state = reaper.TransportState()
+        refusal = reaper.record_refusal(state, 10.0 + 3600.0, request=self.pending(state))
+        self.assertIsNotNone(refusal)
+
+    def test_the_refusal_says_what_to_do_and_how_long_it_has_waited(self):
+        state = reaper.TransportState()
+        refusal = reaper.record_refusal(state, 52.0, request=self.pending(state, sent_at=10.0))
+        assert refusal is not None
+        self.assertIn("42s", refusal)
+        self.assertIn("in Reaper", refusal)
+
+    def test_no_request_means_no_latch(self):
+        self.assertIsNone(reaper.record_refusal(reaper.TransportState(), 10.0, request=None))
+
+
 class TestCommands(unittest.TestCase):
     def test_start_recording_sends_the_record_address(self):
         c, sender = client()
@@ -214,6 +286,19 @@ class TestCommands(unittest.TestCase):
             c.start_recording()
         self.assertFalse(c.healthy)
         self.assertIsNotNone(c.last_error)
+
+    def test_starting_remembers_the_unanswered_request(self):
+        c, _ = client(monotonic=lambda: 7.0)
+        self.assertIsNone(c.record_request)
+        c.start_recording()
+        self.assertEqual(c.record_request, reaper.RecordRequest(sent_at=7.0, reports_before=0))
+
+    def test_a_start_that_failed_to_send_is_not_awaiting_an_answer(self):
+        # Nothing reached Reaper, so there is nothing a second tap could undo.
+        c, _ = client(sender=FailingSender())
+        with self.assertRaises(TransportError):
+            c.start_recording()
+        self.assertIsNone(c.record_request)
 
     def test_handling_feedback_updates_the_clients_state(self):
         c, _ = client(monotonic=lambda: 42.0)

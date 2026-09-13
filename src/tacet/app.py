@@ -395,7 +395,7 @@ class App:
         """Why the record button will not fire, or None if it will."""
         if self._recorder is None:
             return None
-        return record_refusal(self._recorder.state, self._monotonic())
+        return record_refusal(self._recorder.state, self._monotonic(), request=self._recorder.record_request)
 
     def handle_recorder_packet(self, packet: bytes) -> None:
         if self._recorder is not None:
