@@ -329,6 +329,103 @@ def span_id_for(event_key: str, seq: int) -> str:
     return f"{event_key}-{seq}"
 
 
+# -- torn final writes ------------------------------------------------------
+
+#: Appended to a file's name for the bytes cut from its torn end. Accumulates
+#: across repairs: nothing a crash left behind is ever deleted.
+TORN_SUFFIX = ".torn"
+
+_TERMINATOR_BYTES = _LINE_TERMINATOR.encode(_ENCODING)
+
+
+@dataclass(frozen=True)
+class TornTail:
+    """The bytes after a file's last line terminator.
+
+    `offset` is where the complete lines end, which is where the file is cut.
+    """
+
+    offset: int
+    tail: bytes
+
+    def is_entry(self) -> bool:
+        """Whether the tail is a whole entry that lost only its terminator."""
+        try:
+            Entry.from_json(self.tail.decode(_ENCODING))
+        except (CorruptLogError, UnicodeDecodeError):
+            return False
+        return True
+
+
+@dataclass(frozen=True)
+class Repair:
+    """What opening a file did about a torn end. `set_aside` is None when the
+    tail was kept, by giving it the terminator it was missing."""
+
+    tail: bytes
+    set_aside: Path | None
+
+
+def torn_tail(data: bytes) -> TornTail | None:
+    """The unterminated end of a file's contents, or None if it ends cleanly.
+
+    Pure, and bytes rather than text: a write torn inside a multi-byte character
+    has to be found before anything tries to decode it.
+    """
+    if not data or data.endswith(_TERMINATOR_BYTES):
+        return None
+    offset = data.rfind(_TERMINATOR_BYTES) + len(_TERMINATOR_BYTES)
+    return TornTail(offset=offset, tail=data[offset:])
+
+
+def find_torn_tail(path: Path | str) -> TornTail | None:
+    """Look without touching. A missing file has nothing torn in it."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    return torn_tail(path.read_bytes())
+
+
+def set_aside_path(path: Path | str) -> Path:
+    path = Path(path)
+    return path.with_name(path.name + TORN_SUFFIX)
+
+
+def repair_torn_tail(path: Path | str, *, keep_entries: bool, fsync: bool = True) -> Repair | None:
+    """Make a file safe to append to again.
+
+    Appending straight after an unterminated line glues the next line onto it,
+    and the fragment is then in the middle of the file, where a reader has to
+    treat it as corruption. So the tail is dealt with before anything is
+    appended: kept, if `keep_entries` and it is a whole entry missing only its
+    terminator; otherwise copied to the `.torn` file and cut off.
+    """
+    path = Path(path)
+    torn = find_torn_tail(path)
+    if torn is None:
+        return None
+    if keep_entries and torn.is_entry():
+        _append_bytes(path, _TERMINATOR_BYTES, fsync=fsync)
+        return Repair(tail=torn.tail, set_aside=None)
+    aside = set_aside_path(path)
+    # Copied before the cut, so a crash between the two leaves the bytes in both
+    # places rather than neither.
+    _append_bytes(aside, torn.tail + _TERMINATOR_BYTES, fsync=fsync)
+    with path.open("r+b") as handle:
+        handle.truncate(torn.offset)
+        if fsync:
+            os.fsync(handle.fileno())
+    return Repair(tail=torn.tail, set_aside=aside)
+
+
+def _append_bytes(path: Path, data: bytes, *, fsync: bool) -> None:
+    with path.open("ab") as handle:
+        handle.write(data)
+        handle.flush()
+        if fsync:
+            os.fsync(handle.fileno())
+
+
 class AnnotationLog:
     """Append-only JSONL. One entry per line, flushed and fsynced as written."""
 
@@ -352,10 +449,15 @@ class AnnotationLog:
         #: an append-only log is for -- but it means `tacet.markers` will anchor
         #: today's entries to an earlier recording, so the box says so.
         self.prior_anchor: Entry | None = None
+        #: What opening did about a torn final write left by the last run, or
+        #: None if the file ended cleanly.
+        self.repair: Repair | None = None
 
     # -- lifecycle --------------------------------------------------------
 
     def open(self) -> Self:
+        # Before resuming, so the entries counted are the entries appended after.
+        self.repair = repair_torn_tail(self.path, keep_entries=True, fsync=self._fsync)
         self._resume()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a", encoding=_ENCODING, newline=_LINE_TERMINATOR)
