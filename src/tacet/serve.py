@@ -36,7 +36,7 @@ from pathlib import Path
 from aiohttp import web as aiohttp_web
 
 from . import config, dm7, mirror, reaper, web
-from .annotations import AnnotationLog, find_prior_anchor
+from .annotations import AnnotationLog, TornTail, find_prior_anchor, find_torn_tail, set_aside_path
 from .annotations import Entry as AnnotationEntry
 from .app import App
 
@@ -278,10 +278,33 @@ def _prior_anchor_lines(prior: AnnotationEntry) -> list[str]:
     ]
 
 
+def _torn_lines(name: str, path: Path | str, torn: TornTail, *, keeps_entries: bool) -> list[str]:
+    """The block for a file whose last run ended mid-write.
+
+    Repaired on open rather than refused: a box that will not start is worse,
+    and nothing is thrown away. Said out loud because the fragment was the last
+    thing written before a crash, which is worth knowing about on its own.
+    """
+    lines = [
+        _rule(),
+        _row("WARNING", f"{name} ends in a torn write ({len(torn.tail)} bytes)"),
+        _note("the last run stopped mid-write: a crash, a kill, or a full disk"),
+    ]
+    if keeps_entries and torn.is_entry():
+        lines.append(_note("it is a whole entry missing its newline; it is kept"))
+    else:
+        lines.append(_note(f"it is moved to {set_aside_path(path)}"))
+        lines.append(_note("everything before it is intact"))
+    return lines
+
+
 def startup_lines(
     args: argparse.Namespace,
     config_path: Path | None,
     prior_anchor: AnnotationEntry | None = None,
+    *,
+    torn_log: TornTail | None = None,
+    torn_queue: TornTail | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -325,6 +348,10 @@ def startup_lines(
     lines.extend(_page_lines(args.listen, args.http_port))
     if prior_anchor is not None:
         lines.extend(_prior_anchor_lines(prior_anchor))
+    if torn_log is not None:
+        lines.extend(_torn_lines("log", args.log, torn_log, keeps_entries=True))
+    if torn_queue is not None and args.queue:
+        lines.extend(_torn_lines("queue", args.queue, torn_queue, keeps_entries=False))
     lines.append(_rule())
     lines.extend(_checklist(args))
     lines.append(_rule("="))
@@ -399,8 +426,16 @@ def main(argv: list[str] | None = None) -> int:
     # command line: "why is it driving DCA 3" otherwise has no answer on the
     # day. Printed before anything binds, so it survives a failure to start.
     # Read before the log is opened for appending, so "already contains a
-    # recording" still means *before this run*.
-    for line in startup_lines(args, config_path, find_prior_anchor(args.log)):
+    # recording" still means *before this run*, and a torn end is reported as
+    # the last run left it rather than as the repair on open leaves it.
+    banner = startup_lines(
+        args,
+        config_path,
+        find_prior_anchor(args.log),
+        torn_log=find_torn_tail(args.log),
+        torn_queue=find_torn_tail(args.queue) if args.queue else None,
+    )
+    for line in banner:
         print(line)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args))

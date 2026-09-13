@@ -251,6 +251,15 @@ class TestReading(LogTestCase):
             fh.write("\n\n")
         self.assertEqual(len(list(ann.read_entries(self.path))), 1)
 
+    def test_reading_still_tolerates_a_torn_final_line_without_opening(self):
+        # tacet.markers reads logs it never opens for writing; the repair on
+        # open must not be the only thing standing between it and a torn tail.
+        with self.log() as log:
+            log.record("note")
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write('{"seq": 2')
+        self.assertEqual(len(list(ann.read_entries(self.path))), 1)
+
     def test_round_trips_every_event_in_the_vocabulary(self):
         with self.log() as log:
             for event in ann.VOCABULARY:
@@ -264,6 +273,122 @@ class TestReading(LogTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTornTail(unittest.TestCase):
+    """Finding a torn final write. Pure: bytes in, split out."""
+
+    def test_an_intact_file_has_no_torn_tail(self):
+        self.assertIsNone(ann.torn_tail(b'{"a":1}\n{"b":2}\n'))
+
+    def test_an_empty_file_has_no_torn_tail(self):
+        self.assertIsNone(ann.torn_tail(b""))
+
+    def test_the_tail_is_everything_after_the_last_terminator(self):
+        self.assertEqual(ann.torn_tail(b'{"a":1}\n{"b"'), ann.TornTail(offset=8, tail=b'{"b"'))
+
+    def test_a_file_with_no_terminator_at_all_is_all_tail(self):
+        self.assertEqual(ann.torn_tail(b'{"a"'), ann.TornTail(offset=0, tail=b'{"a"'))
+
+    def test_a_character_cut_in_half_is_still_found(self):
+        # Bytes, not text: a write torn inside a multi-byte character must not
+        # make the tail undecodable before it can be set aside.
+        # The first two of U+2212's three UTF-8 bytes.
+        data = b'{"a":1}\n{"t":"\xe2\x88'
+        torn = ann.torn_tail(data)
+        assert torn is not None
+        self.assertEqual(torn.offset, 8)
+
+    def test_a_missing_file_has_no_torn_tail(self):
+        with TemporaryDirectory() as tmp:
+            self.assertIsNone(ann.find_torn_tail(Path(tmp) / "nope.jsonl"))
+
+
+class TestReopeningATornLog(LogTestCase):
+    """A crash mid-write leaves an unterminated final line.
+
+    Reading tolerates that, but appending straight after it glues the next entry
+    onto the fragment, and the torn line is then in the middle of the file where
+    it is corrupt. The restart after that would not start at all.
+    """
+
+    TORN = '{"seq": 99, "event": "no'
+
+    def tear(self):
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(self.TORN)
+
+    def test_reopening_after_a_torn_write_leaves_a_readable_log(self):
+        for _ in range(3):
+            with self.log() as log:
+                log.record("note")
+            self.tear()
+        with self.log() as log:
+            log.record("note")
+        self.assertEqual(len(list(ann.read_entries(self.path))), 4)
+
+    def test_the_prior_anchor_check_survives_a_torn_log_reopened_twice(self):
+        # The exact startup path that used to refuse: serve reads the prior
+        # anchor before anything else, and scans the whole file when the log has
+        # no recording in it - straight through wherever a glued line would be.
+        with self.log() as log:
+            log.record("band-enters-stadium")
+        self.tear()
+        with self.log() as log:
+            log.record("note")
+        self.tear()
+        self.assertIsNone(ann.find_prior_anchor(self.path))
+
+    def test_the_torn_bytes_are_set_aside_not_discarded(self):
+        with self.log() as log:
+            log.record("note")
+        self.tear()
+        with self.log():
+            pass
+        aside = self.path.with_name(self.path.name + ann.TORN_SUFFIX)
+        self.assertEqual(aside.read_text(encoding="utf-8"), self.TORN + "\n")
+
+    def test_set_aside_tails_accumulate_rather_than_overwrite(self):
+        for _ in range(2):
+            with self.log() as log:
+                log.record("note")
+            self.tear()
+        with self.log():
+            pass
+        aside = self.path.with_name(self.path.name + ann.TORN_SUFFIX)
+        self.assertEqual(aside.read_text(encoding="utf-8").count(self.TORN), 2)
+
+    def test_a_complete_final_entry_missing_only_its_newline_is_kept(self):
+        # A write torn exactly before its terminator lost nothing but the byte.
+        with self.log() as log:
+            log.record("note")
+            log.record("false-open")
+        self.path.write_bytes(self.path.read_bytes().rstrip(b"\n"))
+        with self.log() as log:
+            self.assertEqual(log.record("note").seq, 3)
+            repair = log.repair
+        self.assertEqual([e.event for e in ann.read_entries(self.path)], ["note", "false-open", "note"])
+        assert repair is not None
+        self.assertIsNone(repair.set_aside)
+
+    def test_opening_reports_what_it_repaired(self):
+        with self.log() as log:
+            log.record("note")
+        self.tear()
+        with self.log() as log:
+            repair = log.repair
+        assert repair is not None
+        self.assertEqual(repair.tail, self.TORN.encode())
+        self.assertEqual(repair.set_aside, self.path.with_name(self.path.name + ann.TORN_SUFFIX))
+
+    def test_an_intact_log_is_left_alone(self):
+        with self.log() as log:
+            log.record("note")
+        before = self.path.read_bytes()
+        with self.log() as log:
+            self.assertIsNone(log.repair)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse(self.path.with_name(self.path.name + ann.TORN_SUFFIX).exists())
 
 
 class TestPriorAnchorIsNoticed(LogTestCase):

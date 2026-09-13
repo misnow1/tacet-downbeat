@@ -180,6 +180,37 @@ class TestStartupBannerShape(unittest.TestCase):
             self.assertTrue(line.strip(), "banner has an empty line")
 
 
+class TestStartupBannerWarnsAboutATornFile(unittest.TestCase):
+    """A crash mid-write last run. Repaired on open, and said out loud."""
+
+    TORN = annotations.TornTail(offset=120, tail=b'{"seq": 7, "ev')
+
+    def banner_with(self, **torn):
+        args = serve.parser().parse_args(FULL)
+        return "\n".join(serve.startup_lines(args, None, None, **torn))
+
+    def test_an_intact_log_gets_no_warning(self):
+        self.assertNotIn("torn", banner())
+
+    def test_a_torn_log_is_called_out(self):
+        text = self.banner_with(torn_log=self.TORN)
+        self.assertIn("WARNING", text)
+        self.assertIn("log ends in a torn write", text)
+
+    def test_a_torn_queue_is_called_out(self):
+        text = self.banner_with(torn_queue=self.TORN)
+        self.assertIn("queue ends in a torn write", text)
+
+    def test_it_says_where_the_bytes_go(self):
+        args = serve.parser().parse_args(FULL)
+        text = "\n".join(serve.startup_lines(args, None, None, torn_log=self.TORN))
+        self.assertIn(f"{args.log}{annotations.TORN_SUFFIX}", text)
+
+    def test_it_does_not_refuse_to_start(self):
+        text = self.banner_with(torn_log=self.TORN)
+        self.assertIn("arm when the band is in the stands", text)
+
+
 class TestStartupBannerWarnsAboutAReusedLog(unittest.TestCase):
     """Yesterday's log, or a log the pre-flight test already wrote to.
 

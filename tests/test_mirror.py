@@ -99,6 +99,35 @@ class TestMirrorQueue(unittest.TestCase):
             queue.append(entry("note"))
         self.assertTrue(self.path.read_text().endswith("\n"))
 
+    def test_reopening_after_a_torn_line_starts_on_a_fresh_line(self):
+        # Appending after a fragment would glue the next line onto it; the Lua
+        # tail would then read one bogus line with too many fields.
+        with mirror.MirrorQueue(self.path) as queue:
+            queue.append(entry("note"))
+        with self.path.open("a") as fh:
+            fh.write("FDR|up-wh")
+        with mirror.MirrorQueue(self.path) as queue:
+            queue.append(entry("false-open"))
+        lines = self.path.read_text().splitlines()
+        self.assertEqual([mirror.parse_queue_line(line).name for line in lines], ["NOTE|note", "DET|false-open"])
+
+    def test_a_torn_queue_line_is_set_aside_even_when_it_looks_complete(self):
+        # The queue is regenerable, and three fields can still be a truncated
+        # span id, so nothing unterminated is trusted.
+        with self.path.open("w") as fh:
+            fh.write("GAME|q1\tstart\tq1-")
+        with mirror.MirrorQueue(self.path) as queue:
+            repair = queue.repair
+        assert repair is not None
+        self.assertEqual(self.path.read_text(), "")
+        self.assertEqual(repair.set_aside, self.path.with_name(self.path.name + ann.TORN_SUFFIX))
+
+    def test_an_intact_queue_is_left_alone(self):
+        with mirror.MirrorQueue(self.path) as queue:
+            queue.append(entry("note"))
+        with mirror.MirrorQueue(self.path) as queue:
+            self.assertIsNone(queue.repair)
+
 
 class TestLoggerIntegration(unittest.TestCase):
     def setUp(self):

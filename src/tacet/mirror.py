@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
-from .annotations import AnnotationError, Entry, marker_name
+from .annotations import AnnotationError, Entry, Repair, marker_name, repair_torn_tail
 
 DELIMITER = "\t"
 LINE_TERMINATOR = "\n"
@@ -93,8 +93,14 @@ class MirrorQueue:
         self.path = Path(path)
         self._fsync = fsync
         self._handle: Any = None
+        self.repair: Repair | None = None
 
     def open(self) -> Self:
+        # Nothing unterminated is trusted here, even a tail with three fields:
+        # it may be a truncated span id, and the queue is regenerable. The Lua
+        # tail never reads past the last terminator, so the cut cannot land
+        # behind its stored position.
+        self.repair = repair_torn_tail(self.path, keep_entries=False, fsync=self._fsync)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a", encoding=_ENCODING, newline=LINE_TERMINATOR)
         return self
