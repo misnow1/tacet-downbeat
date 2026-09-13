@@ -816,6 +816,22 @@ class TestThePlayheadIsStamped(AppTestCase):
         await app.annotate("band-exits-stands")
         self.assertIsNone(self.last().project_seconds)
 
+    async def test_a_position_that_stopped_updating_is_not_stamped_while_other_feedback_flows(self):
+        # This rig meters continuously while parked (gameday.md), so the link
+        # never goes quiet. After the throwaway take `/time` stops at 4.8s, and
+        # every entry made while parked used to be stamped 4.8 - which
+        # `markers.position_of` prefers to the arithmetic that would have
+        # placed it correctly (#35).
+        now = [100.0]
+        app = self.build(monotonic=lambda: now[0])
+        app.handle_recorder_packet(osc.encode_message("/time", 4.8))
+        for _ in range(4):
+            now[0] += 1.0
+            app.handle_recorder_packet(osc.encode_message("/track/1/vu", 0.5))
+        self.assertEqual(app.snapshot()["recording"]["liveness"], "live")
+        await app.annotate("band-exits-stands")
+        self.assertIsNone(self.last().project_seconds)
+
     async def test_spans_are_stamped_at_both_ends(self):
         app = self.build()
         app.handle_recorder_packet(osc.encode_message("/time", 10.0))
