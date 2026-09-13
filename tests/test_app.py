@@ -41,6 +41,25 @@ class FailingSender:
         raise TransportError("console unreachable")
 
 
+class FlakySender(FakeSender):
+    """Delivers `fail_after` packets in total, then fails every send until
+    healed. None delivers everything."""
+
+    def __init__(self, fail_after: int | None = None):
+        super().__init__()
+        self.fail_after: int | None = fail_after
+
+    def send(self, packet: bytes) -> None:
+        from tacet.net import TransportError
+
+        if self.fail_after is not None and len(self.packets) >= self.fail_after:
+            raise TransportError("console unreachable")
+        super().send(packet)
+
+    def heal(self) -> None:
+        self.fail_after = None
+
+
 class AppTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()
@@ -187,6 +206,97 @@ class TestFailures(AppTestCase):
         await app.trigger()
         await app.stand_down()
         self.assertIn("stood-down", self.keys())
+
+
+class TestAFailedMoveCanBeRetried(AppTestCase):
+    """#27: a send error mid-move used to leave the machine stuck.
+
+    A fade that died partway stayed RELEASING, so FADE OUT sent nothing and the
+    only way out was OPEN - slamming a half-closed band to unity. A failed open
+    stayed OPEN at -inf, and OPEN sent nothing either.
+    """
+
+    async def fail_a_fade_partway(self, sender):
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.trigger()
+        # The open is itself a short ramp; count what it sent rather than
+        # assume, so the failure lands inside the fade and not at its start.
+        opened = len(sender.packets)
+        sender.fail_after = opened + 3
+        await app.release()
+        await app.wait_for_fade()
+        return app, opened
+
+    async def test_a_fade_that_failed_midway_can_be_faded_again(self):
+        sender = FlakySender()
+        app, opened = await self.fail_a_fade_partway(sender)
+        self.assertEqual(len(sender.packets), opened + 3)
+        stuck_at = self.console.commanded_level
+        self.assertLess(stuck_at, dm7.UNITY)
+        self.assertGreater(stuck_at, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+
+        sender.heal()
+        await app.release()
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        # Straight down from where it stuck; never back up through unity.
+        retried = sender.levels()[opened + 3 :]
+        self.assertTrue(retried)
+        self.assertTrue(all(level <= stuck_at for level in retried))
+
+    async def test_a_failed_open_can_be_retried(self):
+        sender = FlakySender(fail_after=0)
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+
+        sender.heal()
+        await app.trigger()
+        self.assertEqual(sender.levels()[-1], dm7.UNITY)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+
+    async def test_a_failed_ride_in_can_be_retried(self):
+        sender = FlakySender(fail_after=2)
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertLess(self.console.commanded_level, dm7.UNITY)
+
+        sender.heal()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+
+    async def test_a_healthy_fade_is_not_restarted_by_tapping_again(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        opened = len(self.console_sender.packets)
+        await app.release()
+        await app.release()
+        await app.release()
+        await app.wait_for_fade()
+        # One close: every level after the open is strictly lower than the last.
+        levels = self.console_sender.levels()[opened:]
+        self.assertEqual(levels, sorted(levels, reverse=True))
+        self.assertEqual(len(levels), len(set(levels)))
+
+    async def test_a_failed_move_is_logged(self):
+        # Otherwise the log's `commanded` entry reads as a move that happened.
+        await self.fail_a_fade_partway(FlakySender())
+        failed = [e for e in self.entries() if e.event == tacet_app.MOVE_FAILED]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].data["target"], dm7.MINUS_INF)
+        self.assertEqual(failed[0].data["level"], self.console.commanded_level)
+
+    async def test_the_page_says_to_tap_again(self):
+        app, _ = await self.fail_a_fade_partway(FlakySender())
+        self.assertIn("did not finish", app.snapshot()["why"])
 
 
 class TestRecordIsNotAStopButton(AppTestCase):

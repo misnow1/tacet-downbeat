@@ -55,6 +55,9 @@ class Command(StrEnum):
     RELEASE = "release"
     #: The fade reached the bottom.
     FADE_COMPLETE = "fade-complete"
+    #: A send failed partway through a move, so the fader stopped short of
+    #: where the state says it is going. Reported by the shell, never tapped.
+    MOVE_FAILED = "move-failed"
 
 
 class FaderCommand(StrEnum):
@@ -78,6 +81,11 @@ class Machine:
     pending_stand_down: bool = False
     #: The Phase 2 gate. False means the detector cannot move anything.
     allow_detector: bool = False
+    #: The last move did not finish. While set, repeating the command that
+    #: started it retries the move instead of being ignored as already done.
+    #: Never set by a healthy move, so a panic tap on a fade that is still
+    #: running does not restart it.
+    stalled: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,6 +124,10 @@ def _standing_down(machine: Machine, event: Event) -> Outcome:
     return _unchanged(machine, "not armed; the band is not in the stands")
 
 
+def _move_failed(machine: Machine) -> Outcome:
+    return Outcome(machine=replace(machine, stalled=True))
+
+
 def _idle(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.TRIGGER:
         return Outcome(
@@ -132,13 +144,18 @@ def _idle(machine: Machine, event: Event) -> Outcome:
 
 def _open(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.RELEASE:
-        return Outcome(machine=replace(machine, state=State.RELEASING), fader=FaderCommand.FADE)
+        return Outcome(machine=replace(machine, state=State.RELEASING, stalled=False), fader=FaderCommand.FADE)
     if event.command is Command.STAND_DOWN:
         # Fade out and stand down when it lands, rather than slamming shut.
         return Outcome(
-            machine=replace(machine, state=State.RELEASING, pending_stand_down=True),
+            machine=replace(machine, state=State.RELEASING, pending_stand_down=True, stalled=False),
             fader=FaderCommand.FADE,
         )
+    if event.command is Command.MOVE_FAILED:
+        return _move_failed(machine)
+    if event.command is Command.TRIGGER and machine.stalled:
+        # The open never got there. Send it again.
+        return Outcome(machine=replace(machine, stalled=False), fader=FaderCommand.OPEN)
     # A trigger while open only confirms what is already true.
     return _unchanged(machine)
 
@@ -148,14 +165,19 @@ def _releasing(machine: Machine, event: Event) -> Outcome:
         # The snap back. A pending stand-down is cancelled: the band started
         # again, so standing down would now be wrong.
         return Outcome(
-            machine=replace(machine, state=State.OPEN, pending_stand_down=False),
+            machine=replace(machine, state=State.OPEN, pending_stand_down=False, stalled=False),
             fader=FaderCommand.OPEN,
         )
     if event.command is Command.FADE_COMPLETE:
         landing = State.STANDING_DOWN if machine.pending_stand_down else State.IDLE
-        return Outcome(machine=replace(machine, state=landing, pending_stand_down=False))
+        return Outcome(machine=replace(machine, state=landing, pending_stand_down=False, stalled=False))
     if event.command is Command.STAND_DOWN:
         return Outcome(machine=replace(machine, pending_stand_down=True))
+    if event.command is Command.MOVE_FAILED:
+        return _move_failed(machine)
+    if event.command is Command.RELEASE and machine.stalled:
+        # The fade died partway. Fade again, from wherever it stopped.
+        return Outcome(machine=replace(machine, stalled=False), fader=FaderCommand.FADE)
     # Already fading.
     return _unchanged(machine)
 
@@ -179,6 +201,8 @@ _DESCRIPTIONS = {
 def describe(machine: Machine) -> str:
     """The plain-language why line for the UI (design.md 5.5)."""
     text = _DESCRIPTIONS[machine.state]
+    if machine.stalled:
+        text += " The last fader move did not finish; tap it again to retry."
     if machine.pending_stand_down:
         text += " Standing down once the fade lands."
     if machine.allow_detector:
