@@ -107,6 +107,10 @@ class TransportState:
     position: float | None = None
     #: Monotonic time of the last valid packet, whatever it contained.
     last_packet: float | None = None
+    #: How many `/record` reports have arrived, whichever way they went. A
+    #: count rather than a time, so "answered after the send" cannot be fooled
+    #: by two readings of a coarse clock that happen to be equal.
+    record_reports: int = 0
 
     def is_fresh(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
         """Whether Reaper has spoken within the timeout.
@@ -187,7 +191,7 @@ def apply_feedback(
         if message.address == addresses.recording:
             recording = _as_bool(value)
             if recording is not None:
-                state = replace(state, recording=recording)
+                state = replace(state, recording=recording, record_reports=state.record_reports + 1)
         elif message.address == addresses.playing:
             playing = _as_bool(value)
             if playing is not None:
@@ -207,7 +211,28 @@ def _collect(packet: osc.Message | osc.Bundle, into: list[osc.Message]) -> None:
         _collect(element, into)
 
 
-def record_refusal(state: TransportState, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> str | None:
+@dataclass(frozen=True)
+class RecordRequest:
+    """A `/record` the box sent, and what Reaper had reported before it.
+
+    Any `/record` report after the send answers it, whichever way it went: an
+    explicit answer means the record state is known again.
+    """
+
+    sent_at: float
+    reports_before: int
+
+    def answered_by(self, state: TransportState) -> bool:
+        return state.record_reports > self.reports_before
+
+
+def record_refusal(
+    state: TransportState,
+    now: float,
+    *,
+    timeout: float = DEFAULT_FEEDBACK_TIMEOUT,
+    request: RecordRequest | None = None,
+) -> str | None:
     """Why the box will not send a record command, or None if it will.
 
     Reaper's `/record` is a toggle, not a start. Sent at a recorder that is
@@ -224,10 +249,23 @@ def record_refusal(state: TransportState, now: float, *, timeout: float = DEFAUL
     is announced only when it changes - there is no way to tell a safe send
     from one that would end the recording, and the box says so instead of
     guessing.
+
+    Nor will it send while its own last `/record` is unanswered (#28). Two taps
+    that both leave before Reaper's confirmation comes back are a start and a
+    stop, and stalled wifi delivers exactly that. The latch deliberately has no
+    timeout: a timed release is what would let a lost confirmation turn the
+    next tap into a stop, whereas holding it costs only a start done by hand in
+    Reaper, which is recoverable.
     """
     liveness = state.liveness(now, timeout=timeout)
     if liveness is Liveness.LOST:
         return "Reaper has stopped answering. Start the recording in Reaper."
+    if request is not None and not request.answered_by(state):
+        return (
+            f"Reaper has not confirmed the start sent {now - request.sent_at:.0f}s ago, "
+            "so another tap could stop it. Check Reaper, and start it in Reaper if "
+            "it is not recording."
+        )
     if liveness is Liveness.LIVE:
         if state.recording:
             return "Reaper is already recording."
@@ -259,6 +297,9 @@ class ReaperClient:
         self._monotonic = monotonic
         self.state = TransportState()
         self.last_error: str | None = None
+        #: The last start sent. Never cleared: whether it has been answered is
+        #: read from `state`, so there is no second copy of the truth to drift.
+        self.record_request: RecordRequest | None = None
 
     @property
     def healthy(self) -> bool:
@@ -267,8 +308,14 @@ class ReaperClient:
     # -- commands ---------------------------------------------------------
 
     def start_recording(self) -> None:
-        """Arm and roll. There is no counterpart; stopping happens in Reaper."""
+        """Arm and roll. There is no counterpart; stopping happens in Reaper.
+
+        The request is remembered only once the send succeeded: a start that
+        never reached Reaper has nothing a second tap could undo.
+        """
+        reports_before = self.state.record_reports
         self._send(self.addresses.record)
+        self.record_request = RecordRequest(sent_at=self._monotonic(), reports_before=reports_before)
 
     def play(self) -> None:
         self._send(self.addresses.play)

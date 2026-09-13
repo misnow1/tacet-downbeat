@@ -391,6 +391,38 @@ class TestRecordIsNotAStopButton(AppTestCase):
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         self.assertFalse(app.snapshot()["recording"]["can_start"])
 
+    async def test_two_taps_with_no_feedback_between_send_one_record(self):
+        # #28. The existing double-tap test answers /record 1 between the taps;
+        # over stalled wifi both taps arrive before Reaper has said anything.
+        app = self.build()
+        await app.start_recording()
+        await app.start_recording()
+        self.assertEqual(self.record_packets().count("/record"), 1)
+        self.assertIn("not confirmed", app.snapshot()["refusal"])
+
+    async def test_two_taps_on_a_live_rig_that_is_not_recording_send_one_record(self):
+        # The press-box rig: never silent, and after the workaround take it has
+        # said it is not recording, which on its own permits a send.
+        app = self.build()
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        app.handle_recorder_packet(osc.encode_message("/time", 4.8))
+        await app.start_recording()
+        await app.start_recording()
+        self.assertEqual(self.record_packets().count("/record"), 1)
+
+    async def test_the_button_is_disabled_while_the_start_is_unanswered(self):
+        app = self.build()
+        await app.start_recording()
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+
+    async def test_only_one_recording_started_entry_for_a_double_tap(self):
+        app = self.build()
+        await app.start_recording()
+        await app.start_recording()
+        self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
+
     async def test_there_is_still_no_way_to_ask_reaper_to_stop(self):
         app = self.build()
         await app.start_recording()
