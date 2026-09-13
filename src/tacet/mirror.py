@@ -21,13 +21,12 @@ test pins that the rebuilt file matches what was written live.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
-from .annotations import AnnotationError, Entry, Repair, marker_name, repair_torn_tail
+from .annotations import AnnotationError, AppendFile, Entry, Opener, Repair, marker_name, open_for_append
 
 DELIMITER = "\t"
 LINE_TERMINATOR = "\n"
@@ -36,8 +35,6 @@ LINE_TERMINATOR = "\n"
 ABSENT = "-"
 
 QUEUE_FIELDS = ("name", "phase", "span_id")
-
-_ENCODING = "utf-8"
 
 
 class QueueFormatError(AnnotationError):
@@ -89,26 +86,21 @@ class MirrorQueue:
     next arrived.
     """
 
-    def __init__(self, path: Path | str, *, fsync: bool = True) -> None:
+    def __init__(self, path: Path | str, *, fsync: bool = True, opener: Opener = open_for_append) -> None:
         self.path = Path(path)
-        self._fsync = fsync
-        self._handle: Any = None
-        self.repair: Repair | None = None
-
-    def open(self) -> Self:
         # Nothing unterminated is trusted here, even a tail with three fields:
         # it may be a truncated span id, and the queue is regenerable. The Lua
         # tail never reads past the last terminator, so the cut cannot land
         # behind its stored position.
-        self.repair = repair_torn_tail(self.path, keep_entries=False, fsync=self._fsync)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a", encoding=_ENCODING, newline=LINE_TERMINATOR)
+        self._file = AppendFile(self.path, keep_entries=False, fsync=fsync, opener=opener)
+        self.repair: Repair | None = None
+
+    def open(self) -> Self:
+        self.repair = self._file.open()
         return self
 
     def close(self) -> None:
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
+        self._file.close()
 
     def __enter__(self) -> Self:
         return self.open()
@@ -117,9 +109,8 @@ class MirrorQueue:
         self.close()
 
     def append(self, entry: Entry) -> None:
-        if self._handle is None:
+        """Raises `WriteError` if the line did not reach the disk; the next
+        append starts on a fresh line regardless."""
+        if not self._file.is_open:
             raise QueueFormatError("mirror queue is not open")
-        self._handle.write(queue_line(entry) + LINE_TERMINATOR)
-        self._handle.flush()
-        if self._fsync:
-            os.fsync(self._handle.fileno())
+        self._file.append_line(queue_line(entry))

@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 from tacet import annotations as ann
 from tacet import mirror
+from tests.disk import Disk
 
 
 class StepClock:
@@ -107,6 +108,18 @@ class TestMirrorQueue(unittest.TestCase):
         with self.path.open("a") as fh:
             fh.write("FDR|up-wh")
         with mirror.MirrorQueue(self.path) as queue:
+            queue.append(entry("false-open"))
+        lines = self.path.read_text().splitlines()
+        self.assertEqual([mirror.parse_queue_line(line).name for line in lines], ["NOTE|note", "DET|false-open"])
+
+    def test_a_failed_append_raises_and_the_next_starts_on_a_fresh_line(self):
+        disk = Disk()
+        with mirror.MirrorQueue(self.path, opener=disk.open) as queue:
+            queue.append(entry("note"))
+            disk.full = disk.tears = True
+            with self.assertRaises(ann.WriteError):
+                queue.append(entry("q1", phase="start", span_id="q1-2"))
+            disk.full = False
             queue.append(entry("false-open"))
         lines = self.path.read_text().splitlines()
         self.assertEqual([mirror.parse_queue_line(line).name for line in lines], ["NOTE|note", "DET|false-open"])

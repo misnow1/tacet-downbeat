@@ -209,7 +209,10 @@ async def _annotate(request: web.Request) -> web.Response:
         entry = await app.annotate(key, data=payload.get("data"))
     except ann.AnnotationError as exc:
         raise _bad_request(str(exc)) from exc
-    return web.json_response({"entry": entry.as_dict(), "state": app.snapshot()})
+    # A null entry is one that did not reach the disk. Not an error status: the
+    # tap was acted on, and the state below carries the log fault to the page.
+    saved = entry.as_dict() if entry is not None else None
+    return web.json_response({"entry": saved, "state": app.snapshot()})
 
 
 async def _span_start(request: web.Request) -> web.Response:
@@ -425,10 +428,17 @@ margin:4px 0 0}
 #link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;display:none}
 #link.connecting{display:block;background:var(--fade)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
+/* Whether annotations are reaching the disk. Up for as long as it is true, and
+   not dismissable: a full disk leaves everything else on the page looking fine. */
+#saving{padding:8px 16px;text-align:center;font-size:13px;display:none}
+#saving.fault{display:block;background:var(--warn);color:#fff}
+#saving.warn{display:block;background:var(--fade);color:#fff}
+#saving.note{display:block;color:#ffca7a;border-bottom:1px solid var(--line)}
 #wake{text-align:center;font-size:13px;color:var(--dim);padding:0 4px}
 #wake.advice{color:#ffca7a}
 </style></head><body>
 <div id="link" class="connecting">Connecting to the box</div>
+<div id="saving"></div>
 <header>
   <div class="headline"><div id="state">&hellip;</div><div id="pulse">--</div></div>
   <div id="why"></div><div id="refusal"></div>

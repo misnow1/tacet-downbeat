@@ -54,6 +54,9 @@ MOVE_FAILED = "move-failed"
 #: have to agree or the warning goes quiet.
 RECORDING_STARTED = ann.ANCHOR_EVENT
 
+#: Shown when `/record` could not be sent. Quoted in docs/gameday.md.
+RECORD_SEND_FAILED = "Could not send the start to Reaper ({error}). Nothing started; tap again, or start it in Reaper."
+
 
 class App:
     def __init__(
@@ -121,7 +124,7 @@ class App:
         if outcome.fader is not None:
             await self._move_fader(outcome.fader, source=source, detail=detail, open_seconds=open_seconds)
         if annotation is not None and outcome.changed:
-            self._log.record(
+            self._record(
                 annotation,
                 data={"state": self.machine.state.value},
                 project_seconds=self._playhead(),
@@ -163,7 +166,7 @@ class App:
         # command was issued. `target` is where it is going, which is the
         # unambiguous half when reading a log back.
         target = self._open_level if command is state.FaderCommand.OPEN else dm7.MINUS_INF
-        self._log.record(
+        self._record(
             COMMANDED,
             data={
                 "level": self._console.commanded_level,
@@ -191,7 +194,7 @@ class App:
         why line already says what to do.
         """
         self.machine = state.step(self.machine, state.Event(state.Command.MOVE_FAILED)).machine
-        self._log.record(
+        self._record(
             MOVE_FAILED,
             data={
                 "level": self._console.commanded_level,
@@ -296,7 +299,7 @@ class App:
 
     # -- annotation -------------------------------------------------------
 
-    async def annotate(self, event_key: str, *, data: Mapping[str, Any] | None = None) -> ann.Entry:
+    async def annotate(self, event_key: str, *, data: Mapping[str, Any] | None = None) -> ann.Entry | None:
         """Record what the operator saw, and act on it when it says to.
 
         The fader buttons do both. Asking for the move and the reason as two
@@ -304,6 +307,9 @@ class App:
         night got busy - and it is the half nothing else can recover, since
         design.md 9 reconstructs the moves themselves from the post-DCA
         reference channel.
+
+        Returns None when the entry did not reach the disk. The move has still
+        happened, and the snapshot's `log` says why the entry did not.
         """
         event = ann.lookup(event_key)
         if event.action is not None:
@@ -317,19 +323,53 @@ class App:
         # Recorded whatever the machine did with it, including a refusal: the
         # operator saw what they saw, and a log that only kept the accepted
         # taps would misrepresent the night.
-        entry = self._log.record(event_key, data=data, project_seconds=self._playhead())
+        entry = self._record(event_key, data=data, project_seconds=self._playhead())
         self._notify()
         return entry
 
-    async def start_span(self, event_key: str) -> str:
-        span_id = self._log.start_span(event_key, project_seconds=self._playhead())
+    async def start_span(self, event_key: str) -> str | None:
+        """The new span's id, or None when its start did not reach the disk -
+        in which case it is not open, and the button still offers to start it."""
+        span_id: str | None
+        try:
+            span_id = self._log.start_span(event_key, project_seconds=self._playhead())
+        except ann.WriteError:
+            span_id = None  # see _record
         self._notify()
         return span_id
 
-    async def end_span(self, span_id: str) -> ann.Entry:
-        entry = self._log.end_span(span_id, project_seconds=self._playhead())
+    async def end_span(self, span_id: str) -> ann.Entry | None:
+        """None when the end did not reach the disk. The span stays open, so
+        the button still offers to end it and the next tap saves the end."""
+        entry: ann.Entry | None
+        try:
+            entry = self._log.end_span(span_id, project_seconds=self._playhead())
+        except ann.WriteError:
+            entry = None  # see _record
         self._notify()
         return entry
+
+    def _record(
+        self,
+        event_key: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        project_seconds: float | None = None,
+    ) -> ann.Entry | None:
+        """Write one instant, or None if it did not reach the disk.
+
+        Every log write in the box goes through here or the two span methods,
+        and none of them lets a `WriteError` out. The failure has already been
+        counted on the log's health, which the snapshot carries to the page.
+        Raised out of a fader route it skipped the push after a move that had
+        happened; raised inside a fade it ended the task before FADE_COMPLETE
+        and left the machine in RELEASING. The fader, the machine and the page
+        all carry on.
+        """
+        try:
+            return self._log.record(event_key, data=data, project_seconds=project_seconds)
+        except ann.WriteError:
+            return None
 
     def _playhead(self) -> float | None:
         """Reaper's project position, or None when it cannot be trusted.
@@ -379,13 +419,21 @@ class App:
             self._notify()
             return
         if self._recorder is not None:
-            self._recorder.start_recording()
+            try:
+                self._recorder.start_recording()
+            except TransportError as exc:
+                # Nothing reached Reaper, so there is no start to log and
+                # nothing a second tap could stop: the button stays live.
+                self._last_refusal = RECORD_SEND_FAILED.format(error=exc)
+                self._refused_recording = False
+                self._notify()
+                return
         # Deliberately not stamped with a playhead. The command has just gone
         # out and Reaper has not begun rolling, so whatever position it last
         # reported is where the transport was parked, not where this recording
         # starts. The anchor is the one entry whose position is genuinely not
         # known yet, and guessing it would misplace everything measured from it.
-        self._log.record(RECORDING_STARTED)
+        self._record(RECORDING_STARTED)
         self._last_refusal = None
         self._refused_recording = False
         self._notify()
@@ -462,7 +510,9 @@ class App:
             # Each names its event, so the page matches a button to its span
             # without parsing an id (see AnnotationLog.open_spans).
             "open_spans": [{"span_id": span_id, "event": event} for span_id, event in self._log.open_spans().items()],
-            "log": str(self._log.path),
+            "log": {"path": str(self._log.path), **_health(self._log.health)},
+            # Only the live markers. They can be rebuilt from the log afterwards.
+            "mirror": _health(self._log.mirror_health),
         }
 
     # -- change notification ----------------------------------------------
@@ -473,6 +523,10 @@ class App:
     def _notify(self) -> None:
         for listener in self._listeners:
             listener()
+
+
+def _health(health: ann.WriteHealth) -> dict[str, Any]:
+    return {"healthy": health.healthy, "error": health.error, "failures": health.failures}
 
 
 def _finite(value: float) -> float | None:

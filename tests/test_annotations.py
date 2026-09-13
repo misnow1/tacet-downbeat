@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from tacet import annotations as ann
+from tests.disk import Disk, no_space
 
 
 class FakeClock:
@@ -403,6 +404,116 @@ class TestReopeningATornLog(LogTestCase):
             self.assertIsNone(log.repair)
         self.assertEqual(self.path.read_bytes(), before)
         self.assertFalse(self.path.with_name(self.path.name + ann.TORN_SUFFIX).exists())
+
+
+class TestAFailingDisk(LogTestCase):
+    """A disk that fills in the third quarter. The write fails; the box must
+    say so, must not glue the next entry onto whatever part of the line landed,
+    and must start saving again once there is room."""
+
+    def setUp(self):
+        super().setUp()
+        self.disk = Disk()
+
+    def log(self, mirror=None):
+        return ann.AnnotationLog(self.path, clock=self.clock, opener=self.disk.open, mirror=mirror)
+
+    def test_a_failed_write_raises_a_write_error(self):
+        with self.log() as log:
+            self.disk.full = True
+            with self.assertRaises(ann.WriteError) as caught:
+                log.record("note", data={"text": "lost"})
+        self.assertIn("No space left on device", str(caught.exception))
+
+    def test_a_failed_write_is_on_the_log_health_and_stays_counted(self):
+        with self.log() as log:
+            self.assertTrue(log.health.healthy)
+            self.disk.full = True
+            with self.assertRaises(ann.WriteError):
+                log.record("note")
+            self.assertFalse(log.health.healthy)
+            self.assertIn("No space left on device", log.health.error)
+            self.disk.full = False
+            log.record("note")
+            # Saving again, and says so; the entry it cost is still counted.
+            self.assertTrue(log.health.healthy)
+            self.assertEqual(log.health.failures, 1)
+
+    def test_the_next_entry_is_not_glued_onto_a_torn_write(self):
+        # The in-run version of #26: the handle stays open after a failure, so
+        # the next line would land straight after the fragment.
+        with self.log() as log:
+            log.record("note", data={"text": "kept"})
+            self.disk.full = self.disk.tears = True
+            with self.assertRaises(ann.WriteError):
+                log.record("note", data={"text": "torn"})
+            self.disk.full = False
+            log.record("note", data={"text": "after"})
+        texts = [entry.data["text"] for entry in ann.read_entries(self.path)]
+        self.assertEqual(texts, ["kept", "after"])
+        # Set aside, never deleted.
+        self.assertIn("torn", ann.set_aside_path(self.path).read_text())
+
+    def test_a_log_file_that_went_away_is_not_recreated(self):
+        # A fresh empty log where the game's log was would take the rest of the
+        # night's entries somewhere nobody would look, and look healthy doing it.
+        with self.log() as log:
+            log.record("note")
+            self.disk.full = True
+            with self.assertRaises(ann.WriteError):
+                log.record("note")
+            self.disk.full = False
+            self.path.unlink()
+            with self.assertRaises(ann.WriteError):
+                log.record("note")
+            self.assertFalse(self.path.exists())
+            self.assertFalse(log.health.healthy)
+
+    def test_a_span_whose_start_was_not_saved_is_not_open(self):
+        with self.log() as log:
+            self.disk.full = True
+            with self.assertRaises(ann.WriteError):
+                log.start_span("q3")
+            self.assertEqual(len(log.open_spans()), 0)
+
+    def test_a_span_whose_end_was_not_saved_is_still_open(self):
+        # So the button still reads (end), and tapping it again saves the end.
+        with self.log() as log:
+            span = log.start_span("q3")
+            self.disk.full = True
+            with self.assertRaises(ann.WriteError):
+                log.end_span(span)
+            self.assertIn(span, log.open_spans())
+            self.disk.full = False
+            log.end_span(span)
+            self.assertNotIn(span, log.open_spans())
+
+    def test_a_failing_mirror_does_not_cost_the_log_entry(self):
+        # The queue is a regenerable view of the log. Its failure must neither
+        # stop the entry being written nor fail the write that did land.
+        class BrokenMirror:
+            def append(self, entry):
+                raise no_space()
+
+        with self.log(mirror=BrokenMirror()) as log:
+            entry = log.record("note", data={"text": "kept"})
+            self.assertTrue(log.health.healthy)
+            self.assertFalse(log.mirror_health.healthy)
+            self.assertIn("No space left on device", log.mirror_health.error)
+        self.assertEqual([e.seq for e in ann.read_entries(self.path)], [entry.seq])
+
+    def test_a_mirror_is_not_written_an_entry_the_log_failed_to_save(self):
+        written = []
+
+        class Mirror:
+            def append(self, entry):
+                written.append(entry.event)
+
+        with self.log(mirror=Mirror()) as log:
+            self.disk.full = True
+            with self.assertRaises(ann.WriteError):
+                log.record("note")
+        self.assertEqual(written, [])
 
 
 class TestPriorAnchorIsNoticed(LogTestCase):

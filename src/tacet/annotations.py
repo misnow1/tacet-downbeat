@@ -18,10 +18,12 @@ mid-game would otherwise corrupt every interval that spans it.
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import json
 import os
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -55,6 +57,12 @@ class EventKindError(AnnotationError):
 
 class UnknownSpanError(AnnotationError):
     """A span id that was never opened, or has already been closed."""
+
+
+class WriteError(AnnotationError):
+    """A line that did not reach the disk: a full disk, a mount that dropped, a
+    permission. Raised, never swallowed, and counted on the writer's
+    `WriteHealth` so the page can say so."""
 
 
 class CorruptLogError(AnnotationError):
@@ -429,6 +437,134 @@ def _append_bytes(path: Path, data: bytes, *, fsync: bool) -> None:
             os.fsync(handle.fileno())
 
 
+class LineHandle(Protocol):
+    """The part of an open text file that appending lines needs."""
+
+    def write(self, text: str, /) -> int: ...
+
+    def flush(self) -> None: ...
+
+    def fileno(self) -> int: ...
+
+    def close(self) -> None: ...
+
+
+Opener = Callable[[Path], LineHandle]
+
+
+def open_for_append(path: Path) -> LineHandle:
+    return path.open("a", encoding=_ENCODING, newline=_LINE_TERMINATOR)
+
+
+@dataclass
+class WriteHealth:
+    """How a file's writes are going.
+
+    `error` is why the last write failed, and clears when one succeeds.
+    `failures` counts every failed write this run and never clears: the
+    entries those cost are gone whether or not the disk has recovered since.
+    """
+
+    error: str | None = None
+    failures: int = 0
+
+    @property
+    def healthy(self) -> bool:
+        return self.error is None
+
+    def failed(self, error: str) -> None:
+        self.error = error
+        self.failures += 1
+
+    def succeeded(self) -> None:
+        self.error = None
+
+
+class AppendFile:
+    """Lines appended to a file, each flushed and fsynced before the next, that
+    survives a write failing partway.
+
+    A failed write can leave part of a line on disk with the handle still open,
+    so the next line would be glued onto the fragment within the same run - the
+    in-run version of the torn end `repair_torn_tail` deals with at open (#26).
+    So a failure abandons the handle, and the next append repairs the end of the
+    file and reopens it before writing. The repair then keeps nothing
+    unterminated, since the caller was told that write failed; a write whose
+    line landed whole and only its fsync failed stays, because it is complete.
+
+    A file that has gone away is not recreated. An empty file where the game's
+    log was - on a mount that dropped, say - would take the rest of the night's
+    entries somewhere nobody would look, and look healthy doing it.
+    """
+
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        keep_entries: bool,
+        fsync: bool = True,
+        opener: Opener = open_for_append,
+    ) -> None:
+        self.path = Path(path)
+        self._keep_entries = keep_entries
+        self._fsync = fsync
+        self._opener = opener
+        self._handle: LineHandle | None = None
+        #: Opened, then a write failed. Still open as far as callers are
+        #: concerned; the handle is reopened by the next append.
+        self._broken = False
+
+    @property
+    def is_open(self) -> bool:
+        return self._handle is not None or self._broken
+
+    def open(self) -> Repair | None:
+        """Repair a torn end left by a previous run, then open for appending."""
+        repair = repair_torn_tail(self.path, keep_entries=self._keep_entries, fsync=self._fsync)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._opener(self.path)
+        self._broken = False
+        return repair
+
+    def close(self) -> None:
+        handle, self._handle = self._handle, None
+        self._broken = False
+        if handle is not None:
+            handle.close()
+
+    def append_line(self, line: str) -> None:
+        """Write one line and its terminator, or raise `WriteError`."""
+        if not self.is_open:
+            raise AnnotationError(f"{self.path.name} is not open")
+        try:
+            handle = self._handle if self._handle is not None else self._reopen()
+            handle.write(line + _LINE_TERMINATOR)
+            handle.flush()
+            if self._fsync:
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            self._abandon()
+            raise WriteError(f"could not write {self.path.name}: {exc.strerror or exc}") from exc
+
+    def _reopen(self) -> LineHandle:
+        if not self.path.exists():
+            raise FileNotFoundError(errno.ENOENT, "it has gone away, and is not recreated", str(self.path))
+        repair_torn_tail(self.path, keep_entries=False, fsync=self._fsync)
+        self._handle = self._opener(self.path)
+        self._broken = False
+        return self._handle
+
+    def _abandon(self) -> None:
+        handle, self._handle = self._handle, None
+        self._broken = True
+        if handle is not None:
+            # Closing flushes whatever the failed write left buffered, which
+            # fails the same way on a full disk. The repair on reopen is what
+            # deals with anything it does manage to land.
+            with contextlib.suppress(OSError):
+                handle.close()
+
+
 class AnnotationLog:
     """Append-only JSONL. One entry per line, flushed and fsynced as written."""
 
@@ -439,12 +575,20 @@ class AnnotationLog:
         clock: Clock | None = None,
         fsync: bool = True,
         mirror: EntrySink | None = None,
+        opener: Opener = open_for_append,
     ) -> None:
         self.path = Path(path)
         self._clock: Clock = clock if clock is not None else SystemClock()
         self._fsync = fsync
         self._mirror = mirror
-        self._handle: Any = None
+        self._file = AppendFile(self.path, keep_entries=True, fsync=fsync, opener=opener)
+        #: Whether entries are reaching the disk. Shown on the page: an
+        #: annotation that is not saved is gone, and the operator is the only
+        #: one who can do anything about it.
+        self.health = WriteHealth()
+        #: Whether the mirror is taking its copies. Only ever affects the live
+        #: markers, which can be rebuilt from the log.
+        self.mirror_health = WriteHealth()
         self._seq = 0
         self._open_spans: dict[str, Entry] = {}
         #: The first `recording-started` already in the file when it was opened,
@@ -459,11 +603,14 @@ class AnnotationLog:
     # -- lifecycle --------------------------------------------------------
 
     def open(self) -> Self:
-        # Before resuming, so the entries counted are the entries appended after.
-        self.repair = repair_torn_tail(self.path, keep_entries=True, fsync=self._fsync)
-        self._resume()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a", encoding=_ENCODING, newline=_LINE_TERMINATOR)
+        # The repair comes before resuming, so the entries counted are the
+        # entries appended after.
+        self.repair = self._file.open()
+        try:
+            self._resume()
+        except BaseException:
+            self._file.close()
+            raise
         return self
 
     def _resume(self) -> None:
@@ -482,9 +629,7 @@ class AnnotationLog:
                 self._open_spans.pop(entry.span_id, None)
 
     def close(self) -> None:
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
+        self._file.close()
 
     def __enter__(self) -> Self:
         return self.open()
@@ -536,16 +681,20 @@ class AnnotationLog:
         data: Mapping[str, Any] | None = None,
         project_seconds: float | None = None,
     ) -> Entry:
-        start = self._open_spans.pop(span_id, None)
+        start = self._open_spans.get(span_id)
         if start is None:
             raise UnknownSpanError(f"no open span with id {span_id!r}")
-        return self._append(
+        entry = self._append(
             lookup(start.event),
             data=data,
             phase=PHASE_END,
             span_id=span_id,
             project_seconds=project_seconds,
         )
+        # Only once the end is on disk, so an end that was not saved leaves the
+        # span open and the next tap saves it.
+        del self._open_spans[span_id]
+        return entry
 
     def open_spans(self) -> dict[str, str]:
         """Span ids still awaiting an end, each mapped to its event key. A game
@@ -566,7 +715,7 @@ class AnnotationLog:
         span_id: str | None = None,
         project_seconds: float | None = None,
     ) -> Entry:
-        if self._handle is None:
+        if not self._file.is_open:
             raise AnnotationError("log is not open")
         self._seq += 1
         entry = Entry.build(
@@ -578,15 +727,32 @@ class AnnotationLog:
             span_id=span_id,
             project_seconds=project_seconds,
         )
-        self._handle.write(entry.to_json() + _LINE_TERMINATOR)
-        self._handle.flush()
-        if self._fsync:
-            os.fsync(self._handle.fileno())
-        # Mirrored from the one place an entry is written, so the two files
-        # cannot drift. The mirror is regenerable if it is lost.
-        if self._mirror is not None:
-            self._mirror.append(entry)
+        try:
+            self._file.append_line(entry.to_json())
+        except WriteError as exc:
+            # The sequence number stays spent: a gap in the log marks where an
+            # entry was lost.
+            self.health.failed(str(exc))
+            raise
+        self.health.succeeded()
+        self._mirror_entry(entry)
         return entry
+
+    def _mirror_entry(self, entry: Entry) -> None:
+        """Mirrored from the one place an entry is written, so the two files
+        cannot drift, and only once the entry is saved.
+
+        A mirror failure is recorded and goes no further. The queue is a view
+        the log can regenerate; failing the write that did land would invite a
+        second tap, and a duplicate entry in the one file that matters."""
+        if self._mirror is None:
+            return
+        try:
+            self._mirror.append(entry)
+        except (OSError, AnnotationError) as exc:
+            self.mirror_health.failed(str(exc))
+            return
+        self.mirror_health.succeeded()
 
 
 def find_prior_anchor(path: Path | str) -> Entry | None:
