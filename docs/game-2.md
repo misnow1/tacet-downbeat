@@ -1,4 +1,7 @@
-# Game 1
+# Game 2
+
+Second home game of 2026, and the first with the operator page. Home game 1 was
+2026-09-05. The plan below is tracked as issues in the `Game 3` milestone.
 
 Saturday, September 12
 Virginia Tech vs. ODU
@@ -21,7 +24,7 @@ Log File: "/Users/misnow1/games/2026-09-13.jsonl"
 A structured interview held after the game, run against the log, the Reaper
 project and the audio. It has two halves: **what the capture actually contains**
 (so later analysis does not trust the wrong parts of it), and **what changes
-before game 2**. Nothing below has been built yet; this is the agreed plan.
+before game 3**. Nothing below has been built yet; this is the agreed plan.
 
 All times are EDT. The log itself is stamped in UTC (EDT + 4 h).
 
@@ -111,7 +114,7 @@ announcer on `Spare 2` confirms it after the fact.
 **Transcription** of `Spare 2` from 13:06 onward, run once locally (not a cloud
 API) to find unannotated events. Proposed entries need the operator's approval.
 It cannot see pregame or Q1, which predate the repatch. It becomes a repo tool
-only if game 2 shows it is worth keeping.
+only if game 3 shows it is worth keeping.
 
 ## Filing
 
@@ -123,7 +126,7 @@ only if game 2 shows it is worth keeping.
 3. Point this document at the NAS copy.
 4. Keep the laptop copy until the NAS copy has been opened in Reaper once.
 
-## Before game 2 (about 2026-10-03)
+## Before game 3 (Friday 2026-10-02)
 
 ### Capture: patch list
 
@@ -171,7 +174,7 @@ In rough order of priority. Issue numbers are existing GitHub issues.
   approximate by design.
 - **Stale fader taps are refused**: logged with their true time and a
   `stale, not executed` flag, shown loudly on the page. The threshold is
-  generous (seconds) and set from game 2's measured delays. Annotation-only taps
+  generous (seconds) and set from game 3's measured delays. Annotation-only taps
   are never refused.
 
 ### Handing off to StageMix
@@ -194,7 +197,7 @@ below -30 dB where nothing is audible under a crowd. Instead, a tapered curve:
 fast through the bottom, slow through the top (for example, reach -20 dB in the
 first 15% of the time, then linear in dB), as named constants in the pure
 `ramp_steps`. Those numbers are a guess, to be fitted against hand rides
-captured on game 2's reference channel. Closes are unchanged.
+captured on game 3's reference channel. Closes are unchanged.
 
 ### Pre-opening on a score
 
@@ -263,7 +266,7 @@ out: a mis-tap would disable the fader buttons mid-drive.
 The band sometimes plays over program deliberately, so a hard interlock would
 block real events and is out. Now: display and log only. Goal: context, not
 gate, like RTD, with operator taps always going through. First, measure from
-game 1's audio how DJ and band actually overlap. `DJ TMMPO` is a clean direct
+game 2's audio how DJ and band actually overlap. `DJ TMMPO` is a clean direct
 feed, so its level is trustworthy in a way the band mics' is not.
 
 ## Design amendments
