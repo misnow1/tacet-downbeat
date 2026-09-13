@@ -17,7 +17,8 @@ import asyncio
 import contextlib
 import json
 import time
-from collections.abc import Callable, Mapping
+import traceback
+from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,17 @@ from .app import App
 #: animate a number nobody reads at that resolution. Everything that is not the
 #: playhead still goes out immediately.
 POSITION_BROADCAST_INTERVAL = 1.0
+
+#: How often the box re-reads its own state and pushes it if anything changed.
+#:
+#: Snapshots are otherwise pushed only when something happens - a packet, a
+#: tap, a fade step - and some faults are the absence of anything happening.
+#: Reaper dying mid-recording stops its packets, and with them every push, so
+#: the page showed ROLLING, tagged confirmed, indefinitely. This bounds how
+#: long a fault that is a silence takes to reach the screen, on top of the
+#: silence it takes to be one (`reaper.DEFAULT_FEEDBACK_TIMEOUT`). Most ticks
+#: find nothing new and `should_broadcast` sends nothing.
+TICK_INTERVAL = 1.0
 
 #: How often the box says "still here" on a socket it has nothing to report on.
 #:
@@ -83,9 +95,14 @@ def should_broadcast(
     Only the playhead is ever held back. A fader move, a state change or a lost
     recorder goes out at once regardless of the interval: a missed downbeat is
     unrecoverable, and CLAUDE.md wants faults visible, not averaged.
+
+    A snapshot identical to the last one sent never goes out: the state tick
+    asks every second, and the page already has it.
     """
     if previous is None:
         return True
+    if previous == current:
+        return False
     if _without_position(previous) != _without_position(current):
         return True
     return elapsed >= interval
@@ -125,6 +142,10 @@ class _Hub:
 
 
 _HUB = web.AppKey("tacet_hub", _Hub)
+
+#: Configuration for the same reason as the keepalive below: so a test can
+#: watch the tick notice a silence without waiting seconds for it.
+_TICK = web.AppKey("tacet_tick_interval", float)
 
 #: Configuration rather than a constant, so a link that wants a different
 #: cadence can have one without the number being edited into the source - and so
@@ -226,6 +247,28 @@ async def _keepalive(socket: web.WebSocketResponse, *, interval: float = KEEPALI
         await _send(socket, KEEPALIVE_FRAME)
 
 
+async def _tick(hub: _Hub, *, interval: float = TICK_INTERVAL) -> None:
+    """Re-read the state on a clock, so a fault that is a silence still reaches
+    the page. The first read is immediate, so the hub knows what the page is
+    shown on connect and the first tick after it does not resend that."""
+    while True:
+        # A tick that died would leave everything else looking healthy and put
+        # the frozen ROLLING straight back, so one bad read does not end it.
+        try:
+            hub.broadcast()
+        except Exception:
+            traceback.print_exc()
+        await asyncio.sleep(interval)
+
+
+async def _ticking(server: web.Application) -> AsyncIterator[None]:
+    ticker = asyncio.ensure_future(_tick(server[_HUB], interval=server[_TICK]))
+    yield
+    ticker.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await ticker
+
+
 async def _websocket(request: web.Request) -> web.WebSocketResponse:
     socket = web.WebSocketResponse(heartbeat=WS_PING_INTERVAL)
     await socket.prepare(request)
@@ -270,11 +313,18 @@ async def _close_sockets(server: web.Application) -> None:
             await socket.close(code=WSCloseCode.GOING_AWAY, message=b"box stopping")
 
 
-def create_app(app: App, *, keepalive_interval: float = KEEPALIVE_INTERVAL) -> web.Application:
+def create_app(
+    app: App,
+    *,
+    keepalive_interval: float = KEEPALIVE_INTERVAL,
+    tick_interval: float = TICK_INTERVAL,
+) -> web.Application:
     server = web.Application()
     hub = _Hub(app)
     server[_HUB] = hub
     server[_KEEPALIVE] = keepalive_interval
+    server[_TICK] = tick_interval
+    server.cleanup_ctx.append(_ticking)
     server.on_shutdown.append(_close_sockets)
     app.on_change(hub.broadcast)
 

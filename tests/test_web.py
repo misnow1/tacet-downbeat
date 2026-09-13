@@ -1,7 +1,11 @@
+import asyncio
+import io
 import json
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from aiohttp import WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase
@@ -23,7 +27,7 @@ class WebTestCase(AioHTTPTestCase):
     async def get_application(self):
         return web.create_app(self.build_app())
 
-    def build_app(self):
+    def build_app(self, monotonic=time.monotonic):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
@@ -34,8 +38,9 @@ class WebTestCase(AioHTTPTestCase):
         self.tacet = tacet_app.App(
             console=dm7.Dm7Client("192.0.2.1", dca=3, sender=self.console_sender, tick_hz=200.0),
             log=self.log,
-            recorder=reaper.ReaperClient(sender=FakeSender()),
+            recorder=reaper.ReaperClient(sender=FakeSender(), monotonic=monotonic),
             fade_seconds=0.05,
+            monotonic=monotonic,
         )
         return self.tacet
 
@@ -212,6 +217,78 @@ class TestKeepaliveRepeats(WebTestCase):
                 self.assertTrue(frame["keepalive"])
 
 
+class TestStateTick(WebTestCase):
+    """Some faults are a silence, and a silence sends nothing to push on.
+
+    Reaper crashing mid-recording stops its packets, so nothing called
+    `broadcast` and the page went on showing ROLLING, tagged confirmed, for as
+    long as anyone cared to look - while `/api/state` said LINK LOST. The
+    keepalive kept the link pulse green the whole time, correctly: the link to
+    the box was fine. So the box re-reads its own state on a tick.
+    """
+
+    TICK = 0.01
+    #: Generous next to the tick, and still well short of a keepalive, so
+    #: anything that arrives in the window is a snapshot.
+    WAIT = 1.0
+
+    async def get_application(self):
+        self.clock = [1000.0]
+        app = self.build_app(monotonic=lambda: self.clock[0])
+        return web.create_app(app, tick_interval=self.TICK)
+
+    async def snapshots(self, socket):
+        """The next snapshot, skipping keepalives."""
+        while True:
+            frame = json.loads((await socket.receive(timeout=self.WAIT)).data)
+            if not frame.get("keepalive"):
+                return frame
+
+    async def test_reaper_going_silent_is_pushed_to_the_page(self):
+        async with self.client.ws_connect("/ws") as socket:
+            await self.snapshots(socket)  # the initial snapshot
+            self.tacet.handle_recorder_packet(osc.encode_message("/record", 1.0))
+            rolling = (await self.snapshots(socket))["recording"]
+            self.assertEqual((rolling["recording"], rolling["liveness"]), (True, "live"))
+
+            self.clock[0] += 60.0  # the /time stream should have been arriving
+            # Nothing is sent to the box. The page has to find out anyway.
+            lost = (await self.snapshots(socket))["recording"]
+            self.assertEqual(lost["liveness"], "lost")
+            self.assertFalse(lost["confirmed"])
+
+    async def test_a_tick_that_finds_nothing_new_sends_nothing(self):
+        async with self.client.ws_connect("/ws") as socket:
+            await self.snapshots(socket)  # the initial snapshot
+            with self.assertRaises(asyncio.TimeoutError):
+                await self.snapshots(socket)
+
+    async def test_the_tick_outlives_a_snapshot_that_fails(self):
+        # A tick that died quietly would put this bug straight back, with
+        # nothing on any screen to say so.
+        real = self.tacet.snapshot
+        failures = [RuntimeError("boom")]
+
+        def flaky():
+            if failures:
+                raise failures.pop()
+            return real()
+
+        async with self.client.ws_connect("/ws") as socket:
+            await self.snapshots(socket)  # the initial snapshot
+            self.tacet.handle_recorder_packet(osc.encode_message("/record", 1.0))
+            await self.snapshots(socket)  # rolling
+            with (
+                mock.patch.object(self.tacet, "snapshot", side_effect=flaky),
+                mock.patch("sys.stderr", new_callable=io.StringIO) as terminal,
+            ):
+                self.clock[0] += 60.0
+                lost = (await self.snapshots(socket))["recording"]
+            self.assertEqual(lost["liveness"], "lost")
+            # Survived, but not swallowed: whoever is at the terminal sees it.
+            self.assertIn("boom", terminal.getvalue())
+
+
 class TestStaleThreshold(unittest.TestCase):
     def test_it_survives_a_lost_keepalive(self):
         # One frame lost on a bad link is not a fault. Were the threshold at or
@@ -334,6 +411,13 @@ class TestBroadcastThrottle(unittest.TestCase):
     def test_an_identical_snapshot_still_waits(self):
         snapshot = self.app.snapshot()
         self.assertFalse(web.should_broadcast(snapshot, snapshot, elapsed=0.1, interval=1.0))
+
+    def test_an_identical_snapshot_never_goes_out(self):
+        # The box re-reads its state on a tick so a silence can be noticed, and
+        # most ticks find nothing new. Resending those would push the whole
+        # snapshot at every browser every second for three hours to say nothing.
+        snapshot = self.app.snapshot()
+        self.assertFalse(web.should_broadcast(snapshot, snapshot, elapsed=3600.0, interval=1.0))
 
 
 class TestEveryFaderActionIsColoured(unittest.TestCase):
