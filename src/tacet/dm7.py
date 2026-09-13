@@ -17,7 +17,6 @@ operator; see CLAUDE.md on not moving the fader autonomously before Phase 2.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from collections.abc import Callable, Iterable, Iterator
 
@@ -282,10 +281,18 @@ class Dm7Client:
                 quantized=self.quantized,
             )
         )
-        self._ramp = asyncio.ensure_future(self._drive(steps))
-        # A newer move superseding this one is normal, not a fault.
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._ramp
+        ramp = asyncio.ensure_future(self._drive(steps))
+        self._ramp = ramp
+        try:
+            await ramp
+        except asyncio.CancelledError:
+            # A newer move superseding this one cancels the ramp, and that is
+            # normal, not a fault. A cancel aimed at whoever awaited this move
+            # is not the same thing and has to reach them: swallowed, a
+            # cancelled fade carried on as though it had finished (#34).
+            caller = asyncio.current_task()
+            if caller is not None and caller.cancelling():
+                raise
 
     async def _drive(self, steps: Iterable[tuple[float, int]]) -> None:
         started = self._monotonic()
