@@ -2,7 +2,7 @@
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: help venv install lint fmt typecheck test test-lua test-js check hooks clean
+.PHONY: help venv install lint fmt typecheck test test-lua test-js snapshots check hooks clean
 
 help:  ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -40,6 +40,9 @@ test-js:  ## Run the browser script tests, if node is available
 	else \
 		echo "skipping: no node interpreter (brew install node / apt install nodejs)"; \
 	fi
+
+snapshots:  ## Rewrite the page's snapshot fixtures from App; review the diff
+	$(PY) -m tests.snapshots
 
 check: lint typecheck test test-lua test-js  ## Everything CI runs
 	$(VENV)/bin/ruff format --check .

@@ -6,7 +6,7 @@
 //
 //     node tests/test_app_js.mjs      (or: make test-js)
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
@@ -106,38 +106,47 @@ function browser() {
   return { context, nodes, created, sockets, posted };
 }
 
-function snapshot(recording = {}, fader = {}, buttons = [], openSpans = []) {
-  return {
-    state: "standing-down",
-    why: "Standing down.",
-    refusal: null,
-    detector_enabled: false,
-    fader: {
-      commanded: -32768,
-      db: null,
-      confirmed: false,
-      healthy: true,
-      error: null,
-      target: null,
-      target_db: null,
-      moving: false,
-      ...fader,
-    },
-    recording: {
-      known: false,
-      recording: false,
-      position: null,
-      confirmed: false,
-      liveness: "unknown",
-      can_start: true,
-      healthy: true,
-      ...recording,
-    },
-    buttons,
-    open_spans: openSpans,
-    log: { path: "/games/game.jsonl", healthy: true, error: null, failures: 0 },
-    mirror: { healthy: true, error: null, failures: 0 },
-  };
+// -- snapshots --------------------------------------------------------------
+
+// Written by the box itself: tests/snapshots.py runs the real App into a
+// handful of states, and tests/test_snapshot_fixtures.py fails when App no
+// longer produces them. These tests used to build a snapshot by hand, and the
+// copy drifted from what the box sends without either suite noticing (#38).
+const FIXTURES = join(here, "fixtures");
+const PREFIX = "snapshot-";
+const SUFFIX = ".json";
+const SNAPSHOTS = Object.fromEntries(
+  readdirSync(FIXTURES)
+    .filter((name) => name.startsWith(PREFIX) && name.endsWith(SUFFIX))
+    .map((name) => [
+      name.slice(PREFIX.length, -SUFFIX.length),
+      JSON.parse(readFileSync(join(FIXTURES, name), "utf8")),
+    ]),
+);
+
+// A copy of `base` with some fields changed. Only fields the box actually sends
+// may be: a change to one it does not describes a box that does not exist, and
+// that is exactly how the hand copy drifted.
+function overlay(base, changes, where) {
+  const result = structuredClone(base);
+  for (const [key, value] of Object.entries(changes)) {
+    if (!(key in base)) throw new Error(`${where}.${key} is not in the box's snapshot`);
+    result[key] = value;
+  }
+  return result;
+}
+
+// The box's standing-down snapshot, with the parts a test is about changed.
+function snapshot(recording = {}, fader = {}, buttons = undefined, openSpans = []) {
+  const base = SNAPSHOTS["standing-down"];
+  const snap = structuredClone(base);
+  snap.recording = overlay(base.recording, recording, "recording");
+  snap.fader = overlay(base.fader, fader, "fader");
+  if (buttons !== undefined) {
+    snap.buttons = buttons.map((button) => overlay(base.buttons[0], button, "buttons[]"));
+  }
+  snap.open_spans = openSpans;
+  return snap;
 }
 
 function rendered(recording = {}, fader = {}) {
@@ -340,6 +349,86 @@ check(
   rendered({}, { healthy: false, error: "no route to host" }).get("fader-error").textContent,
   "Console unreachable: no route to host",
 );
+
+// -- the box's own snapshots --------------------------------------------------
+
+// Each state the box wrote, rendered as it came. A change to the snapshot's
+// shape arrives here as a fixture diff, and these say whether the page still
+// reads it.
+check(
+  "the box wrote the snapshots these tests read",
+  Object.keys(SNAPSHOTS).sort(),
+  ["faults", "open-recording", "releasing", "standing-down"],
+);
+
+function renderedFixture(name) {
+  const { context, nodes, created } = browser();
+  let error = null;
+  try {
+    context.render(structuredClone(SNAPSHOTS[name]));
+  } catch (caught) {
+    error = String(caught);
+  }
+  const button = (key) => created.find((node) => node.tag === "button" && node.dataset.key === key);
+  return { nodes, error, button };
+}
+
+{
+  let refused = null;
+  try {
+    snapshot({}, { level_unknown: true });
+  } catch (caught) {
+    refused = String(caught);
+  }
+  check(
+    "a test cannot describe a field the box does not send",
+    refused,
+    "Error: fader.level_unknown is not in the box's snapshot",
+  );
+}
+
+for (const name of Object.keys(SNAPSHOTS)) {
+  const { nodes, error } = renderedFixture(name);
+  check(`${name}: renders without throwing`, error, null);
+  check(
+    `${name}: the headline is its state`,
+    nodes.get("state").textContent,
+    SNAPSHOTS[name].state.replace(/-/g, " ").toUpperCase(),
+  );
+}
+
+{
+  const { nodes, button } = renderedFixture("standing-down");
+  // Null dB is a closed fader, -inf, never a missing reading.
+  check("standing down: the closed fader reads -inf", nodes.get("level").textContent, "-\u221e dB");
+  check("standing down: an unheard Reaper is unknown", nodes.get("rec").textContent, "unknown");
+  check("standing down: and says so", nodes.get("rec-tag").textContent, "no feedback");
+  check("standing down: nothing is wrong with saving", nodes.get("saving").className, "");
+  check("standing down: the whole vocabulary is on screen", button("q1").textContent, "Q1 (start)");
+}
+
+{
+  const { nodes, button } = renderedFixture("open-recording");
+  check("open: unity", nodes.get("level").textContent, "0.00 dB");
+  check("open: rolling", nodes.get("rec").textContent, "ROLLING");
+  check("open: confirmed", nodes.get("rec-tag").textContent, "confirmed");
+  check("open: where", nodes.get("rec-pos").textContent, "at 0:12:34.500");
+  check("open: the record button will not be pressed twice", nodes.get("btn-record").disabled, true);
+  check("open: the open quarter offers to end", button("q2").textContent, "Q2 (end)");
+}
+
+{
+  const { nodes } = renderedFixture("releasing");
+  check("releasing: where it is and where it is going", nodes.get("level").textContent, "0.00 dB \u2192 -\u221e dB");
+}
+
+{
+  const { nodes } = renderedFixture("faults");
+  check("faults: the console", nodes.get("fader-error").textContent, "Console unreachable: no route to host");
+  check("faults: Reaper", nodes.get("rec-tag").textContent, "LINK LOST");
+  check("faults: the log", nodes.get("saving").className, "fault");
+  check("faults: the refusal is shown", nodes.get("refusal").style.display, "block");
+}
 
 // -- span buttons say which tap they are ------------------------------------
 
