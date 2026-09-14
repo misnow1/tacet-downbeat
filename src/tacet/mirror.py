@@ -21,12 +21,23 @@ test pins that the rebuilt file matches what was written live.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-from .annotations import AnnotationError, AppendFile, Entry, Opener, Repair, marker_name, open_for_append
+from .annotations import (
+    PHASE_END,
+    PHASE_START,
+    AnnotationError,
+    AppendFile,
+    Entry,
+    Opener,
+    Repair,
+    marker_name,
+    open_for_append,
+)
 
 DELIMITER = "\t"
 LINE_TERMINATOR = "\n"
@@ -35,6 +46,15 @@ LINE_TERMINATOR = "\n"
 ABSENT = "-"
 
 QUEUE_FIELDS = ("name", "phase", "span_id")
+
+#: What a name must look like: `CATEGORY|key`, as `annotations.marker_name`
+#: makes it. Checked on both sides - `reaper/tacet_mirror.lua` holds the same
+#: rule as a Lua pattern - so a fragment of a torn write with a whole line
+#: glued after it reads as the garbage it is, rather than as an event.
+NAME_PATTERN = re.compile(r"^[A-Z]+\|[a-z0-9-]+$")
+
+#: The phases a span line may carry. An instant carries `ABSENT` instead.
+PHASES = (PHASE_START, PHASE_END)
 
 
 class QueueFormatError(AnnotationError):
@@ -58,19 +78,34 @@ def _field(value: str | None) -> str:
 
 def queue_line(entry: Entry) -> str:
     """One entry as a queue line, without its terminator."""
-    return DELIMITER.join((_field(marker_name(entry)), _field(entry.phase), _field(entry.span_id)))
+    line = DELIMITER.join((_field(marker_name(entry)), _field(entry.phase), _field(entry.span_id)))
+    # Refused here, where the log can count it, rather than written for the
+    # Lua mirror to refuse where only Reaper's console would say so.
+    parse_queue_line(line)
+    return line
 
 
 def parse_queue_line(line: str) -> QueueItem:
+    """Read a queue line the way the Lua mirror does, and as strictly.
+
+    The contract between the two is `tests/fixtures/queue-*.tsv`, which this
+    side writes and `reaper/test_tacet_mirror.lua` replays.
+    """
     parts = line.rstrip(LINE_TERMINATOR).split(DELIMITER)
     if len(parts) != len(QUEUE_FIELDS):
         raise QueueFormatError(f"expected {len(QUEUE_FIELDS)} fields: {line!r}")
     name, phase, span_id = parts
-    return QueueItem(
-        name=name,
-        phase=None if phase == ABSENT else phase,
-        span_id=None if span_id == ABSENT else span_id,
-    )
+    if not NAME_PATTERN.match(name):
+        raise QueueFormatError(f"not a marker name: {name!r}")
+    if phase == ABSENT:
+        if span_id != ABSENT:
+            raise QueueFormatError(f"an instant carries no span id: {line!r}")
+        return QueueItem(name=name)
+    if phase not in PHASES:
+        raise QueueFormatError(f"unknown phase {phase!r}: {line!r}")
+    if span_id == ABSENT:
+        raise QueueFormatError(f"a span line needs its span id: {line!r}")
+    return QueueItem(name=name, phase=phase, span_id=span_id)
 
 
 def rebuild_queue(entries: Iterable[Entry]) -> str:

@@ -34,6 +34,13 @@ local KEY_OFFSET   = "queue_offset"
 local POLL_SECONDS = 0.25
 local DELIMITER    = "\t"
 local ABSENT       = "-"
+local FIELDS       = 3
+local PHASE_START  = "start"
+local PHASE_END    = "end"
+-- CATEGORY|key, the same rule as tacet.mirror.NAME_PATTERN. A fragment of a torn
+-- write with a whole line glued after it still has three fields; it does not
+-- have a name.
+local NAME_PATTERN = "^%u+|[%l%d%-]+$"
 
 -- Reaper's play state is a bitmask: 1 playing, 2 paused, 4 recording.
 local PLAYING   = 1
@@ -141,10 +148,34 @@ local function split(line)
   return fields
 end
 
+-- Why a line is not one the box writes, or nil if it is. As strict as
+-- tacet.mirror.parse_queue_line, and held to the same files: tests/fixtures/queue-*.
+local function malformed(fields)
+  if #fields ~= FIELDS then
+    return "expected " .. FIELDS .. " fields, got " .. #fields
+  end
+  local name, phase, span_id = fields[1], fields[2], fields[3]
+  if not name:match(NAME_PATTERN) then
+    return "not a marker name"
+  end
+  if phase == ABSENT then
+    if span_id ~= ABSENT then return "an instant carries no span id" end
+    return nil
+  end
+  if phase ~= PHASE_START and phase ~= PHASE_END then
+    return "unknown phase '" .. phase .. "'"
+  end
+  if span_id == ABSENT then
+    return "a span line needs its span id"
+  end
+  return nil
+end
+
 local function handle(line)
   local fields = split(line)
-  if #fields < 3 then
-    log("ignoring malformed queue line: " .. line)
+  local why = malformed(fields)
+  if why ~= nil then
+    log("ignoring malformed queue line (" .. why .. "): " .. line)
     return
   end
 
@@ -156,26 +187,22 @@ local function handle(line)
     return
   end
 
-  if phase == "start" then
+  if phase == PHASE_START then
     open_spans[span_id] = position
     return
   end
 
-  if phase == "end" then
-    local started = open_spans[span_id]
-    if started == nil then
-      -- The script started mid-span, so the region has no beginning. Say so and
-      -- leave a marker rather than silently dropping the event.
-      log("no start for span " .. span_id .. "; placing a marker instead")
-      add_marker(name .. " (end)", position)
-      return
-    end
-    open_spans[span_id] = nil
-    add_region(name, started, position)
+  -- PHASE_END: `malformed` has refused every other phase.
+  local started = open_spans[span_id]
+  if started == nil then
+    -- The script started mid-span, so the region has no beginning. Say so and
+    -- leave a marker rather than silently dropping the event.
+    log("no start for span " .. span_id .. "; placing a marker instead")
+    add_marker(name .. " (end)", position)
     return
   end
-
-  log("unknown phase '" .. phase .. "' in: " .. line)
+  open_spans[span_id] = nil
+  add_region(name, started, position)
 end
 
 -- ---------------------------------------------------------------------------

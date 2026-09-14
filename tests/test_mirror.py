@@ -63,6 +63,47 @@ class TestQueueLine(unittest.TestCase):
         with self.assertRaises(mirror.QueueFormatError):
             mirror.parse_queue_line("only-one-field")
 
+    def test_a_long_line_is_refused(self):
+        # Two whole lines glued together, which is what appending after a torn
+        # write produced (#26). The Lua side used to accept three or more.
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.parse_queue_line("NOTE|note\t-\t-NOTE|note\t-\t-")
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.parse_queue_line("GAME|q1\tstart\tq1-2NOTE|note\t-\t-")
+
+    def test_a_name_glued_onto_a_fragment_is_refused(self):
+        # Three fields, but not a name: a fragment with a whole line after it.
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.parse_queue_line("FDR|up-whNOTE|note\t-\t-")
+
+    def test_an_unknown_phase_is_refused(self):
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.parse_queue_line("GAME|q1\tbegin\tq1-2")
+
+    def test_a_span_line_needs_its_id(self):
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.parse_queue_line("GAME|q1\tstart\t-")
+
+    def test_an_instant_carries_no_id(self):
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.parse_queue_line("NOTE|note\t-\tnote-3")
+
+    def test_the_phases_are_the_log_s_phases(self):
+        self.assertEqual(mirror.PHASES, (ann.PHASE_START, ann.PHASE_END))
+
+    def test_every_event_in_the_vocabulary_makes_a_queue_name(self):
+        # A key the name pattern refuses would be refused by the Lua mirror too.
+        for event in ann.VOCABULARY:
+            with self.subTest(key=event.key):
+                name = ann.marker_name(entry(event.key))
+                self.assertRegex(name, mirror.NAME_PATTERN)
+
+    def test_a_name_that_is_not_a_queue_name_is_refused_when_written(self):
+        bad = entry("note")
+        bad = ann.Entry(**{**bad.as_dict(), "event": "Note"})
+        with self.assertRaises(mirror.QueueFormatError):
+            mirror.queue_line(bad)
+
 
 class TestRebuild(unittest.TestCase):
     def test_regenerates_the_whole_queue_from_a_log(self):
