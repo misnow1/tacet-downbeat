@@ -40,9 +40,10 @@ receive_port = 9000         # --reaper-feedback-port -- Reaper's "device port"
 
 # Where the game is written down.
 [capture]
-# Per game, and the irreplaceable artefact. Usually passed as --log on the day
-# rather than left here, precisely because it changes every time.
-log = "~/games/2026-09-13.jsonl"
+# There is no `log` key. The log changes every game, so it is always passed as
+# --log ~/games/<YYYY-MM-DD>.jsonl on the command line, and a file still
+# carrying `log = ...` refuses to load.
+#
 # Stable, and must match the path the ReaScript watches. Mismatching this is the
 # single most common way to have everything look healthy and mirror nothing.
 queue = "~/Library/Application Support/REAPER/tacet/queue.tsv"

@@ -795,12 +795,7 @@ class AnnotationLog:
             self._seq = max(self._seq, entry.seq)
             if entry.event == ANCHOR_EVENT and self.prior_anchor is None:
                 self.prior_anchor = entry
-            if entry.span_id is None:
-                continue
-            if entry.phase == PHASE_START:
-                self._open_spans[entry.span_id] = entry
-            elif entry.phase == PHASE_END:
-                self._open_spans.pop(entry.span_id, None)
+            follow_span(self._open_spans, entry)
         if last is not None:
             self.clock_reset = clock_reset(last, now=self._clock.monotonic())
 
@@ -951,6 +946,35 @@ def find_prior_anchor(path: Path | str) -> Entry | None:
         if entry.event == ANCHOR_EVENT:
             return entry
     return None
+
+
+def follow_span(open_spans: dict[str, Entry], entry: Entry) -> None:
+    """Update `open_spans` (span id to its start) for one entry read in order.
+
+    The one rule for which spans a log leaves open, shared by resuming a log and
+    by reporting on one before it is opened, so the two cannot disagree.
+    """
+    if entry.span_id is None:
+        return
+    if entry.phase == PHASE_START:
+        open_spans[entry.span_id] = entry
+    elif entry.phase == PHASE_END:
+        open_spans.pop(entry.span_id, None)
+
+
+def find_open_spans(path: Path | str) -> list[Entry]:
+    """The start of every span a log leaves open, in the order they started.
+
+    Answered before the log is opened for writing, like `find_prior_anchor`.
+    Opening resumes these, which is right for a box restarted mid-quarter and
+    wrong-looking for a log meant to be fresh: last game's `q4` reads "(end)".
+    """
+    path = Path(path)
+    open_spans: dict[str, Entry] = {}
+    if path.exists():
+        for entry in read_entries(path):
+            follow_span(open_spans, entry)
+    return list(open_spans.values())
 
 
 def clock_reset(last: Entry, *, now: float) -> Entry | None:

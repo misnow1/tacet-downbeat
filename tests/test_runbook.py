@@ -12,7 +12,7 @@ and verbatim in the runbook. Renaming one without the other fails here.
 import unittest
 from pathlib import Path
 
-from tacet import serve
+from tacet import annotations, config, serve
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -90,6 +90,37 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
     def test_the_runbook_documents_the_reused_log_warning(self) -> None:
         # The warning is only useful if the table says what to do about it.
         self.assertIn("this log already contains a recording", self.runbook)
+
+    def test_the_runbook_documents_the_carried_over_spans_warning(self) -> None:
+        self.assertIn("still open from an earlier run", "\n".join(self._banner_with_an_open_span()))
+        self.assertIn("still open from an earlier run", self.runbook)
+
+    def _banner_with_an_open_span(self) -> list[str]:
+        event = annotations.lookup("q4")
+        span = annotations.Entry(
+            seq=1,
+            event=event.key,
+            category=str(event.category),
+            kind=str(event.kind),
+            label=event.label,
+            wall="2026-09-12T15:31:00+00:00",
+            monotonic=0.0,
+            span_id=annotations.span_id_for(event.key, 1),
+            phase=annotations.PHASE_START,
+        )
+        argv = ["--console-host", "10.0.0.5", "--dca", "3", "--log", "/games/g.jsonl"]
+        return serve.startup_lines(serve.parser().parse_args(argv), None, open_spans=[span])
+
+    def test_the_runbook_quotes_the_missing_log_refusal(self) -> None:
+        # Quoted up to the example, which the runbook writes out on its own.
+        self.assertIn(serve.LOG_REQUIRED.split(":")[0], self.runbook)
+
+    def test_the_runbook_quotes_the_retired_log_key_refusal(self) -> None:
+        stale = "capture.log is no longer a config key"
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"capture": {"log": "~/games/g.jsonl"}})
+        self.assertIn(stale, str(caught.exception))
+        self.assertIn(stale, self.runbook)
 
     def test_the_runbook_reproduces_the_checklist_steps(self) -> None:
         for phrase in ("before kickoff", "tacet_mirror.lua running in Reaper", "arm when the band is in the stands"):

@@ -55,7 +55,7 @@ class TestStopWarning(unittest.TestCase):
 FULL = [
     "--console-host", "10.0.0.5",
     "--dca", "3",
-    "--log", "/games/2026-09-13.jsonl",
+    "--log", "/games/game.jsonl",
     "--queue", "/queue/tacet.tsv",
     "--reaper-host", "127.0.0.1",
 ]  # fmt: skip
@@ -97,7 +97,7 @@ class TestStartupBannerSaysWhatItWasTold(unittest.TestCase):
 
     def test_it_names_the_log_and_the_queue(self):
         text = banner()
-        self.assertIn("/games/2026-09-13.jsonl", text)
+        self.assertIn("/games/game.jsonl", text)
         self.assertIn("/queue/tacet.tsv", text)
 
     def test_it_reports_the_fade(self):
@@ -289,32 +289,118 @@ class TestStartupBannerWarnsAboutAClockReset(unittest.TestCase):
         self.assertIn("2026-09-12T15:40:00+00:00", text)
 
 
-class TestAnUnreadableLogStopsTheBoxInWords(unittest.TestCase):
-    """Refused before anything binds, as a command-line error rather than a
-    page of traceback at whoever is standing there."""
+class TestStartupBannerWarnsAboutCarriedOverSpans(unittest.TestCase):
+    """Spans a previous run left open in this log (#20).
+
+    They are resumed, so their buttons read "(end)" - last game's `q4` still
+    running on the page of this one.
+    """
+
+    WALL = "2026-09-12T15:31:00+00:00"
+
+    def span(self, key, seq):
+        event = annotations.lookup(key)
+        return annotations.Entry(
+            seq=seq,
+            event=event.key,
+            category=str(event.category),
+            kind=str(event.kind),
+            label=event.label,
+            wall=self.WALL,
+            monotonic=0.0,
+            span_id=annotations.span_id_for(key, seq),
+            phase=annotations.PHASE_START,
+        )
+
+    def banner_with(self, *spans):
+        args = serve.parser().parse_args(FULL)
+        return "\n".join(serve.startup_lines(args, None, open_spans=list(spans)))
+
+    def test_a_log_with_nothing_open_gets_no_warning(self):
+        self.assertNotIn("still open", self.banner_with())
+
+    def test_an_open_span_is_called_out_by_name_and_start(self):
+        q4 = self.span("q4", 140)
+        text = self.banner_with(q4)
+        self.assertIn("WARNING", text)
+        self.assertIn("still open", text)
+        self.assertIn(q4.label, text)
+        self.assertIn(self.WALL, text)
+
+    def test_every_open_span_is_listed(self):
+        text = self.banner_with(self.span("q4", 140), self.span("halftime", 90))
+        self.assertIn(annotations.lookup("q4").label, text)
+        self.assertIn(annotations.lookup("halftime").label, text)
+
+    def test_it_says_what_the_page_will_show(self):
+        self.assertIn("(end)", self.banner_with(self.span("q4", 140)))
+
+    def test_it_does_not_refuse_to_start(self):
+        # A box restarted mid-quarter resumes its own open quarter, correctly.
+        self.assertIn("arm when the band is in the stands", self.banner_with(self.span("q4", 140)))
+
+
+class _RunMain(unittest.TestCase):
+    """`serve.main` up to the point it would bind, with its output captured."""
 
     def setUp(self):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        root = Path(self._tmp.name)
-        self.config = root / "tacet.toml"
+        self.root = Path(self._tmp.name)
+        self.config = self.root / "tacet.toml"
         self.config.write_text("", encoding="utf-8")
-        self.log = root / "game.jsonl"
+        self.log = self.root / "game.jsonl"
 
-    def run_main(self):
+    def run_main(self, argv):
         stderr = io.StringIO()
-        argv = ["--config", str(self.config), "--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)]
         with (
             mock.patch("sys.stderr", stderr),
             mock.patch("sys.stdout", io.StringIO()),
+            mock.patch("tacet.serve.asyncio.run") as run,
             self.assertRaises(SystemExit) as caught,
         ):
-            serve.main(argv)
+            serve.main(["--config", str(self.config), *argv])
+        run.assert_not_called()
         return caught.exception.code, stderr.getvalue()
+
+
+class TestTheLogIsRequiredOnTheCommandLine(_RunMain):
+    """`--log` is the one value that changes every game, so it is typed every
+    game (#20). Game 2's log carried the next day's date because the example was
+    copied into the config file."""
+
+    CONSOLE = ("--console-host", "192.0.2.1", "--dca", "3")
+
+    def test_no_log_refuses_and_names_the_flag(self):
+        code, stderr = self.run_main([*self.CONSOLE])
+        self.assertEqual(code, 2)
+        self.assertIn(serve.LOG_REQUIRED, stderr)
+        self.assertIn("--log", serve.LOG_REQUIRED)
+
+    def test_a_complete_config_does_not_stand_in_for_it(self):
+        self.config.write_text("[console]\nhost = '192.0.2.1'\ndca = 3\n", encoding="utf-8")
+        code, stderr = self.run_main([])
+        self.assertEqual(code, 2)
+        self.assertIn(serve.LOG_REQUIRED, stderr)
+
+    def test_a_config_still_carrying_capture_log_refuses(self):
+        self.config.write_text("[capture]\nlog = '~/games/2026-09-12.jsonl'\n", encoding="utf-8")
+        code, stderr = self.run_main([*self.CONSOLE, "--log", str(self.log)])
+        self.assertEqual(code, 2)
+        self.assertIn("capture.log", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+
+class TestAnUnreadableLogStopsTheBoxInWords(_RunMain):
+    """Refused before anything binds, as a command-line error rather than a
+    page of traceback at whoever is standing there."""
+
+    def run_with_the_log(self):
+        return self.run_main(["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)])
 
     def test_a_newer_schema(self):
         self.log.write_text('{"v": 2, "seq": 1}\n', encoding="utf-8")
-        code, stderr = self.run_main()
+        code, stderr = self.run_with_the_log()
         self.assertEqual(code, 2)
         self.assertIn(str(self.log), stderr)
         self.assertIn("v2", stderr)
@@ -322,6 +408,6 @@ class TestAnUnreadableLogStopsTheBoxInWords(unittest.TestCase):
 
     def test_a_corrupt_line(self):
         self.log.write_text("{ not json\n" + '{"v": 1}\n', encoding="utf-8")
-        code, stderr = self.run_main()
+        code, stderr = self.run_with_the_log()
         self.assertEqual(code, 2)
         self.assertIn("cannot be read", stderr)

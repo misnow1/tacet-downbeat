@@ -809,3 +809,42 @@ class TestPriorAnchorIsNoticed(LogTestCase):
         # The warning, the box's own entry and markers.find_anchor all key on
         # this string. A copy that drifted would silence the warning.
         self.assertIn(ann.ANCHOR_EVENT, ann.EVENTS)
+
+
+class TestCarriedOverSpansAreNoticed(LogTestCase):
+    """Spans a previous run left open, found before the log is opened (#20).
+
+    Resuming them is right - a restarted box mid-quarter must still be able to
+    end the quarter - but on a log that was meant to be fresh it means last
+    game's `q4` reads "(end)" on the page, so the box says so at startup.
+    """
+
+    def test_a_missing_log_has_none(self):
+        self.assertEqual(ann.find_open_spans(self.path), [])
+
+    def test_a_closed_span_is_not_reported(self):
+        with self.log() as log:
+            log.end_span(log.start_span("q3"))
+        self.assertEqual(ann.find_open_spans(self.path), [])
+
+    def test_an_open_span_is_reported_by_its_start(self):
+        with self.log() as log:
+            log.end_span(log.start_span("q3"))
+            span = log.start_span("q4")
+        found = ann.find_open_spans(self.path)
+        self.assertEqual([entry.span_id for entry in found], [span])
+        self.assertEqual(found[0].event, "q4")
+
+    def test_they_come_back_in_the_order_they_started(self):
+        with self.log() as log:
+            first = log.start_span("halftime")
+            second = log.start_span("timeout-home")
+        self.assertEqual([entry.span_id for entry in ann.find_open_spans(self.path)], [first, second])
+
+    def test_it_agrees_with_what_opening_the_log_resumes(self):
+        with self.log() as log:
+            log.start_span("q4")
+            log.end_span(log.start_span("timeout"))
+        with self.log() as reopened:
+            resumed = reopened.open_spans()
+        self.assertEqual({entry.span_id: entry.event for entry in ann.find_open_spans(self.path)}, resumed)

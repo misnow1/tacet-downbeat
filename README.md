@@ -55,7 +55,7 @@ file:
 
 ```
 cp tacet.toml.example tacet.toml
-tacet-serve --log ~/games/2026-09-13.jsonl     # the rest comes from the file
+tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl  # the rest comes from the file
 ```
 
 A `tacet.toml` in the working directory is sourced automatically. Otherwise name
