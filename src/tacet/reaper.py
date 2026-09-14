@@ -107,6 +107,9 @@ class TransportState:
     position: float | None = None
     #: Monotonic time of the last valid packet, whatever it contained.
     last_packet: float | None = None
+    #: Monotonic time `position` itself last arrived. Not `last_packet`: any
+    #: packet proves the link, but only `/time` says where the playhead is.
+    position_at: float | None = None
     #: How many `/record` reports have arrived, whichever way they went. A
     #: count rather than a time, so "answered after the send" cannot be fooled
     #: by two readings of a coarse clock that happen to be equal.
@@ -121,6 +124,23 @@ class TransportState:
         if self.last_packet is None:
             return False
         return (now - self.last_packet) <= timeout
+
+    def current_position(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> float | None:
+        """Where the playhead is now, or None if that is not known.
+
+        Reaper streams `/time` while the transport moves and stops when it
+        parks, so a position that arrived within the timeout is current and one
+        older than that is only where the transport was last seen. Judged on
+        `/time` alone rather than on liveness: this rig streams meter data
+        continuously while parked, which kept a link reading live and a
+        position from a finished take looking current for as long as it sat
+        there (#35).
+        """
+        if self.position is None or self.position_at is None:
+            return None
+        if (now - self.position_at) > timeout:
+            return None
+        return self.position
 
     def liveness(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> Liveness:
         """Read silence in the light of what Reaper was last doing.
@@ -199,7 +219,7 @@ def apply_feedback(
         elif message.address == addresses.position:
             position = _as_float(value)
             if position is not None:
-                state = replace(state, position=position)
+                state = replace(state, position=position, position_at=now)
     return state
 
 

@@ -119,9 +119,10 @@ recording it belongs to. The warning still fires, and `tacet.markers` still
 reports the extra recording, because a log covering two recordings is a thing
 you want to know about. But it no longer silently misplaces anything.
 
-The stamp is missing only when Reaper is not streaming its position -- it is
-silent whenever the transport is parked -- and those entries fall back to the
-arithmetic, which is the case the warning is really about.
+The stamp is missing only when Reaper has not sent its position in the last
+two seconds -- it stops whenever the transport is parked, even on this rig,
+where meter feedback keeps flowing regardless -- and those entries fall back to
+the arithmetic, which is the case the warning is really about.
 
 Two things make starting early the easy choice rather than a sacrifice:
 

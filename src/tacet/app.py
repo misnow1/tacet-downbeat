@@ -396,11 +396,12 @@ class App:
         placed by playhead do not care which recording the anchor came from.
 
         Freshness is the whole test. Reaper streams `/time` while the transport
-        moves and is otherwise silent, so a reading that arrived within the
+        moves and stops when it parks, so a reading that arrived within the
         timeout is current by construction; one older than that is wherever the
         transport was last seen, and stamping it would place a marker at a
         confidently wrong point. Unstamped falls back to the arithmetic, which
-        is what happened before this existed.
+        is what happened before this existed. The freshness is of `/time`
+        itself, not of the link: see `TransportState.current_position`.
 
         The reported position is used as-is, never extrapolated forward by the
         time since it arrived. `/time` lands about eleven times a second while
@@ -411,12 +412,7 @@ class App:
         """
         if self._recorder is None:
             return None
-        transport = self._recorder.state
-        if transport.position is None:
-            return None
-        if transport.liveness(self._monotonic()) is not Liveness.LIVE:
-            return None
-        return transport.position
+        return self._recorder.state.current_position(self._monotonic())
 
     # -- recorder ---------------------------------------------------------
 

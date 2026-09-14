@@ -176,6 +176,51 @@ class TestFeedback(unittest.TestCase):
         self.assertTrue(state.recording)
 
 
+class TestCurrentPosition(unittest.TestCase):
+    """Where the playhead is now, as distinct from where it was last reported.
+
+    Any packet proves the link, but only `/time` says where the playhead is.
+    This rig streams meter data continuously while parked, so a link that
+    reads live says nothing about whether the last position is current (#35).
+    """
+
+    # 4.5 rather than a round-looking 4.8: OSC carries float32, which holds
+    # 4.5 exactly.
+
+    def test_a_position_that_keeps_arriving_is_current(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        self.assertEqual(state.current_position(100.5, timeout=2.0), 4.5)
+
+    def test_a_position_that_stopped_arriving_is_not(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        self.assertIsNone(state.current_position(103.0, timeout=2.0))
+
+    def test_other_feedback_does_not_keep_a_position_current(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        for now in (101.0, 102.0, 103.0):
+            state = feed(state, "/track/1/vu", 0.5, now=now)
+        self.assertEqual(state.liveness(103.0, timeout=2.0), reaper.Liveness.LIVE)
+        self.assertIsNone(state.current_position(103.0, timeout=2.0))
+
+    def test_nor_does_a_transport_report(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = feed(state, "/play", 0.0, now=102.5)
+        self.assertIsNone(state.current_position(103.0, timeout=2.0))
+
+    def test_nothing_reported_is_not_current(self):
+        state = feed(reaper.TransportState(), "/track/1/vu", 0.5, now=100.0)
+        self.assertIsNone(state.current_position(100.0))
+
+    def test_an_unreadable_position_does_not_refresh_the_last_one(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = feed(state, "/time", "not a number", now=102.5)
+        self.assertIsNone(state.current_position(103.0, timeout=2.0))
+
+    def test_the_default_timeout_is_the_feedback_timeout(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        self.assertEqual(state.current_position(100.0 + reaper.DEFAULT_FEEDBACK_TIMEOUT), 4.5)
+
+
 class TestRecordReports(unittest.TestCase):
     def test_every_record_report_is_counted(self):
         state = feed(reaper.TransportState(), "/record", 1.0)
