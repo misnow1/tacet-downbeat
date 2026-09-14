@@ -488,8 +488,10 @@ can say, and whether it needs you:
 | `mirror stopped` | The script has exited - the action was run a second time, or Reaper closed | Markers stop, the log does not. Re-run it if the game is still going |
 | `no remembered position in a queue with history; starting at its end` | Reaper forgot the position - a reinstall, a cleared `reaper-extstate.ini`, a different machine. It refused to read the queue from the beginning, which on a new project would have stamped every marker of every past game onto today's timeline | Nothing. This session mirrors normally from here. If the box was already running, the few events written before the script came up were skipped - they are in the log |
 | `queue is shorter than the stored offset; starting from the beginning` | The file was cleared or replaced, so it is reading all of it | Expect markers for whatever is in that file. If it holds an earlier game, those markers are wrong: delete them in Reaper. The log is unaffected |
+| `ignoring malformed queue line (<why>): <line>` | A line that is not one the box writes: two lines glued together after a crash, a fragment, or a box and a script from different versions. That line gets no marker; the lines after it still do | Nothing mid-game; the entry is in the log. If it repeats on every line, the box and the script disagree about the format - update both from the same checkout |
+| `no start for span <id>; placing a marker instead` | A span ended that began before the script was watching, so there is no region to draw. It leaves a marker labelled `(end)` instead | Nothing. The whole region can be rebuilt from the log |
 
-The last row is the reason for *do not rotate the queue* in step 2. None of
+The *shorter than the stored offset* row is the reason for *do not rotate the queue* in step 2. None of
 these costs annotation data: the log is written by the box and does not depend
 on the script at all.
 

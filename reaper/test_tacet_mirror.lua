@@ -10,7 +10,10 @@
     lua reaper/test_tacet_mirror.lua
 ]]
 
-local SCRIPT = (arg[0]:match("(.*/)") or "./") .. "tacet_mirror.lua"
+local HERE = arg[0]:match("(.*/)") or "./"
+local SCRIPT = HERE .. "tacet_mirror.lua"
+--- Written by the box's own code: see tests/queue_fixtures.py.
+local FIXTURES = HERE .. "../tests/fixtures/"
 
 local markers, console, ext, deferred, now, playpos
 
@@ -239,6 +242,75 @@ local function test_malformed_line_does_not_stop_the_mirror()
   os.remove(path)
 end
 
+local function read(path)
+  local handle = assert(io.open(path, "rb"))
+  local text = handle:read("a")
+  handle:close()
+  return text
+end
+
+--- The contract with the box (#39). The queue was written by tacet.mirror in
+--- Python and the marks beside it are what the box expects a mirror watching
+--- from the first line to place, checked there against tacet.markers. These
+--- tests used to read only lines written by hand, so a change on either side
+--- passed both suites while markers stopped appearing.
+local function replay(name)
+  local queue = read(FIXTURES .. "queue-" .. name .. ".tsv")
+  local expected = {}
+  for line in read(FIXTURES .. "queue-" .. name .. ".marks"):gmatch("([^\n]+)") do
+    local kind, mark = line:match("^(%a+)\t(.+)$")
+    expected[#expected + 1] = { isrgn = kind == "region", name = mark }
+  end
+
+  local path = os.tmpname()
+  start_empty(path)
+  local said = #console
+  append(path, queue)
+  tick()
+  equal(#markers, #expected, name .. ": places every mark")
+  for i, want in ipairs(expected) do
+    local got = markers[i] or {}
+    if got.name ~= want.name or got.isrgn ~= want.isrgn then
+      check(false, name .. ": mark " .. i .. " is " .. tostring(got.name) .. ", want " .. want.name)
+      break
+    end
+  end
+  equal(#console, said, name .. ": reads every line without complaint")
+  os.remove(path)
+end
+
+local function test_the_game_2_queue_replays()
+  replay("game-2")
+end
+
+local function test_every_event_in_the_vocabulary_replays()
+  replay("vocabulary")
+end
+
+--- Each of these is refused and reported, and the line after it still lands.
+local function refused(line, label)
+  local path = os.tmpname()
+  start_empty(path)
+  append(path, line .. "\n" .. "NOTE|note\t-\t-\n")
+  tick()
+  equal(#markers, 1, label .. ": only the good line lands")
+  equal(markers[1] and markers[1].name, "NOTE|note", label .. ": and it is the good one")
+  check(logged("ignoring malformed queue line"), label .. ": is reported")
+  os.remove(path)
+end
+
+local function test_lines_are_read_as_strictly_as_the_box_writes_them()
+  -- What appending after a torn write produced (#26): two lines glued into one.
+  refused("NOTE|note\t-\t-NOTE|note\t-\t-", "too many fields")
+  -- The same, starting with a span line: every other rule passes this one.
+  refused("GAME|q1\tstart\tq1-2NOTE|note\t-\t-", "too many fields after a span")
+  -- A fragment with a whole line after it: three fields, but no name.
+  refused("FDR|up-whNOTE|note\t-\t-", "not a marker name")
+  refused("GAME|q1\tbegin\tq1-2", "an unknown phase")
+  refused("GAME|q1\tstart\t-", "a span with no id")
+  refused("NOTE|note\t-\tnote-3", "an instant with an id")
+end
+
 local function test_missing_queue_is_survivable()
   start("/tmp/tacet-does-not-exist-" .. tostring(os.time()) .. ".tsv")
   tick()
@@ -261,6 +333,9 @@ local tests = {
   test_a_shorter_queue_restarts_from_the_beginning,
   test_malformed_line_does_not_stop_the_mirror,
   test_missing_queue_is_survivable,
+  test_the_game_2_queue_replays,
+  test_every_event_in_the_vocabulary_replays,
+  test_lines_are_read_as_strictly_as_the_box_writes_them,
 }
 
 for _, test in ipairs(tests) do
