@@ -119,6 +119,38 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         return [e.event for e in self.entries()]
 
 
+class TestOperatorInputIsCheckedFirst(AppTestCase):
+    """Refused before anything moves. A fader button with bad data used to move
+    the fader, then fail writing the reason (#36)."""
+
+    async def test_annotate_refuses_box_only_events(self):
+        app = self.build()
+        with self.assertRaises(ann.NotAButtonError):
+            await app.annotate(ann.ANCHOR_EVENT)
+        self.assertNotIn(ann.ANCHOR_EVENT, self.keys())
+
+    async def test_start_span_refuses_box_only_events(self):
+        app = self.build()
+        with self.assertRaises(ann.NotAButtonError):
+            await app.start_span(tacet_app.COMMANDED)
+        self.assertNotIn(tacet_app.COMMANDED, self.keys())
+
+    async def test_annotate_refuses_non_object_data_before_moving(self):
+        app = self.build()
+        await app.arm()
+        with self.assertRaises(ann.DataError):
+            await app.annotate("up-drums", data="hello")
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertNotIn(tacet_app.COMMANDED, self.keys())
+
+    async def test_what_is_logged_is_the_checked_data(self):
+        app = self.build()
+        await app.annotate("note", data={"text": "band sounds thin"})
+        self.assertEqual(self.entries()[-1].data, {"text": "band sounds thin"})
+
+
 class TestAFailingDisk(AppTestCase):
     """The disk fills in the third quarter.
 

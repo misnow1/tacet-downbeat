@@ -152,6 +152,11 @@ _TICK = web.AppKey("tacet_tick_interval", float)
 #: the loop can be watched repeating in a test without the test taking a minute.
 _KEEPALIVE = web.AppKey("tacet_keepalive_interval", float)
 
+#: The largest request body read. aiohttp's default is a megabyte, fsynced into
+#: the log if it parses; the biggest thing the page sends is a note, which
+#: `annotations.MAX_DATA_TEXT` bounds far below this.
+MAX_REQUEST_BYTES = 16 * 1024
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
 
@@ -322,7 +327,7 @@ def create_app(
     keepalive_interval: float = KEEPALIVE_INTERVAL,
     tick_interval: float = TICK_INTERVAL,
 ) -> web.Application:
-    server = web.Application()
+    server = web.Application(client_max_size=MAX_REQUEST_BYTES)
     hub = _Hub(app)
     server[_HUB] = hub
     server[_KEEPALIVE] = keepalive_interval

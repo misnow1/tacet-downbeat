@@ -141,6 +141,43 @@ class TestAnnotation(WebTestCase):
         )
         self.assertEqual(response.status, 400)
 
+    async def test_a_box_only_event_is_a_client_error(self):
+        response = await self.client.post("/api/annotate", json={"key": "recording-started"})
+        self.assertEqual(response.status, 400)
+        self.assertNotIn("recording-started", self.entries())
+
+    async def test_data_that_is_not_an_object_is_refused_before_the_fader_moves(self):
+        await self.client.post("/api/arm")
+        response = await self.client.post("/api/annotate", json={"key": "up-drums", "data": "hello"})
+        self.assertEqual(response.status, 400)
+        state = await (await self.client.get("/api/state")).json()
+        self.assertEqual(state["state"], "idle")
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_nan_in_the_body_is_refused(self):
+        # Python's JSON reader takes a bare NaN; the log must never hold one.
+        response = await self.client.post(
+            "/api/annotate",
+            data='{"key": "note", "data": {"x": NaN}}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(response.status, 400)
+        self.assertNotIn("note", self.entries())
+
+    async def test_an_oversized_body_is_refused_unread(self):
+        text = "x" * web.MAX_REQUEST_BYTES
+        response = await self.client.post("/api/annotate", json={"key": "note", "data": {"text": text}})
+        self.assertEqual(response.status, 413)
+        self.assertNotIn("note", self.entries())
+
+    async def test_the_longest_note_fits_in_a_request(self):
+        # Every character outside the BMP, which JSON escapes as a surrogate
+        # pair - twelve bytes, the most it makes of one character. The body cap
+        # must never be what refuses a note the log would accept.
+        text = "\U0001f941" * ann.MAX_DATA_TEXT
+        response = await self.client.post("/api/annotate", json={"key": "note", "data": {"text": text}})
+        self.assertEqual(response.status, 200)
+
     async def test_spans_open_and_close(self):
         opened = await (await self.client.post("/api/span/start", json={"key": "q1"})).json()
         span_id = opened["span_id"]

@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import json
+import math
 import os
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -57,6 +58,14 @@ class EventKindError(AnnotationError):
 
 class UnknownSpanError(AnnotationError):
     """A span id that was never opened, or has already been closed."""
+
+
+class NotAButtonError(AnnotationError):
+    """An event only the box writes, asked for from outside it."""
+
+
+class DataError(AnnotationError):
+    """Data attached to an operator's entry that the log will not hold."""
 
 
 class WriteError(AnnotationError):
@@ -222,6 +231,57 @@ def lookup(key: str) -> EventType:
         raise UnknownEventError(f"no such event: {key!r}") from None
 
 
+#: The longest string an operator's entry may carry. A note is typed with a
+#: thumb in a press box; this is generous for that and small next to a log that
+#: fsyncs every line.
+MAX_DATA_TEXT = 1000
+
+
+def operator_event(key: str) -> EventType:
+    """An event an operator may record, or raise.
+
+    Box-only events describe what the box did, and the markers depend on them
+    meaning exactly that: a posted `recording-started` would become the anchor
+    the whole timeline is measured from (#36).
+    """
+    event = lookup(key)
+    if not event.button:
+        raise NotAButtonError(f"{key!r} is written by the box, not by an operator")
+    return event
+
+
+def operator_data(data: object) -> dict[str, Any]:
+    """Check data an operator attached to an entry, and return a copy of it.
+
+    A flat JSON object of strings, finite numbers, booleans and nulls. Checked
+    before anything acts on the tap: data that failed inside the log used to do
+    so after a fader button had already moved the fader, losing the reason.
+    """
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise DataError(f"data must be an object, not {type(data).__name__}")
+    for key, value in data.items():
+        if not isinstance(key, str):
+            raise DataError(f"data keys must be strings, not {key!r}")
+        _check_value(key, value)
+    return dict(data)
+
+
+def _check_value(key: str, value: object) -> None:
+    if value is None or isinstance(value, bool | int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise DataError(f"data {key!r} is {value}, which JSON cannot carry")
+        return
+    if isinstance(value, str):
+        if len(value) > MAX_DATA_TEXT:
+            raise DataError(f"data {key!r} is {len(value)} characters; the most is {MAX_DATA_TEXT}")
+        return
+    raise DataError(f"data {key!r} must be a string, number, true, false or null")
+
+
 class EntrySink(Protocol):
     """Anything that wants a copy of each entry as it is written, such as the
     Reaper mirror queue."""
@@ -306,7 +366,9 @@ class Entry:
         }
 
     def to_json(self) -> str:
-        return json.dumps(self.as_dict(), separators=(",", ":"), sort_keys=True)
+        # No NaN or Infinity: Python would write them, and no other JSON reader
+        # of the log - Lua, jq, a browser - would read the line back.
+        return json.dumps(self.as_dict(), separators=(",", ":"), sort_keys=True, allow_nan=False)
 
     @classmethod
     def from_json(cls, line: str) -> Self:
@@ -728,7 +790,13 @@ class AnnotationLog:
             project_seconds=project_seconds,
         )
         try:
-            self._file.append_line(entry.to_json())
+            try:
+                line = entry.to_json()
+            except ValueError as exc:
+                # Not a disk fault, but the same outcome, and the same place to
+                # say so: an entry that is not saved, counted on the page.
+                raise WriteError(f"could not encode {event.key}: {exc}") from exc
+            self._file.append_line(line)
         except WriteError as exc:
             # The sequence number stays spent: a gap in the log marks where an
             # entry was lost.

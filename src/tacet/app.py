@@ -325,8 +325,13 @@ class App:
 
         Returns None when the entry did not reach the disk. The move has still
         happened, and the snapshot's `log` says why the entry did not.
+
+        The key and the data are checked before anything acts on them: a
+        box-only event is refused, and data the log would not hold raises
+        `DataError` here rather than inside the log after the fader moved.
         """
-        event = ann.lookup(event_key)
+        event = ann.operator_event(event_key)
+        data = ann.operator_data(data)
         if event.action is not None:
             # The move goes first. A missed downbeat is unrecoverable and must
             # not wait behind a log write.
@@ -345,6 +350,7 @@ class App:
     async def start_span(self, event_key: str) -> str | None:
         """The new span's id, or None when its start did not reach the disk -
         in which case it is not open, and the button still offers to start it."""
+        ann.operator_event(event_key)
         span_id: str | None
         try:
             span_id = self._log.start_span(event_key, project_seconds=self._playhead())
