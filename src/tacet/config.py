@@ -4,7 +4,8 @@ Three programs want the same handful of facts -- which console, which DCA, which
 Reaper -- and today each one takes them as flags. `tacet-serve` alone is eight
 lines of command with a quoted queue path in the middle of it, retyped in a
 press box on a Saturday. The values it repeats do not change between games; only
-`--log` does. See docs/gameday.md.
+`--log` does, which is exactly why `--log` is not a key here. See
+docs/gameday.md.
 
 So: a file. It is *optional* by design. Every flag still exists, nothing is
 required to use it, and a machine without one behaves exactly as before.
@@ -102,13 +103,24 @@ SCHEMA: tuple[Option, ...] = (
     Option("reaper", "host", "str", "host running Reaper"),
     Option("reaper", "send_port", "int", "Reaper's local listen port"),
     Option("reaper", "receive_port", "int", "the port Reaper sends feedback to"),
-    Option("capture", "log", "path", "annotation log (JSONL); per game"),
     Option("capture", "queue", "path", "mirror queue the ReaScript watches"),
     Option("fader", "fade_seconds", "float", "close fade length"),
     Option("fader", "slow_open_seconds", "float", "ride-in for up-slow, when the start was missed"),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "int", "port the web UI binds to"),
 )
+
+#: Keys that used to exist, each with what to do instead. Refused like any
+#: unknown key, but a config written before the change is still on someone's
+#: laptop, and "unknown key" alone does not tell them where the value went.
+#:
+#: `capture.log` went in #20. The log changes every game, so a value in a file
+#: that does not is wrong every game after the first: game 2's log was named for
+#: the day after it, copied from the example here, and game 3 would have been
+#: appended to it. `--log` is typed on the command line, every game.
+RETIRED: dict[str, str] = {
+    "capture.log": "the log changes every game, so pass --log on the command line instead",
+}
 
 _BY_NAME: dict[str, Option] = {option.name: option for option in SCHEMA}
 
@@ -160,6 +172,9 @@ def values_from_mapping(data: Mapping[str, object], *, where: str = "config") ->
         if not isinstance(body, Mapping):
             raise ConfigError(f"{where}: [{section}] must be a table, got {body!r}")
         for key, value in body.items():
+            retired = RETIRED.get(f"{section}.{key}")
+            if retired is not None:
+                raise ConfigError(f"{where}: {section}.{key} is no longer a config key; {retired}")
             option = _BY_NAME.get(f"{section}.{key}")
             if option is None:
                 keys = ", ".join(item.key for item in known)

@@ -220,7 +220,6 @@ dca = 3              # --dca
 host = "127.0.0.1"   # --reaper-host
 
 [capture]
-log = "/tmp/tacet/game.jsonl"    # --log
 queue = "/tmp/tacet/queue.tsv"   # --queue
 
 [ui]
@@ -229,7 +228,7 @@ port = 8080          # --http-port
 ```
 
 ```
-tacet-serve          # banner names the config, console, DCA, Reaper and paths
+tacet-serve --log /tmp/tacet/game.jsonl   # --log is never read from the file
 ```
 
 Pointing `--console-host` (`console.host`) at loopback is deliberate for a first

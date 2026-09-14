@@ -1,15 +1,18 @@
 """Run the box: web UI, console control, annotation log, Reaper transport.
 
-    tacet-serve --console-host 10.0.0.5 --dca 3 --log ~/games/2026-09-13.jsonl
+    tacet-serve --console-host 10.0.0.5 --dca 3 --log ~/games/<YYYY-MM-DD>.jsonl
 
-Everything is optional except the console. Without `--reaper-host` there is no
-transport control and recording state reads as unknown, which is honest rather
-than broken.
+Everything is optional except the console and the log. Without `--reaper-host`
+there is no transport control and recording state reads as unknown, which is
+honest rather than broken.
 
 Most of that repeats every game. Put the site values in a config file and only
 the game is left to type:
 
-    tacet-serve --log ~/games/2026-09-13.jsonl
+    tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl
+
+`--log` is never taken from the file. It is the one value that changes every
+game, so it is typed every game.
 
 A `tacet.toml` in the working directory is picked up on its own; otherwise name
 one with `--config PATH` or `$TACET_CONFIG`, and `~/.config/tacet/tacet.toml`
@@ -42,6 +45,7 @@ from .annotations import (
     CorruptLogError,
     TornTail,
     find_clock_reset,
+    find_open_spans,
     find_prior_anchor,
     find_torn_tail,
     set_aside_path,
@@ -304,6 +308,23 @@ def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
     ]
 
 
+def _open_span_lines(spans: list[AnnotationEntry]) -> list[str]:
+    """The block for spans an earlier run left open in this log.
+
+    Warned rather than refused: a box restarted mid-quarter resumes its own
+    quarter, which is right. On a log meant to be fresh it is last game's `q4`
+    still running on this game's page.
+    """
+    lines = [
+        _rule(),
+        _row("WARNING", f"this log has {len(spans)} span(s) still open from an earlier run"),
+    ]
+    lines.extend(_note(f"{span.label}, started {span.wall}") for span in spans)
+    lines.append(_note('their buttons will read "(end)"; if this is a restart mid-game,'))
+    lines.append(_note("that is right. If it is a new game, it wants a fresh --log"))
+    return lines
+
+
 def _torn_lines(name: str, path: Path | str, torn: TornTail, *, keeps_entries: bool) -> list[str]:
     """The block for a file whose last run ended mid-write.
 
@@ -332,6 +353,7 @@ def startup_lines(
     torn_log: TornTail | None = None,
     torn_queue: TornTail | None = None,
     clock_reset: AnnotationEntry | None = None,
+    open_spans: list[AnnotationEntry] | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -377,6 +399,8 @@ def startup_lines(
         lines.extend(_prior_anchor_lines(prior_anchor))
     if clock_reset is not None:
         lines.extend(_clock_reset_lines(clock_reset))
+    if open_spans:
+        lines.extend(_open_span_lines(open_spans))
     if torn_log is not None:
         lines.extend(_torn_lines("log", args.log, torn_log, keeps_entries=True))
     if torn_queue is not None and args.queue:
@@ -397,7 +421,6 @@ CONFIG_MAPPING = {
     "reaper_host": "reaper.host",
     "reaper_port": "reaper.send_port",
     "reaper_feedback_port": "reaper.receive_port",
-    "log": "capture.log",
     "queue": "capture.queue",
     "fade": "fader.fade_seconds",
     "slow_open": "fader.slow_open_seconds",
@@ -408,7 +431,12 @@ CONFIG_MAPPING = {
 #: Needed before the box can run, from wherever. Not `required=True`, because
 #: argparse enforces that before the config file has been read; `config.require`
 #: does it afterwards and names the config key too.
-REQUIRED = ("console_host", "dca", "log")
+REQUIRED = ("console_host", "dca")
+
+#: What the box says without `--log`. Required separately from `REQUIRED`
+#: because no config file can supply it (#20), so the generic message - which
+#: offers a config key - would send someone looking for one.
+LOG_REQUIRED = "--log is required on the command line, a fresh one each game: --log ~/games/<YYYY-MM-DD>.jsonl"
 
 
 def parser() -> argparse.ArgumentParser:
@@ -420,7 +448,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--console-host", help="the DM7's For Mixer Control IP")
     p.add_argument("--console-port", type=int, default=dm7.DEFAULT_PORT)
     p.add_argument("--dca", type=int, help="the band DCA number")
-    p.add_argument("--log", type=Path, help="annotation log (JSONL)")
+    p.add_argument("--log", type=Path, help="annotation log (JSONL); required, and never taken from the config")
     p.add_argument("--queue", type=Path, help="mirror queue for the Reaper script")
     p.add_argument("--reaper-host", help="omit to run without transport control")
     p.add_argument("--reaper-port", type=int, default=reaper.DEFAULT_SEND_PORT)
@@ -451,6 +479,8 @@ def main(argv: list[str] | None = None) -> int:
     p = parser()
     args, config_path = config.resolve_or_exit(p, CONFIG_MAPPING, argv)
     config.require(p, args, CONFIG_MAPPING, *REQUIRED)
+    if args.log is None:
+        p.error(LOG_REQUIRED)
     # Said out loud, because a box configured from a file has no visible
     # command line: "why is it driving DCA 3" otherwise has no answer on the
     # day. Printed before anything binds, so it survives a failure to start.
@@ -469,6 +499,7 @@ def main(argv: list[str] | None = None) -> int:
             torn_log=find_torn_tail(args.log),
             torn_queue=find_torn_tail(args.queue) if args.queue else None,
             clock_reset=find_clock_reset(args.log, now=time.monotonic()),
+            open_spans=find_open_spans(args.log),
         )
     except CorruptLogError as exc:
         p.error(f"--log {args.log} cannot be read: {exc}. Nothing in it was changed.")

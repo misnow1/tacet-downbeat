@@ -30,7 +30,6 @@ send_port = 8000
 receive_port = 9000
 
 [capture]
-log = "~/games/2026-09-13.jsonl"
 queue = "~/queue.tsv"
 
 [fader]
@@ -99,15 +98,44 @@ class TestValuesFromMapping(unittest.TestCase):
         self.assertIsInstance(values["fader.fade_seconds"], float)
 
     def test_a_path_is_expanded_and_becomes_a_path(self):
-        values = config.values_from_mapping({"capture": {"log": "~/games/x.jsonl"}})
-        log = values["capture.log"]
-        self.assertIsInstance(log, Path)
-        self.assertNotIn("~", str(log))
+        values = config.values_from_mapping({"capture": {"queue": "~/queue.tsv"}})
+        queue = values["capture.queue"]
+        self.assertIsInstance(queue, Path)
+        self.assertNotIn("~", str(queue))
 
     def test_the_error_names_the_file(self):
         with self.assertRaises(config.ConfigError) as caught:
             config.values_from_mapping({"nope": {}}, where="/etc/tacet.toml")
         self.assertIn("/etc/tacet.toml", str(caught.exception))
+
+
+class TestTheLogIsNotAConfigKey(unittest.TestCase):
+    """The one value that changes every game is typed every game (#20).
+
+    Game 2's log was named for the day after the game because the example date
+    was copied into `capture.log`, and game 3 would have appended to it.
+    """
+
+    def test_capture_log_is_not_in_the_schema(self):
+        self.assertNotIn("capture.log", {option.name for option in config.SCHEMA})
+
+    def test_serve_does_not_take_the_log_from_a_config(self):
+        self.assertNotIn("log", serve.CONFIG_MAPPING)
+
+    def test_a_config_still_carrying_capture_log_refuses(self):
+        # Every tacet.toml written before #20 has this key. It must stop the
+        # tool, and say what to do instead, rather than just "unknown key".
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"capture": {"log": "~/games/x.jsonl"}}, where="/etc/tacet.toml")
+        message = str(caught.exception)
+        self.assertIn("/etc/tacet.toml", message)
+        self.assertIn("capture.log", message)
+        self.assertIn("--log", message)
+
+    def test_a_retired_key_is_never_also_a_live_one(self):
+        names = {option.name for option in config.SCHEMA}
+        for name in config.RETIRED:
+            self.assertNotIn(name, names)
 
 
 class TestLoad(_TempConfig):
@@ -202,7 +230,6 @@ class TestPrecedence(_TempConfig):
         self.assertEqual(args.fade, 2.5)
         self.assertEqual(args.listen, "0.0.0.0")
         self.assertEqual(args.http_port, 8080)
-        self.assertEqual(args.log.name, "2026-09-13.jsonl")
         self.assertEqual(args.queue.name, "queue.tsv")
 
     def test_a_flag_beats_the_config(self):

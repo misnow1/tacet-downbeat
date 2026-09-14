@@ -215,10 +215,12 @@ protecting - only its byte count matters, and only to the script.
 Whatever queue path the script is watching must be the one passed here. This is
 the single most common way to have everything look healthy and mirror nothing.
 
-With `tacet.toml` filled in, the only thing left to type is the game:
+With `tacet.toml` filled in, the only thing left to type is the game, and it
+has to be typed: `--log` is never read from the file, and the box will not start
+without it. Use the date of the game:
 
 ```
-tacet-serve --log ~/games/2026-09-13.jsonl
+tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl
 ```
 
 It prints a banner before it binds anything -- what console, what DCA, what
@@ -233,7 +235,7 @@ Reaper, and where the log and queue are going:
               commanded, never confirmed - the DM7's OSC is write-only
   fade        2.0s close, fast open, 1.5s ride-in
   reaper      127.0.0.1   send 8000   feedback 9000
-  log         /Users/you/games/2026-09-13.jsonl
+  log         /Users/you/games/<YYYY-MM-DD>.jsonl
   queue       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
   page        http://<this box>:8080
               bound to 0.0.0.0; use the box's address on the VLAN
@@ -264,7 +266,7 @@ Without a config file, or to override it, the whole thing is still flags:
 tacet-serve \
     --console-host <console IP> \
     --dca <n> \
-    --log ~/games/2026-09-13.jsonl \
+    --log ~/games/<YYYY-MM-DD>.jsonl \
     --queue "$HOME/Library/Application Support/REAPER/tacet/queue.tsv" \
     --reaper-host 127.0.0.1 \
     --listen 0.0.0.0 \
@@ -272,10 +274,11 @@ tacet-serve \
 ```
 
 - `--log` is **per game**, and per *recording*. It is the irreplaceable artefact.
-  Keep it a flag even when everything else lives in the file -- it is the value
-  that changes, and a stale `capture.log` overwrites nothing but does bury today
-  under yesterday's filename. If the log already holds a recording the banner
-  says so in a `WARNING` row; see *When it goes wrong*.
+  It is a flag and only a flag: there is no `capture.log` key, because a value
+  that changes every game does not belong in a file that does not. Game 2's log
+  is named for the day after the game for that reason -- the example date,
+  copied into the config. If the log already holds a recording, or spans left open by an
+  earlier run, the banner says so in a `WARNING` row; see *When it goes wrong*.
 - `--queue` is **stable**, and must match step 2. Good candidate for the file.
 - `--listen 0.0.0.0` or the iPad cannot reach the page. `127.0.0.1` serves the
   machine and nothing else, which looks exactly like a firewall problem.
@@ -466,11 +469,14 @@ config problems and it says so on the terminal rather than the page:
 | `WARNING     this log already contains a recording` | The `--log` you gave already holds a `recording-started` -- yesterday's game, or the pre-flight test. Markers derived from it anchor to **that** recording. Entries stamped with Reaper's playhead still land correctly; any made while Reaper was parked fall back to arithmetic from the wrong anchor | Stop and pass a fresh `--log`, unless you genuinely meant to append. Nothing is lost either way; the log is append-only and can be split afterwards |
 | `WARNING     log ends in a torn write` (or `queue ends in a torn write`) | The last run stopped in the middle of writing a line: a crash, a kill, a laptop that lost power, or a full disk. Appending straight after that fragment used to corrupt the log so the *next* restart refused to start | Nothing. It is repaired as the box opens the file: a whole entry that only lost its newline is kept, and anything else is moved to the `.torn` file named on the next line, never deleted. Everything before it is intact. If the disk is full, that is the thing to fix |
 | `WARNING     the clock has restarted since this log was written` | The `--log` you gave was written before this machine last rebooted. Offsets in it are measured on a clock that has since started again from zero | Pass a fresh `--log`. If you must append, entries stamped with Reaper's playhead still land correctly; anything placed by arithmetic after the reboot will not |
+| `WARNING     this log has N span(s) still open from an earlier run` | The `--log` you gave has spans that were started and never ended -- last game's `Q4`, say -- listed underneath with when each started. The box resumes them, so their buttons read "(end)" | If this is the box restarting mid-game, nothing: those are today's spans and resuming them is right. If it is a new game, stop and pass a fresh `--log` |
 | `--log ... cannot be read: line N: ...` | The log has a line the box cannot read. `schema vN, which this build cannot read` means a different version of tacet wrote it, usually a newer one read after a rollback; anything else is a damaged line. The box refuses before it starts, and has changed nothing in the file | Pass a fresh `--log` and start. Keep the unreadable one for afterwards; do not edit it on the day |
 | `unknown key '...' in [...]` | A misspelled key. It refuses rather than silently using a default and driving the wrong fader | Fix the spelling; the message lists the keys that exist |
 | `... must be a whole number` / `must be true or false` | A value of the wrong type, e.g. `dca = "3"` with quotes | Drop the quotes. Numbers and booleans are bare in TOML |
 | `--config names ..., which does not exist` | A config was asked for by name and is not there | Check the path. A file merely looked for and absent is fine; one you named is not |
 | `--console-host is required or console.host in the config file` | Neither the flag nor the file supplied it | Give it either way |
+| `--log is required on the command line, a fresh one each game` | No `--log`. It is never read from the config file, so a complete `tacet.toml` does not supply it | Add `--log ~/games/<YYYY-MM-DD>.jsonl` with today's date |
+| `capture.log is no longer a config key` | A `tacet.toml` written before the log became command-line only | Delete the `log = ...` line from `[capture]` and pass `--log` instead |
 
 The top banner is about the iPad's link to the box. `LINK LOST` on the
 recording line is about the box's link to Reaper. They are different failures
