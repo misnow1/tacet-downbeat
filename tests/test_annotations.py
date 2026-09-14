@@ -104,6 +104,9 @@ class TestEntry(unittest.TestCase):
         entry = ann.Entry.build(1, ann.lookup("note"), FakeClock())
         self.assertEqual(json.loads(entry.to_json())["v"], ann.SCHEMA_VERSION)
 
+    def test_this_build_reads_what_it_writes(self):
+        self.assertIn(ann.SCHEMA_VERSION, ann.READABLE_SCHEMAS)
+
     def test_wall_clock_is_utc_iso8601(self):
         entry = ann.Entry.build(1, ann.lookup("note"), FakeClock())
         parsed = datetime.fromisoformat(entry.wall)
@@ -288,6 +291,163 @@ class TestReading(LogTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def line(**changes):
+    """A valid v1 line, with some fields changed or removed (a value of ...)."""
+    raw = json.loads(ann.Entry.build(7, ann.lookup("note"), FakeClock(), data={"text": "x"}).to_json())
+    for key, value in changes.items():
+        if value is ...:
+            del raw[key]
+        else:
+            raw[key] = value
+    return json.dumps(raw)
+
+
+class TestReadingASchema(unittest.TestCase):
+    """What a line must be to be read as an entry (#37).
+
+    `from_json` used to be `cls(**raw)`: no look at `v`, an unknown key fatal,
+    and a wrong type let through to crash something later with a bare
+    TypeError. A log that cannot be read has to say why, in words.
+    """
+
+    def test_a_valid_line_reads(self):
+        self.assertEqual(ann.Entry.from_json(line()).seq, 7)
+
+    def test_an_unknown_schema_is_refused_by_name(self):
+        with self.assertRaises(ann.SchemaVersionError) as caught:
+            ann.Entry.from_json(line(v=2))
+        self.assertIn("v2", str(caught.exception))
+
+    def test_an_unknown_schema_is_still_an_unreadable_log(self):
+        # So everything that already stops on a corrupt log stops on this too.
+        self.assertTrue(issubclass(ann.SchemaVersionError, ann.CorruptLogError))
+
+    def test_a_line_with_no_schema_is_refused(self):
+        with self.assertRaises(ann.CorruptLogError):
+            ann.Entry.from_json(line(v=...))
+
+    def test_a_schema_that_is_not_a_number_is_refused(self):
+        for v in ("1", True, 1.0, None):
+            with self.subTest(v=v), self.assertRaises(ann.CorruptLogError):
+                ann.Entry.from_json(line(v=v))
+
+    def test_a_field_of_the_wrong_type_is_refused(self):
+        wrong: dict[str, list[object]] = {
+            "seq": ["7", True, 7.0, None],
+            "event": [3, None],
+            "category": [3],
+            "kind": [None],
+            "label": [[]],
+            "wall": [0],
+            "monotonic": ["12.5", None, True],
+            "phase": [3],
+            "span_id": [3],
+            "project_seconds": ["12.5", True],
+            "data": [[], "x", None],
+        }
+        for field, values in wrong.items():
+            for value in values:
+                with self.subTest(field=field, value=value), self.assertRaises(ann.CorruptLogError):
+                    ann.Entry.from_json(line(**{field: value}))
+
+    def test_a_number_json_cannot_carry_is_refused(self):
+        # Python's reader takes a bare NaN; nothing that wrote a v1 log did.
+        text = line(monotonic=123456.25).replace('"monotonic": 123456.25', '"monotonic": NaN', 1)
+        self.assertIn("NaN", text)
+        with self.assertRaises(ann.CorruptLogError):
+            ann.Entry.from_json(text)
+
+    def test_an_unknown_field_is_refused_and_named(self):
+        # v1 is closed. A new fact per entry goes under `data`, or it is v2.
+        with self.assertRaises(ann.CorruptLogError) as caught:
+            ann.Entry.from_json(line(tap_wall="2026-09-12T19:00:00+00:00"))
+        self.assertIn("tap_wall", str(caught.exception))
+
+    def test_a_required_field_that_is_missing_is_refused_and_named(self):
+        for field in ("seq", "event", "category", "kind", "label", "wall", "monotonic"):
+            with self.subTest(field=field), self.assertRaises(ann.CorruptLogError) as caught:
+                ann.Entry.from_json(line(**{field: ...}))
+            self.assertIn(field, str(caught.exception))
+
+    def test_fields_the_writer_always_wrote_but_that_have_defaults_may_be_absent(self):
+        entry = ann.Entry.from_json(line(phase=..., span_id=..., project_seconds=..., data=...))
+        self.assertEqual((entry.phase, entry.span_id, entry.project_seconds, entry.data), (None, None, None, {}))
+
+    def test_an_integer_position_is_a_position(self):
+        self.assertEqual(ann.Entry.from_json(line(project_seconds=12)).project_seconds, 12)
+
+
+class TestResumingAnUnreadableLog(LogTestCase):
+    def test_a_wrong_type_is_a_corrupt_log_not_a_crash(self):
+        # `"seq": "7"` used to pass the reader and blow up in `max()`.
+        self.path.write_text(line(seq="7") + "\n", encoding="utf-8")
+        with self.assertRaises(ann.CorruptLogError):
+            self.log().open()
+
+    def test_a_newer_schema_is_refused_on_open(self):
+        self.path.write_text(line(v=2) + "\n", encoding="utf-8")
+        with self.assertRaises(ann.SchemaVersionError):
+            self.log().open()
+
+    def test_a_newer_schema_on_the_last_line_is_not_taken_for_a_torn_write(self):
+        # A whole line of a schema this build cannot read is not a fragment,
+        # and dropping it as one would be dropping an entry quietly.
+        self.path.write_text(line() + "\n" + line(v=2), encoding="utf-8")
+        with self.assertRaises(ann.SchemaVersionError):
+            list(ann.read_entries(self.path))
+
+    def test_opening_does_not_set_aside_a_whole_line_of_a_newer_schema(self):
+        # The repair on open judges an unterminated last line. A whole entry
+        # this build cannot read is not a fragment: moving it to `.torn` would
+        # take it out of the log and let the box start on what remained.
+        before = line() + "\n" + line(v=2)
+        self.path.write_text(before, encoding="utf-8")
+        with self.assertRaises(ann.SchemaVersionError):
+            self.log().open()
+        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+        self.assertFalse(ann.set_aside_path(self.path).exists())
+
+
+class TestAClockThatWentBackwards(LogTestCase):
+    """`monotonic` restarts from near zero when the machine reboots.
+
+    Offsets are computed from it, so a log that carries on across a reboot has
+    entries measured against a clock that no longer exists. Nothing noticed
+    (#37). Entries stamped with Reaper's playhead are unaffected; the arithmetic
+    fallback is not.
+    """
+
+    def write_log_ending_at(self, monotonic):
+        with ann.AnnotationLog(self.path, clock=FakeClock(start=monotonic - 1.0)) as log:
+            log.record("note")
+            log.record("note")
+
+    def test_resume_warns_when_monotonic_regresses(self):
+        self.write_log_ending_at(186_000.0)
+        with ann.AnnotationLog(self.path, clock=FakeClock(start=40.0)) as log:
+            reset = log.clock_reset
+        assert reset is not None
+        self.assertEqual(reset.monotonic, 186_000.0)
+
+    def test_a_clock_that_kept_counting_is_not_a_reset(self):
+        self.write_log_ending_at(100.0)
+        with ann.AnnotationLog(self.path, clock=FakeClock(start=500.0)) as log:
+            self.assertIsNone(log.clock_reset)
+
+    def test_a_new_log_has_no_clock_to_compare(self):
+        with self.log() as log:
+            self.assertIsNone(log.clock_reset)
+
+    def test_it_can_be_found_before_the_log_is_opened(self):
+        # For the startup banner, which reports the log as the last run left it.
+        self.write_log_ending_at(186_000.0)
+        reset = ann.find_clock_reset(self.path, now=40.0)
+        assert reset is not None
+        self.assertEqual(reset.seq, 2)
+        self.assertIsNone(ann.find_clock_reset(self.path, now=200_000.0))
+        self.assertIsNone(ann.find_clock_reset(self.path.with_name("absent.jsonl"), now=40.0))
 
 
 class TestTornTail(unittest.TestCase):

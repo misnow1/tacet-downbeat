@@ -1,5 +1,8 @@
+import io
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
 
 from tacet import annotations, dm7, serve
 
@@ -258,3 +261,67 @@ class TestStartupBannerWarnsAboutAReusedLog(unittest.TestCase):
         args = serve.parser().parse_args(FULL)
         lines = serve.startup_lines(args, None, self.prior())
         self.assertIn("arm when the band is in the stands", "\n".join(lines))
+
+
+class TestStartupBannerWarnsAboutAClockReset(unittest.TestCase):
+    """The log was written before this machine last rebooted."""
+
+    def reset(self):
+        event = annotations.lookup("note")
+        return annotations.Entry(
+            seq=160,
+            event=event.key,
+            category=str(event.category),
+            kind=str(event.kind),
+            label=event.label,
+            wall="2026-09-12T15:40:00+00:00",
+            monotonic=186_000.0,
+        )
+
+    def test_a_clean_log_gets_no_warning(self):
+        self.assertNotIn("clock", banner())
+
+    def test_a_reset_is_called_out_with_its_consequence(self):
+        args = serve.parser().parse_args(FULL)
+        text = "\n".join(serve.startup_lines(args, None, clock_reset=self.reset()))
+        self.assertIn("WARNING", text)
+        self.assertIn("clock has restarted", text)
+        self.assertIn("2026-09-12T15:40:00+00:00", text)
+
+
+class TestAnUnreadableLogStopsTheBoxInWords(unittest.TestCase):
+    """Refused before anything binds, as a command-line error rather than a
+    page of traceback at whoever is standing there."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.config = root / "tacet.toml"
+        self.config.write_text("", encoding="utf-8")
+        self.log = root / "game.jsonl"
+
+    def run_main(self):
+        stderr = io.StringIO()
+        argv = ["--config", str(self.config), "--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)]
+        with (
+            mock.patch("sys.stderr", stderr),
+            mock.patch("sys.stdout", io.StringIO()),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            serve.main(argv)
+        return caught.exception.code, stderr.getvalue()
+
+    def test_a_newer_schema(self):
+        self.log.write_text('{"v": 2, "seq": 1}\n', encoding="utf-8")
+        code, stderr = self.run_main()
+        self.assertEqual(code, 2)
+        self.assertIn(str(self.log), stderr)
+        self.assertIn("v2", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_a_corrupt_line(self):
+        self.log.write_text("{ not json\n" + '{"v": 1}\n', encoding="utf-8")
+        code, stderr = self.run_main()
+        self.assertEqual(code, 2)
+        self.assertIn("cannot be read", stderr)
