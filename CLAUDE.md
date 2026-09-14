@@ -210,6 +210,18 @@ would rot the moment the matrix changed. Review approval is *not* required: a
 solo maintainer cannot approve their own PR, and demanding one would make every
 merge a bypass.
 
+**A PR must also be up to date with `main` to merge.** A green check only means
+something against the `main` it ran on: two PRs that each pass alone can still
+break `main` together. So the ruleset requires the PR to contain the tip of
+`main`, with `CI passing` green on that commit. Use the "Update branch" button
+(merge or rebase, either works) and wait for CI to run again. With squash merge,
+what lands is exactly the tree CI tested. A merge queue would do this
+automatically, but GitHub only offers one to org-owned repos. Updating stale PRs
+automatically when `main` moves is tracked in #68.
+
+**Only squash merges are allowed**, by the ruleset and by the repo's merge
+button, so the rule below is enforced rather than remembered.
+
 **Repository admins bypass all of it**, deliberately, as the break-glass path
 on a Saturday — a fix that has to land before kickoff cannot wait on a CI
 queue. It is not the everyday path. A bypassed push still wants a green `make
@@ -224,8 +236,9 @@ are tracked rather than committed straight to `main`.
   Decisions made in conversation go into the issue body, not only the PR.
 - **One branch per issue**, named `<issue>-<slug>`: `23-issues-and-prs`.
 - **The PR says `Closes #n`** so the issue closes on merge.
-- **`CI passing` gates the merge.** Run `make check` before pushing anyway; CI
-  is the gate, not the first place a failure is seen.
+- **`CI passing` gates the merge**, on a branch that is up to date with `main`.
+  Run `make check` before pushing anyway; CI is the gate, not the first place a
+  failure is seen.
 - **Squash merge**, so `main` reads one commit per change. Branches are deleted
   on merge.
 - **Docs-only changes go through a PR too**, so the history lives in one place.
