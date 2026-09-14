@@ -406,6 +406,90 @@ class TestReopeningATornLog(LogTestCase):
         self.assertFalse(self.path.with_name(self.path.name + ann.TORN_SUFFIX).exists())
 
 
+class TestOperatorInput(unittest.TestCase):
+    """What an operator - or anything posting to the page's routes - may ask
+    the log to record. Checked before anything moves (#36)."""
+
+    def test_every_box_only_event_is_refused(self):
+        # A posted `recording-started` becomes the anchor `tacet.markers`
+        # measures the whole timeline from.
+        box_only = [event.key for event in ann.VOCABULARY if not event.button]
+        self.assertIn(ann.ANCHOR_EVENT, box_only)
+        for key in box_only:
+            with self.subTest(key=key), self.assertRaises(ann.NotAButtonError):
+                ann.operator_event(key)
+
+    def test_every_button_is_accepted(self):
+        for event in ann.BUTTONS:
+            with self.subTest(key=event.key):
+                self.assertEqual(ann.operator_event(event.key), event)
+
+    def test_an_unknown_event_is_still_unknown(self):
+        with self.assertRaises(ann.UnknownEventError):
+            ann.operator_event("no-such-event")
+
+    def test_no_data_is_empty_data(self):
+        self.assertEqual(ann.operator_data(None), {})
+
+    def test_a_note_is_accepted(self):
+        self.assertEqual(ann.operator_data({"text": "band sounds thin"}), {"text": "band sounds thin"})
+
+    def test_scalars_are_accepted(self):
+        data = {"n": 3, "x": 1.5, "ok": True, "none": None}
+        self.assertEqual(ann.operator_data(data), data)
+
+    def test_data_that_is_not_an_object_is_refused(self):
+        # A string used to raise inside the log, after a fader button had
+        # already moved; a list of pairs was quietly stored as an object.
+        for data in ("hello", ["ab"], 3, True):
+            with self.subTest(data=data), self.assertRaises(ann.DataError):
+                ann.operator_data(data)
+
+    def test_nested_values_are_refused(self):
+        for value in ({"a": 1}, [1, 2]):
+            with self.subTest(value=value), self.assertRaises(ann.DataError):
+                ann.operator_data({"text": value})
+
+    def test_keys_must_be_strings(self):
+        with self.assertRaises(ann.DataError):
+            ann.operator_data({1: "a"})
+
+    def test_numbers_json_cannot_carry_are_refused(self):
+        # Python's JSON reader accepts NaN and Infinity; the log's writer must not.
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value), self.assertRaises(ann.DataError):
+                ann.operator_data({"x": value})
+
+    def test_text_is_bounded(self):
+        ann.operator_data({"text": "x" * ann.MAX_DATA_TEXT})
+        with self.assertRaises(ann.DataError):
+            ann.operator_data({"text": "x" * (ann.MAX_DATA_TEXT + 1)})
+
+    def test_what_is_returned_is_a_copy(self):
+        data = {"text": "a"}
+        checked = ann.operator_data(data)
+        data["text"] = "b"
+        self.assertEqual(checked, {"text": "a"})
+
+
+class TestEntriesAreJson(LogTestCase):
+    def test_an_entry_json_cannot_carry_is_not_written(self):
+        # `NaN` is not JSON, and a line holding it is one other readers of the
+        # log - Lua, jq, a browser - refuse.
+        with self.log() as log:
+            log.record("note", data={"text": "before"})
+            with self.assertRaises(ann.WriteError):
+                log.record("note", project_seconds=float("nan"))
+            self.assertFalse(log.health.healthy)
+            self.assertIn("note", log.health.error)
+            log.record("note", data={"text": "after"})
+            self.assertTrue(log.health.healthy)
+        lines = self.path.read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            json.loads(line, parse_constant=lambda name: self.fail(f"{name} in the log"))
+
+
 class TestAFailingDisk(LogTestCase):
     """A disk that fills in the third quarter. The write fails; the box must
     say so, must not glue the next entry onto whatever part of the line landed,

@@ -453,6 +453,7 @@ The box fails visible. Anything it cannot confirm, it says.
 | `Could not send the start to Reaper` | The box could not send `/record` at all, so nothing started | Tap again, or start the recording in Reaper. Check `--reaper-host` if it keeps happening |
 | `Reaper is already recording` | Second press of the record button | Nothing. It refused on purpose |
 | `Reaper has not confirmed the start sent Ns ago` | The record button was pressed and Reaper has not yet said it is recording. Over bad wifi a double tap arrives as two presses before Reaper answers, and `/record` is a toggle, so a second one would stop the take. The box holds the button until Reaper answers, and never gives up waiting on its own | Look at Reaper. If it is recording, nothing - the page catches up the moment Reaper says so. If it is not, start it in Reaper; the box picks that up too |
+| `data 'text' is N characters; the most is 1000` | A note longer than the log takes. Nothing was recorded, and nothing moved | Tap Note again and say it shorter |
 | `not armed` | A fader button while standing down | Arm first. The tap was still logged |
 | **Start recording** greyed out, Reaper stopped | Expected on this rig. Reaper is never silent, so the box cannot infer the transport is parked and will not send a toggle blind | Roll a recording in Reaper and stop it. See *The record button is greyed out before you touch anything* |
 

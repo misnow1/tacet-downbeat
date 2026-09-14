@@ -126,6 +126,13 @@ class TestFeedback(unittest.TestCase):
         assert state.position is not None
         self.assertAlmostEqual(state.position, 12.5)
 
+    def test_a_position_json_cannot_carry_is_ignored(self):
+        # It would be stamped onto log entries as `project_seconds` (#36).
+        for value in (float("nan"), float("inf")):
+            with self.subTest(value=value):
+                state = feed(reaper.TransportState(), "/time", value)
+                self.assertIsNone(state.position)
+
     def test_integer_arguments_are_accepted(self):
         # Not every controller sends floats.
         self.assertTrue(feed(reaper.TransportState(), "/record", 1).recording)

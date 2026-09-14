@@ -22,6 +22,7 @@ user-editable; verify them against the installed one before a game.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -173,7 +174,9 @@ def _as_bool(value: object) -> bool | None:
 def _as_float(value: object) -> float | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, int | float):
+    if isinstance(value, int | float) and math.isfinite(value):
+        # Finite only: a position is stamped onto log entries, and JSON has no
+        # NaN or Infinity to write it as.
         return float(value)
     return None
 
