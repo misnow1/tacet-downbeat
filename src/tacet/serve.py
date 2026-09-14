@@ -31,12 +31,21 @@ import argparse
 import asyncio
 import contextlib
 import signal
+import time
 from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
 from . import config, dm7, mirror, reaper, web
-from .annotations import AnnotationLog, TornTail, find_prior_anchor, find_torn_tail, set_aside_path
+from .annotations import (
+    AnnotationLog,
+    CorruptLogError,
+    TornTail,
+    find_clock_reset,
+    find_prior_anchor,
+    find_torn_tail,
+    set_aside_path,
+)
 from .annotations import Entry as AnnotationEntry
 from .app import App
 
@@ -278,6 +287,23 @@ def _prior_anchor_lines(prior: AnnotationEntry) -> list[str]:
     ]
 
 
+def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
+    """The block for a log written before this machine's clock last restarted.
+
+    Warned rather than refused, like a reused log: nothing is lost, and a box
+    that will not start before kickoff is worse. But offsets in the log are
+    measured on a clock that no longer exists, and nothing downstream checks.
+    """
+    return [
+        _rule(),
+        _row("WARNING", "the clock has restarted since this log was written"),
+        _note(f"its last entry was at {last.wall}; the machine has rebooted since"),
+        _note("entries placed by arithmetic across the reboot will be wrong;"),
+        _note("ones stamped with Reaper's playhead are not affected"),
+        _note("a fresh game wants a fresh --log"),
+    ]
+
+
 def _torn_lines(name: str, path: Path | str, torn: TornTail, *, keeps_entries: bool) -> list[str]:
     """The block for a file whose last run ended mid-write.
 
@@ -305,6 +331,7 @@ def startup_lines(
     *,
     torn_log: TornTail | None = None,
     torn_queue: TornTail | None = None,
+    clock_reset: AnnotationEntry | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -348,6 +375,8 @@ def startup_lines(
     lines.extend(_page_lines(args.listen, args.http_port))
     if prior_anchor is not None:
         lines.extend(_prior_anchor_lines(prior_anchor))
+    if clock_reset is not None:
+        lines.extend(_clock_reset_lines(clock_reset))
     if torn_log is not None:
         lines.extend(_torn_lines("log", args.log, torn_log, keeps_entries=True))
     if torn_queue is not None and args.queue:
@@ -428,13 +457,21 @@ def main(argv: list[str] | None = None) -> int:
     # Read before the log is opened for appending, so "already contains a
     # recording" still means *before this run*, and a torn end is reported as
     # the last run left it rather than as the repair on open leaves it.
-    banner = startup_lines(
-        args,
-        config_path,
-        find_prior_anchor(args.log),
-        torn_log=find_torn_tail(args.log),
-        torn_queue=find_torn_tail(args.queue) if args.queue else None,
-    )
+    #
+    # A log that cannot be read stops the box here, before anything binds, as
+    # the command-line error it is - the fix is a different --log - rather than
+    # as a traceback from somewhere inside the startup.
+    try:
+        banner = startup_lines(
+            args,
+            config_path,
+            find_prior_anchor(args.log),
+            torn_log=find_torn_tail(args.log),
+            torn_queue=find_torn_tail(args.queue) if args.queue else None,
+            clock_reset=find_clock_reset(args.log, now=time.monotonic()),
+        )
+    except CorruptLogError as exc:
+        p.error(f"--log {args.log} cannot be read: {exc}. Nothing in it was changed.")
     for line in banner:
         print(line)
     with contextlib.suppress(KeyboardInterrupt):

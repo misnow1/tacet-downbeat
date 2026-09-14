@@ -18,6 +18,7 @@ mid-game would otherwise corrupt every interval that spans it.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import errno
 import json
@@ -31,6 +32,16 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol, Self
 
+#: The schema this build writes, as `v` on every line.
+#:
+#: A log is read for years after the game that wrote it, by tools that did not
+#: exist yet, so the schema changes deliberately or not at all. A new fact about
+#: an entry goes under `data`, which every reader of every version carries
+#: through untouched. A change to the top-level fields - a new one, a rename, a
+#: changed type - is a new version: bump this, add a reader for the new shape
+#: beside the old one in `_READERS`, and check in a real log written under it
+#: as `tests/fixtures/log-v<n>.jsonl`. `tests/test_game_2_log.py` holds this
+#: build to every fixture there.
 SCHEMA_VERSION = 1
 
 #: Marker names are `CATEGORY|key`, so reading them back later is a split rather
@@ -77,6 +88,13 @@ class WriteError(AnnotationError):
 class CorruptLogError(AnnotationError):
     """A log line that cannot be read. Never skipped silently: see CLAUDE.md on
     failing visibly."""
+
+
+class SchemaVersionError(CorruptLogError):
+    """A line written under a schema this build does not read: by a newer tacet,
+    typically, read by an older one after a rollback. A kind of unreadable line,
+    so everything that stops on a corrupt log stops on this too, but it says
+    which version it found."""
 
 
 class Category(StrEnum):
@@ -372,16 +390,99 @@ class Entry:
 
     @classmethod
     def from_json(cls, line: str) -> Self:
+        """Read one line, or raise `CorruptLogError` saying what is wrong with it.
+
+        Dispatched on `v`. Every field is type-checked here, so a line that
+        reads is an entry the rest of the code can trust: a `"seq": "7"` that
+        got through used to surface much later as a bare TypeError from `max()`.
+        """
         try:
             raw = json.loads(line)
         except json.JSONDecodeError as exc:
             raise CorruptLogError(f"line is not JSON: {exc}") from exc
         if not isinstance(raw, dict):
             raise CorruptLogError(f"line is not an object: {line[:60]!r}")
-        try:
-            return cls(**raw)
-        except TypeError as exc:
-            raise CorruptLogError(f"line is not an entry: {exc}") from exc
+        if "v" not in raw:
+            raise CorruptLogError("line has no schema version 'v'")
+        version = raw["v"]
+        if not _is_int(version):
+            raise CorruptLogError(f"schema version must be a whole number, not {version!r}")
+        reader = _READERS.get(version)
+        if reader is None:
+            readable = ", ".join(f"v{v}" for v in READABLE_SCHEMAS)
+            raise SchemaVersionError(
+                f"line is schema v{version}, which this build cannot read (it reads {readable}); "
+                "it was written by a different version of tacet"
+            )
+        return cls(**reader(raw))
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    return math.isfinite(value)
+
+
+def _is_str(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _is_optional_str(value: object) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _is_optional_number(value: object) -> bool:
+    return value is None or _is_number(value)
+
+
+def _is_object(value: object) -> bool:
+    return isinstance(value, dict)
+
+
+#: Schema v1: each field, whether a line must carry it, and what it must be.
+#: The optional ones have defaults on `Entry` and were always written anyway.
+_V1_FIELDS: Mapping[str, tuple[bool, Callable[[object], bool], str]] = {
+    "seq": (True, _is_int, "a whole number"),
+    "event": (True, _is_str, "a string"),
+    "category": (True, _is_str, "a string"),
+    "kind": (True, _is_str, "a string"),
+    "label": (True, _is_str, "a string"),
+    "wall": (True, _is_str, "a string"),
+    "monotonic": (True, _is_number, "a finite number"),
+    "phase": (False, _is_optional_str, "a string or null"),
+    "span_id": (False, _is_optional_str, "a string or null"),
+    "project_seconds": (False, _is_optional_number, "a finite number or null"),
+    "data": (False, _is_object, "an object"),
+    "v": (True, _is_int, "a whole number"),
+}
+
+
+def _read_v1(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The fields of a v1 line, checked. v1 is closed: an unknown field is a
+    line this reader does not understand, not one it may quietly drop."""
+    unknown = sorted(set(raw) - set(_V1_FIELDS))
+    if unknown:
+        raise CorruptLogError(f"line has fields schema v1 does not: {', '.join(unknown)}")
+    for name, (required, valid, expected) in _V1_FIELDS.items():
+        if name not in raw:
+            if required:
+                raise CorruptLogError(f"line is missing {name!r}")
+            continue
+        if not valid(raw[name]):
+            raise CorruptLogError(f"{name!r} must be {expected}, not {raw[name]!r}")
+    return dict(raw)
+
+
+#: A reader for every schema this build can read, by version. A reader returns
+#: the keyword arguments for `Entry`, so a future one maps an older shape onto
+#: the current fields.
+_READERS: Mapping[int, Callable[[Mapping[str, Any]], dict[str, Any]]] = {1: _read_v1}
+
+READABLE_SCHEMAS: tuple[int, ...] = tuple(sorted(_READERS))
 
 
 def marker_name(entry: Entry) -> str:
@@ -425,6 +526,10 @@ class TornTail:
         """Whether the tail is a whole entry that lost only its terminator."""
         try:
             Entry.from_json(self.tail.decode(_ENCODING))
+        except SchemaVersionError:
+            # A whole line, just not one this build reads. Refused rather than
+            # judged a fragment and set aside from a log this build cannot read.
+            raise
         except (CorruptLogError, UnicodeDecodeError):
             return False
         return True
@@ -658,6 +763,11 @@ class AnnotationLog:
         #: an append-only log is for -- but it means `tacet.markers` will anchor
         #: today's entries to an earlier recording, so the box says so.
         self.prior_anchor: Entry | None = None
+        #: The last entry already in the file, when its `monotonic` is ahead of
+        #: this machine's clock - which restarts from near zero on a reboot.
+        #: Offsets measured across that are wrong for any entry placed by
+        #: arithmetic rather than by Reaper's playhead, so the box says so.
+        self.clock_reset: Entry | None = None
         #: What opening did about a torn final write left by the last run, or
         #: None if the file ended cleanly.
         self.repair: Repair | None = None
@@ -679,7 +789,9 @@ class AnnotationLog:
         """Pick up sequence numbering and open spans from an existing log."""
         if not self.path.exists():
             return
+        last: Entry | None = None
         for entry in read_entries(self.path):
+            last = entry
             self._seq = max(self._seq, entry.seq)
             if entry.event == ANCHOR_EVENT and self.prior_anchor is None:
                 self.prior_anchor = entry
@@ -689,6 +801,8 @@ class AnnotationLog:
                 self._open_spans[entry.span_id] = entry
             elif entry.phase == PHASE_END:
                 self._open_spans.pop(entry.span_id, None)
+        if last is not None:
+            self.clock_reset = clock_reset(last, now=self._clock.monotonic())
 
     def close(self) -> None:
         self._file.close()
@@ -839,33 +953,65 @@ def find_prior_anchor(path: Path | str) -> Entry | None:
     return None
 
 
+def clock_reset(last: Entry, *, now: float) -> Entry | None:
+    """`last` if this machine's monotonic clock is behind it, else None.
+
+    Pure. Monotonic time never goes backwards within a boot, so a clock behind
+    the last entry is a clock that has restarted since it was written.
+    """
+    return last if last.monotonic > now else None
+
+
+def find_clock_reset(path: Path | str, *, now: float) -> Entry | None:
+    """`clock_reset` for a log on disk, before it is opened. A missing or empty
+    log has no clock to compare."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    # Every line is read, not just the last: a log with a corrupt line in it
+    # is refused here as it would be on open.
+    last = collections.deque(read_entries(path), maxlen=1)
+    return clock_reset(last[0], now=now) if last else None
+
+
 def read_entries(path: Path | str) -> Iterator[Entry]:
     """Read a log back.
 
-    A malformed line raises `CorruptLogError`, because dropping entries quietly is
-    worse than stopping. The one exception is an unterminated final line, which
-    is the ordinary result of losing power mid-write: that costs the last entry
-    and nothing else.
+    A malformed line raises `CorruptLogError` naming its line number, because
+    dropping entries quietly is worse than stopping. The one exception is an
+    unterminated final line, which is the ordinary result of losing power
+    mid-write: that costs the last entry and nothing else. A final line that is
+    whole but of a schema this build cannot read is not that, and still raises.
     """
     path = Path(path)
     with path.open(encoding=_ENCODING) as handle:
         pending: str | None = None
+        pending_number = 0
         pending_terminated = False
-        for raw in handle:
+        for number, raw in enumerate(handle, start=1):
             terminated = raw.endswith(_LINE_TERMINATOR)
             line = raw.strip()
             if not line:
                 continue
             if pending is not None:
-                yield Entry.from_json(pending)
-            pending, pending_terminated = line, terminated
+                yield _entry_at(pending, pending_number)
+            pending, pending_number, pending_terminated = line, number, terminated
         if pending is None:
             return
         if pending_terminated:
-            yield Entry.from_json(pending)
+            yield _entry_at(pending, pending_number)
             return
         try:
-            entry = Entry.from_json(pending)
+            entry = _entry_at(pending, pending_number)
+        except SchemaVersionError:
+            raise
         except CorruptLogError:
             return  # torn final write
         yield entry
+
+
+def _entry_at(line: str, number: int) -> Entry:
+    try:
+        return Entry.from_json(line)
+    except CorruptLogError as exc:
+        raise type(exc)(f"line {number}: {exc}") from exc
