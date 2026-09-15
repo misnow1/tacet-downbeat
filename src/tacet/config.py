@@ -5,7 +5,7 @@ Reaper -- and today each one takes them as flags. `tacet-serve` alone is eight
 lines of command with a quoted queue path in the middle of it, retyped in a
 press box on a Saturday. The values it repeats do not change between games; only
 `--log` does, which is exactly why `--log` is not a key here. See
-docs/gameday.md.
+docs/box.md.
 
 So: a file. It is *optional* by design. Every flag still exists, nothing is
 required to use it, and a machine without one behaves exactly as before.

@@ -722,7 +722,7 @@ names all night. Pressing `STOP` on the scoreboard console forces a full dump.
 Consequence for capture: the log has to distinguish *field is blank* from *field
 has never been written*. Those are different facts, collapsing them quietly
 poisons the Phase 3 analysis, and it cannot be recovered afterwards. The
-operational half of this is in gameday.md.
+operational half of this is in box.md, "Not yet proven".
 
 ### The pregame countdown occupies a clock
 
@@ -731,7 +731,7 @@ countdown to kickoff from around the time doors open, roughly 150 minutes out.
 It ends at the team entrance, resets, and restarts at the top of the first
 quarter.
 
-Capture will normally already be running through all of that (gameday.md), so a
+Capture will normally already be running through all of that (reaper.md), so a
 reader attaches during the countdown rather than at kickoff. Two consequences:
 
 - **A 150-minute countdown does not fit the shape of a game clock.** Main Clock

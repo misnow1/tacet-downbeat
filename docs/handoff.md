@@ -315,7 +315,7 @@ than a bench probe.
 
 Found 2026-09-12, worked around, not fixed. The record button is greyed out from
 the moment the box starts, and stays that way until a recording is rolled in
-Reaper and stopped. `docs/gameday.md` carries the workaround; this is the part
+Reaper and stopped. `docs/reaper.md` carries the workaround; this is the part
 that needs an afternoon.
 
 `record_refusal` rests on one inference: Reaper streams `/time` while the

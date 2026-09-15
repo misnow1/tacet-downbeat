@@ -181,14 +181,14 @@ BANNER_STEP_INDENT = 4
 
 #: Bind addresses the banner has something to say about. `0.0.0.0` is not an
 #: address anyone can open, and `127.0.0.1` is the one that looks like a
-#: firewall problem from the iPad (docs/gameday.md).
+#: firewall problem from the iPad (docs/box.md).
 ALL_INTERFACES = web.DEFAULT_HOST
 #: Not `reaper.DEFAULT_HOST`, which is the same string meaning something else
 #: entirely -- where Reaper is. This one is about what a browser can open.
 LOOPBACK = "127.0.0.1"
 
 #: What the config row says when there is no config file. Pinned here because
-#: docs/gameday.md quotes it in the table of things that go wrong.
+#: docs/troubleshooting.md quotes it in the table of things that go wrong.
 NO_CONFIG = "none (flags only)"
 
 

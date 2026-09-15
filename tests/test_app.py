@@ -1128,7 +1128,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         self.assertIsNone(self.last().project_seconds)
 
     async def test_a_position_that_stopped_updating_is_not_stamped_while_other_feedback_flows(self):
-        # This rig meters continuously while parked (gameday.md), so the link
+        # This rig meters continuously while parked (reaper.md), so the link
         # never goes quiet. After the throwaway take `/time` stops at 4.8s, and
         # every entry made while parked used to be stamped 4.8 - which
         # `markers.position_of` prefers to the arithmetic that would have
