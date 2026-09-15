@@ -1338,6 +1338,69 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.wait_for_fade()
         self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
 
+    async def test_up_on_whistle_during_a_ride_in_snaps_to_unity(self):
+        # #45, decided: the whistle means the band is about to play.
+        app = self.build()
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        self.assertLess(app._console.commanded_level, dm7.UNITY)
+
+        await app.annotate("up-whistle")
+        # At unity when the tap returns: the snap is awaited like any other.
+        self.assertEqual(app._console.commanded_level, dm7.UNITY)
+        self.assertIsNone(app.snapshot()["fader"]["target"])
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        await app.wait_for_fade()
+
+        # The ride-in sent nothing after the snap and never reported landing.
+        levels = self.console_sender.levels()
+        self.assertEqual(levels[-1], dm7.UNITY)
+        self.assertEqual(levels.count(dm7.UNITY), 1)
+        self.assertNotIn(tacet_app.MOVE_LANDED, [e.event for e in self.entries()])
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+        self.assertEqual([e.data["detail"] for e in commanded], ["up-slow", "up-whistle"])
+        self.assertIs(commanded[-1].data["delivered"], True)
+
+    async def test_up_on_drums_during_a_ride_in_snaps_too(self):
+        app = self.build()
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        await app.annotate("up-drums")
+        self.assertEqual(app._console.commanded_level, dm7.UNITY)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+
+    async def test_up_slow_during_a_ride_in_does_not_restart_it(self):
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        await app.annotate("up-slow")
+        self.assertLess(app._console.commanded_level, dm7.UNITY)
+        await app.wait_for_fade()
+        # One climb: never back down to the start of a second ride-in.
+        levels = self.console_sender.levels()
+        self.assertEqual(levels, sorted(levels))
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+        self.assertEqual(len(commanded), 1)
+
+    async def test_up_on_whistle_after_the_ride_in_landed_sends_nothing(self):
+        app = self.build()
+        app._slow_open_seconds = 0.1
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertFalse(app.machine.riding_in)
+        sent = len(self.console_sender.packets)
+        await app.annotate("up-whistle")
+        self.assertEqual(len(self.console_sender.packets), sent)
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+        self.assertEqual(len(commanded), 1)
+
     async def test_up_slow_is_still_an_open_to_the_machine(self):
         app = self.build()
         app._slow_open_seconds = 0.2

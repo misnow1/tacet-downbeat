@@ -148,7 +148,8 @@ class App:
         open_seconds: float | None = None,
     ) -> state.Outcome:
         before = self.machine
-        outcome = state.step(before, state.Event(command, source=source, detail=detail))
+        event = state.Event(command, source=source, detail=detail, gradual=open_seconds is not None)
+        outcome = state.step(before, event)
         self.machine = outcome.machine
         self._last_refusal = outcome.refusal
 
@@ -238,6 +239,13 @@ class App:
         started it could not say so, because it was written first."""
         self._record(MOVE_LANDED, data=self._move_end(target), project_seconds=self._playhead())
 
+    def _ride_in_landed(self) -> None:
+        """Tell the machine the ride-in is over, so a later trigger is a
+        confirmation again rather than a snap (#45). Stepped directly, like a
+        failed move: nothing was tapped, so nothing is refused or cleared."""
+        self.machine = state.step(self.machine, state.Event(state.Command.RIDE_IN_COMPLETE)).machine
+        self._move_landed(self._open_level)
+
     def _move_end(self, target: int) -> dict[str, Any]:
         """Where a move ended up against where it was going, for the log."""
         return {
@@ -280,7 +288,7 @@ class App:
             return
         else:
             if self._move_task is this:
-                self._move_landed(self._open_level)
+                self._ride_in_landed()
         finally:
             # No command follows: the machine reached OPEN when the tap landed,
             # and only the gesture was still running.
