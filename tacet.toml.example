@@ -47,6 +47,15 @@ receive_port = 9000         # --reaper-feedback-port -- Reaper's "device port"
 # Stable, and must match the path the ReaScript watches. Mismatching this is the
 # single most common way to have everything look healthy and mirror nothing.
 queue = "~/Library/Application Support/REAPER/tacet/queue.tsv"
+#
+# Where Reaper records: the NAS share, mounted. The box refuses to start without
+# room for a whole game there, or if the path is not there at all - which is
+# what an unmounted share looks like. --no-disk-check (a flag, never a key)
+# starts it anyway.
+audio_path = "/Volumes/band"  # --audio-path
+# Tracks this game records. Changes with the patch list, so check it each game.
+channels = 22               # --channels
+game_hours = 5.0            # --game-hours
 
 [fader]
 # The close fade. Asymmetric by design: fast open, slow close.
