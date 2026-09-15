@@ -135,8 +135,9 @@ async def _run(args: argparse.Namespace) -> None:
     # arrive inside `runner.cleanup()` - which waits on websocket handlers, so
     # any connected browser made that the common case - and took out the rest of
     # the shutdown with it, closing neither the log nor the queue and printing a
-    # page of traceback at whoever was standing there. Nothing was lost, because
-    # both fsync per line, but that was the earlier decision saving this one.
+    # page of traceback at whoever was standing there. Nothing was lost then,
+    # because both files were fsynced per line. They are written on a thread now
+    # (#41), which makes closing the log - it waits for that thread - matter more.
     stop = asyncio.Event()
     armed: float | None = None
 

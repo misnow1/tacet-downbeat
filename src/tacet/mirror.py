@@ -21,6 +21,7 @@ test pins that the rebuilt file matches what was written live.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from .annotations import (
     Entry,
     Opener,
     Repair,
+    Syncer,
     marker_name,
     open_for_append,
 )
@@ -114,20 +116,27 @@ def rebuild_queue(entries: Iterable[Entry]) -> str:
 
 
 class MirrorQueue:
-    """Append-only, flushed and fsynced per line like the log itself.
+    """Append-only, flushed per line and fsynced per batch, like the log itself.
 
     Every line is terminated before it is flushed: the Lua tail only consumes
     complete lines, so an unterminated one would strand that event until the
     next arrived.
     """
 
-    def __init__(self, path: Path | str, *, fsync: bool = True, opener: Opener = open_for_append) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        fsync: bool = True,
+        opener: Opener = open_for_append,
+        sync: Syncer = os.fsync,
+    ) -> None:
         self.path = Path(path)
         # Nothing unterminated is trusted here, even a tail with three fields:
         # it may be a truncated span id, and the queue is regenerable. The Lua
         # tail never reads past the last terminator, so the cut cannot land
         # behind its stored position.
-        self._file = AppendFile(self.path, keep_entries=False, fsync=fsync, opener=opener)
+        self._file = AppendFile(self.path, keep_entries=False, fsync=fsync, opener=opener, sync=sync)
         self.repair: Repair | None = None
 
     def open(self) -> Self:
@@ -144,8 +153,17 @@ class MirrorQueue:
         self.close()
 
     def append(self, entry: Entry) -> None:
-        """Raises `WriteError` if the line did not reach the disk; the next
-        append starts on a fresh line regardless."""
+        """`write` and `sync` one entry."""
+        self.write(entry)
+        self.sync()
+
+    def write(self, entry: Entry) -> None:
+        """Raises `WriteError` if the line did not reach the file; the next
+        write starts on a fresh line regardless. Flushed, so the Lua tail sees
+        it, but not durable until `sync`."""
         if not self._file.is_open:
             raise QueueFormatError("mirror queue is not open")
-        self._file.append_line(queue_line(entry))
+        self._file.write_line(queue_line(entry))
+
+    def sync(self) -> None:
+        self._file.sync()

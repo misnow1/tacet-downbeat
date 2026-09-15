@@ -7,9 +7,14 @@ view is lost and the data is not.
 
 Most band state cannot be reconstructed afterwards (design.md 5.6). It is not in
 the multitrack, not in RTD and not in the fader moves, so a game that is not
-annotated live is permanently unlabelled. That is why every entry is flushed and
-fsynced as it is written rather than buffered: an entry that is not on disk is
-an entry lost.
+annotated live is permanently unlabelled. That is why every entry is written,
+flushed and fsynced as soon as it can be.
+
+As soon as it can be, not before the tap is answered. Writing happens on one
+thread of its own (#41): a stalled disk must never stall the event loop that
+moves the fader, and a missed downbeat costs far more than the last few entries
+lost with a process that died. Sequence numbers and spans are decided on the
+loop; the thread only writes, and says afterwards what did not save.
 
 Times are recorded twice. `wall` is for humans and survives a restart;
 `monotonic` is what offsets are computed from, because an NTP correction
@@ -24,8 +29,10 @@ import errno
 import json
 import math
 import os
+import queue
+import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -306,10 +313,15 @@ def _check_value(key: str, value: object) -> None:
 
 
 class EntrySink(Protocol):
-    """Anything that wants a copy of each entry as it is written, such as the
-    Reaper mirror queue."""
+    """Anything that wants a copy of each entry once it is saved, such as the
+    Reaper mirror queue. Called on the log's writer thread, never the loop.
 
-    def append(self, entry: Entry) -> None: ...
+    `write` lands one entry without syncing it; `sync` then covers every entry
+    written since the last, so a burst of taps costs one fsync."""
+
+    def write(self, entry: Entry) -> None: ...
+
+    def sync(self) -> None: ...
 
 
 class Clock(Protocol):
@@ -622,6 +634,8 @@ class LineHandle(Protocol):
 
 
 Opener = Callable[[Path], LineHandle]
+#: Makes a file's written data durable. Injected so a test can make it slow.
+Syncer = Callable[[int], None]
 
 
 def open_for_append(path: Path) -> LineHandle:
@@ -653,7 +667,7 @@ class WriteHealth:
 
 
 class AppendFile:
-    """Lines appended to a file, each flushed and fsynced before the next, that
+    """Lines appended to a file, flushed as written and fsynced on request, that
     survives a write failing partway.
 
     A failed write can leave part of a line on disk with the handle still open,
@@ -676,11 +690,13 @@ class AppendFile:
         keep_entries: bool,
         fsync: bool = True,
         opener: Opener = open_for_append,
+        sync: Syncer = os.fsync,
     ) -> None:
         self.path = Path(path)
         self._keep_entries = keep_entries
         self._fsync = fsync
         self._opener = opener
+        self._sync = sync
         self._handle: LineHandle | None = None
         #: Opened, then a write failed. Still open as far as callers are
         #: concerned; the handle is reopened by the next append.
@@ -705,18 +721,34 @@ class AppendFile:
             handle.close()
 
     def append_line(self, line: str) -> None:
-        """Write one line and its terminator, or raise `WriteError`."""
+        """Write one line and its terminator and sync it, or raise `WriteError`."""
+        self.write_line(line)
+        self.sync()
+
+    def write_line(self, line: str) -> None:
+        """Write and flush one line and its terminator, or raise `WriteError`.
+        Not durable until `sync`."""
         if not self.is_open:
             raise AnnotationError(f"{self.path.name} is not open")
         try:
             handle = self._handle if self._handle is not None else self._reopen()
             handle.write(line + _LINE_TERMINATOR)
             handle.flush()
-            if self._fsync:
-                os.fsync(handle.fileno())
         except OSError as exc:
-            self._abandon()
+            self.abandon()
             raise WriteError(f"could not write {self.path.name}: {exc.strerror or exc}") from exc
+
+    def sync(self) -> None:
+        """Make every line written since the last sync durable, or raise
+        `WriteError`. A file whose last write failed has nothing to sync: that
+        write abandoned its handle, and the next one reopens it."""
+        if not self._fsync or self._handle is None:
+            return
+        try:
+            self._sync(self._handle.fileno())
+        except OSError as exc:
+            self.abandon()
+            raise WriteError(f"could not sync {self.path.name}: {exc.strerror or exc}") from exc
 
     def _reopen(self) -> LineHandle:
         if not self.path.exists():
@@ -726,7 +758,8 @@ class AppendFile:
         self._broken = False
         return self._handle
 
-    def _abandon(self) -> None:
+    def abandon(self) -> None:
+        """Give up on the handle after a failure; the next write reopens it."""
         handle, self._handle = self._handle, None
         self._broken = True
         if handle is not None:
@@ -737,8 +770,244 @@ class AppendFile:
                 handle.close()
 
 
+# -- the writer thread ------------------------------------------------------
+
+#: The log's health once its writer thread has ended. Quoted on the page and in
+#: docs/troubleshooting.md. It should never happen - the thread catches
+#: everything it can - which is exactly why it must not happen quietly.
+WRITER_STOPPED = "the log writer has stopped; nothing more will be saved until the box is restarted"
+
+#: How long closing a log waits for the writer to finish what it was given. A
+#: disk that has hung - a dropped NAS mount, say - must not hang shutdown too.
+WRITER_STOP_SECONDS = 5.0
+
+#: How often a wait on the writer checks that it is still alive, so a thread
+#: that dies with the wait queued behind it cannot hang the waiter.
+WRITER_POLL_SECONDS = 0.05
+
+
+@dataclass(frozen=True)
+class Written:
+    """What became of one entry on the writer thread.
+
+    `error` is None when the entry saved. `mirrored` says whether the mirror
+    took its copy, and `mirror_error` why not; neither is set when there is no
+    mirror, or when the entry did not save and so was never offered to it.
+    """
+
+    entry: Entry
+    error: str | None = None
+    mirrored: bool = False
+    mirror_error: str | None = None
+
+
+@dataclass(frozen=True)
+class _Pending:
+    entry: Entry
+    line: str
+
+
+@dataclass(frozen=True)
+class _Mark:
+    """Queued behind everything submitted so far; set once that is written."""
+
+    done: threading.Event = field(default_factory=threading.Event)
+    stop: bool = False
+
+
+class LogWriter:
+    """The one thread that touches the disk for a log and its mirror (#41).
+
+    One queue, drained in order by one thread, so entries land in the order they
+    were accepted, and each batch is written to the log and synced before any of
+    it is offered to the mirror: the queue never gets ahead of the log. Every
+    line queued while a sync was running is covered by the next one.
+
+    The thread must not die while the process lives, because lines would pile
+    up behind it unwritten while everything looked healthy. Every failure it can
+    catch becomes a `Written` with an error, and the thread carries on. One it
+    cannot catch ends it, and `alive` is how the log finds out and says so.
+    """
+
+    def __init__(
+        self,
+        file: AppendFile,
+        mirror: EntrySink | None = None,
+        *,
+        on_written: Callable[[], None] | None = None,
+    ) -> None:
+        self._file = file
+        self._mirror = mirror
+        self._on_written = on_written
+        self._queue: queue.SimpleQueue[_Pending | _Mark] = queue.SimpleQueue()
+        self._outcomes: queue.SimpleQueue[Written] = queue.SimpleQueue()
+        self._thread = threading.Thread(target=self._run, name=f"tacet-writer:{file.path.name}", daemon=True)
+        #: Set by the thread as it ends, before it wakes anyone: a woken owner
+        #: can ask before `Thread.is_alive` has caught up, and must not be told
+        #: a dying writer is fine.
+        self._finished = threading.Event()
+
+    # -- the loop's side --------------------------------------------------
+
+    def start(self) -> None:
+        self._thread.start()
+
+    @property
+    def alive(self) -> bool:
+        return self._thread.is_alive() and not self._finished.is_set()
+
+    def when_written(self, callback: Callable[[], None] | None) -> None:
+        """Called on the writer thread after every batch. It must be safe to
+        call from there, and must not block."""
+        self._on_written = callback
+
+    def submit(self, entry: Entry, line: str) -> None:
+        self._queue.put(_Pending(entry, line))
+
+    def outcomes(self) -> list[Written]:
+        """Everything written since the last call, in order."""
+        taken: list[Written] = []
+        with contextlib.suppress(queue.Empty):
+            while True:
+                taken.append(self._outcomes.get_nowait())
+        return taken
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Block until everything submitted so far is written. False if the
+        writer is dead or did not finish in time."""
+        return self._wait(_Mark(), timeout)
+
+    def stop(self, timeout: float | None = None) -> bool:
+        """Write what was submitted, then end the thread. False if it did not
+        finish in time, in which case it is still running and still owns the
+        file."""
+        if not self._wait(_Mark(stop=True), timeout):
+            return False
+        self._thread.join(timeout)
+        return not self.alive
+
+    def _wait(self, mark: _Mark, timeout: float | None) -> bool:
+        if not self.alive:
+            return False
+        self._queue.put(mark)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not mark.done.wait(WRITER_POLL_SECONDS):
+            # Asked afresh each time: the thread can die while this waits.
+            if self._finished.is_set():
+                return mark.done.is_set()
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+        return True
+
+    # -- the thread's side ------------------------------------------------
+
+    def _run(self) -> None:
+        try:
+            while True:
+                batch = self._take()
+                pending = [item for item in batch if isinstance(item, _Pending)]
+                marks = [item for item in batch if isinstance(item, _Mark)]
+                if pending:
+                    self._write_batch(pending)
+                for mark in marks:
+                    mark.done.set()
+                if any(mark.stop for mark in marks):
+                    return
+        finally:
+            # However the thread ends - including the way it must not - the
+            # owner is woken to look, rather than finding out at the next tap.
+            self._finished.set()
+            self._wake()
+
+    def _take(self) -> list[_Pending | _Mark]:
+        """Wait for one item, then take everything else already queued."""
+        batch = [self._queue.get()]
+        with contextlib.suppress(queue.Empty):
+            while True:
+                batch.append(self._queue.get_nowait())
+        return batch
+
+    def _write_batch(self, batch: Sequence[_Pending]) -> None:
+        try:
+            outcomes = self._save(batch)
+        except Exception as exc:  # never lets the thread end
+            # Where it went wrong is unknown, so nothing in the batch is claimed
+            # as saved and the handle is not trusted; the next write reopens it.
+            self._file.abandon()
+            error = f"could not write {self._file.path.name}: unexpected {type(exc).__name__}: {exc}"
+            outcomes = [Written(item.entry, error=error) for item in batch]
+        for outcome in outcomes:
+            self._outcomes.put(outcome)
+        self._wake()
+
+    def _wake(self) -> None:
+        if self._on_written is not None:
+            with contextlib.suppress(Exception):
+                self._on_written()
+
+    def _save(self, batch: Sequence[_Pending]) -> list[Written]:
+        errors: dict[int, str] = {}
+        for item in batch:
+            try:
+                self._file.write_line(item.line)
+            except WriteError as exc:
+                errors[item.entry.seq] = str(exc)
+        landed = [item.entry for item in batch if item.entry.seq not in errors]
+        if landed:
+            try:
+                self._file.sync()
+            except WriteError as exc:
+                errors.update({entry.seq: str(exc) for entry in landed})
+                landed = []
+        mirror_errors = self._mirror_batch(landed)
+        mirrored = self._mirror is not None
+        return [
+            Written(item.entry, error=errors[item.entry.seq])
+            if item.entry.seq in errors
+            else Written(
+                item.entry,
+                mirrored=mirrored and item.entry.seq not in mirror_errors,
+                mirror_error=mirror_errors.get(item.entry.seq),
+            )
+            for item in batch
+        ]
+
+    def _mirror_batch(self, entries: Sequence[Entry]) -> dict[int, str]:
+        """Offer saved entries to the mirror. Why each one it did not take was
+        refused, by sequence number.
+
+        Any exception at all is the mirror's failure and goes no further. The
+        queue is a view the log can regenerate; a broken mirror must not cost
+        the log its health, and must not end this thread.
+        """
+        if self._mirror is None or not entries:
+            return {}
+        errors: dict[int, str] = {}
+        taken: list[Entry] = []
+        for entry in entries:
+            try:
+                self._mirror.write(entry)
+            except Exception as exc:
+                errors[entry.seq] = str(exc)
+            else:
+                taken.append(entry)
+        if taken:
+            try:
+                self._mirror.sync()
+            except Exception as exc:
+                errors.update({entry.seq: str(exc) for entry in taken})
+        return errors
+
+
 class AnnotationLog:
-    """Append-only JSONL. One entry per line, flushed and fsynced as written."""
+    """Append-only JSONL. One entry per line, written on a thread of its own.
+
+    Everything that decides what an entry *is* - its sequence number, its span,
+    its encoding - happens here, on the caller's thread. Only the disk is
+    deferred, to a `LogWriter`. What it reports back is applied by `settle`:
+    health, and undoing the span bookkeeping for a start or end that did not
+    save, so the page offers that tap again.
+    """
 
     def __init__(
         self,
@@ -748,12 +1017,12 @@ class AnnotationLog:
         fsync: bool = True,
         mirror: EntrySink | None = None,
         opener: Opener = open_for_append,
+        sync: Syncer = os.fsync,
     ) -> None:
         self.path = Path(path)
         self._clock: Clock = clock if clock is not None else SystemClock()
-        self._fsync = fsync
-        self._mirror = mirror
-        self._file = AppendFile(self.path, keep_entries=True, fsync=fsync, opener=opener)
+        self._file = AppendFile(self.path, keep_entries=True, fsync=fsync, opener=opener, sync=sync)
+        self._writer = LogWriter(self._file, mirror)
         #: Whether entries are reaching the disk. Shown on the page: an
         #: annotation that is not saved is gone, and the operator is the only
         #: one who can do anything about it.
@@ -763,6 +1032,12 @@ class AnnotationLog:
         self.mirror_health = WriteHealth()
         self._seq = 0
         self._open_spans: dict[str, Entry] = {}
+        #: The start of each span whose end has been accepted but not yet
+        #: reported saved, so an end that fails can reopen it.
+        self._closing: dict[str, Entry] = {}
+        #: Entries handed to the writer and not yet reported on.
+        self._unsettled = 0
+        self._writer_stop_reported = False
         #: The first `recording-started` already in the file when it was opened,
         #: or None for a log this run started. Not a fault -- appending is what
         #: an append-only log is for -- but it means `tacet.markers` will anchor
@@ -781,13 +1056,15 @@ class AnnotationLog:
 
     def open(self) -> Self:
         # The repair comes before resuming, so the entries counted are the
-        # entries appended after.
+        # entries appended after. Both before the writer starts, so the thread
+        # is the only thing touching the file from then until close.
         self.repair = self._file.open()
         try:
             self._resume()
         except BaseException:
             self._file.close()
             raise
+        self._writer.start()
         return self
 
     def _resume(self) -> None:
@@ -804,14 +1081,95 @@ class AnnotationLog:
         if last is not None:
             self.clock_reset = clock_reset(last, now=self._clock.monotonic())
 
-    def close(self) -> None:
-        self._file.close()
+    def close(self, timeout: float = WRITER_STOP_SECONDS) -> None:
+        """Write what was accepted, then close. A writer that does not finish in
+        time keeps the file - closing it under a write in progress would be
+        worse - and dies with the process, which is what the thread's deferral
+        already accepted."""
+        stopped = self._writer.stop(timeout)
+        if stopped or not self._writer.alive:
+            self._file.close()
+        # After the file is closed, so a writer stopped on purpose is not
+        # mistaken for one that died.
+        self.settle()
 
     def __enter__(self) -> Self:
         return self.open()
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    # -- what the writer reports ------------------------------------------
+
+    def when_written(self, callback: Callable[[], None] | None) -> None:
+        """Have `callback` called on the writer thread after each batch, so the
+        owner can wake up and `settle`. It must be thread-safe and not block."""
+        self._writer.when_written(callback)
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Block until everything accepted so far is written, then settle.
+        False if the writer is dead or did not finish in time. For tests,
+        tools and shutdown; never the event loop."""
+        written = self._writer.flush(timeout)
+        self.settle()
+        return written
+
+    def settle(self) -> bool:
+        """Apply what the writer has reported since the last call. True if that
+        changed anything the page shows."""
+        before = self._shown()
+        for outcome in self._writer.outcomes():
+            self._unsettled -= 1
+            self._apply(outcome)
+        if not self._writer.alive and self._file.is_open and not self._writer_stop_reported:
+            self._writer_stopped()
+        return self._shown() != before
+
+    def _shown(self) -> tuple[object, ...]:
+        return (
+            self.health.error,
+            self.health.failures,
+            self.mirror_health.error,
+            self.mirror_health.failures,
+            tuple(self._open_spans),
+        )
+
+    def _apply(self, outcome: Written) -> None:
+        entry = outcome.entry
+        if outcome.error is not None:
+            self.health.failed(outcome.error)
+            self._unsave_span(entry)
+            return
+        self.health.succeeded()
+        if entry.phase == PHASE_END and entry.span_id is not None:
+            self._closing.pop(entry.span_id, None)
+        if outcome.mirror_error is not None:
+            self.mirror_health.failed(outcome.mirror_error)
+        elif outcome.mirrored:
+            self.mirror_health.succeeded()
+
+    def _unsave_span(self, entry: Entry) -> None:
+        """Undo what accepting a span entry did, now that it did not save: a
+        start that is not in the file is not open, and an end that is not in
+        the file has not closed anything, so the button offers it again."""
+        if entry.span_id is None:
+            return
+        if entry.phase == PHASE_START:
+            self._open_spans.pop(entry.span_id, None)
+        elif entry.phase == PHASE_END:
+            start = self._closing.pop(entry.span_id, None)
+            if start is not None:
+                self._open_spans[entry.span_id] = start
+
+    def _writer_stopped(self) -> None:
+        """Once, however it is noticed. Everything accepted and never reported
+        on is counted as lost, because it was."""
+        self._writer_stop_reported = True
+        # Not `failed`: the stop is not itself a lost entry, and `failures`
+        # counts entries.
+        self.health.error = WRITER_STOPPED
+        self.health.failures += self._unsettled
+        self._unsettled = 0
 
     # -- writing ----------------------------------------------------------
 
@@ -836,6 +1194,7 @@ class AnnotationLog:
         project_seconds: float | None = None,
     ) -> str:
         """Open a span. Returns its id, which `end_span` needs."""
+        self.settle()
         event = lookup(event_key)
         if event.kind is not Kind.SPAN:
             raise EventKindError(f"{event_key!r} is an instant; use record")
@@ -857,6 +1216,8 @@ class AnnotationLog:
         data: Mapping[str, Any] | None = None,
         project_seconds: float | None = None,
     ) -> Entry:
+        # First, so an end that failed to save is open again to be retapped.
+        self.settle()
         start = self._open_spans.get(span_id)
         if start is None:
             raise UnknownSpanError(f"no open span with id {span_id!r}")
@@ -867,9 +1228,10 @@ class AnnotationLog:
             span_id=span_id,
             project_seconds=project_seconds,
         )
-        # Only once the end is on disk, so an end that was not saved leaves the
-        # span open and the next tap saves it.
+        # Closed as soon as the end is accepted, and reopened by `settle` if the
+        # writer reports that it did not save.
         del self._open_spans[span_id]
+        self._closing[span_id] = start
         return entry
 
     def open_spans(self) -> dict[str, str]:
@@ -891,8 +1253,16 @@ class AnnotationLog:
         span_id: str | None = None,
         project_seconds: float | None = None,
     ) -> Entry:
+        """Accept one entry and hand it to the writer.
+
+        Raises `WriteError` only for what is known before the disk is involved:
+        an entry that cannot be encoded, or a writer that has stopped. Either
+        way the sequence number stays spent: a gap in the log marks where an
+        entry was lost. A disk fault arrives later, through `settle`.
+        """
         if not self._file.is_open:
             raise AnnotationError("log is not open")
+        self.settle()
         self._seq += 1
         entry = Entry.build(
             self._seq,
@@ -904,37 +1274,19 @@ class AnnotationLog:
             project_seconds=project_seconds,
         )
         try:
-            try:
-                line = entry.to_json()
-            except ValueError as exc:
-                # Not a disk fault, but the same outcome, and the same place to
-                # say so: an entry that is not saved, counted on the page.
-                raise WriteError(f"could not encode {event.key}: {exc}") from exc
-            self._file.append_line(line)
-        except WriteError as exc:
-            # The sequence number stays spent: a gap in the log marks where an
-            # entry was lost.
-            self.health.failed(str(exc))
-            raise
-        self.health.succeeded()
-        self._mirror_entry(entry)
+            line = entry.to_json()
+        except ValueError as exc:
+            # Not a disk fault, but the same outcome, and the same place to say
+            # so: an entry that is not saved, counted on the page.
+            self.health.failed(f"could not encode {event.key}: {exc}")
+            raise WriteError(f"could not encode {event.key}: {exc}") from exc
+        if not self._writer.alive:
+            # Refused rather than queued behind a thread that will never write it.
+            self.health.failures += 1
+            raise WriteError(WRITER_STOPPED)
+        self._unsettled += 1
+        self._writer.submit(entry, line)
         return entry
-
-    def _mirror_entry(self, entry: Entry) -> None:
-        """Mirrored from the one place an entry is written, so the two files
-        cannot drift, and only once the entry is saved.
-
-        A mirror failure is recorded and goes no further. The queue is a view
-        the log can regenerate; failing the write that did land would invite a
-        second tap, and a duplicate entry in the one file that matters."""
-        if self._mirror is None:
-            return
-        try:
-            self._mirror.append(entry)
-        except (OSError, AnnotationError) as exc:
-            self.mirror_health.failed(str(exc))
-            return
-        self.mirror_health.succeeded()
 
 
 def find_prior_anchor(path: Path | str) -> Entry | None:

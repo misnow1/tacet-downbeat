@@ -61,6 +61,7 @@ class _Unreachable:
 @dataclass
 class Box:
     app: App
+    log: ann.AnnotationLog
     clock: list[float]
     disk: Disk
 
@@ -78,7 +79,7 @@ def _build(root: Path, *, console: _Sender | _Unreachable) -> Box:
         recorder=reaper.ReaperClient(sender=_Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],
     )
-    return Box(app=app, clock=clock, disk=disk)
+    return Box(app=app, log=log, clock=clock, disk=disk)
 
 
 async def standing_down(root: Path) -> dict[str, Any]:
@@ -115,9 +116,12 @@ async def faults(root: Path) -> dict[str, Any]:
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE
+    box.log.flush()  # so the disk fills after `armed` is saved, not before
     box.disk.full = True
     await box.app.annotate("up-drums")
     await box.app.start_recording()
+    # Both entries failed on the writer thread; wait for it to say so (#41).
+    box.log.flush()
     return box.app.snapshot()
 
 

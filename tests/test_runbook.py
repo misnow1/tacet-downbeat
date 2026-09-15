@@ -122,6 +122,10 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         argv = ["--console-host", "10.0.0.5", "--dca", "3", "--log", "/games/g.jsonl"]
         return serve.startup_lines(serve.parser().parse_args(argv), None, open_spans=[span])
 
+    def test_the_runbook_quotes_the_stopped_writer(self) -> None:
+        # Quoted up to the semicolon; the page puts "Log not saving: " before it.
+        self.assertIn(annotations.WRITER_STOPPED.split(";")[0], self.troubleshooting)
+
     def test_the_runbook_quotes_the_missing_log_refusal(self) -> None:
         # Quoted up to the example, which the runbook writes out on its own.
         self.assertIn(serve.LOG_REQUIRED.split(":")[0], self.troubleshooting)

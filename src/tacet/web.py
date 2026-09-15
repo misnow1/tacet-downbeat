@@ -214,8 +214,9 @@ async def _annotate(request: web.Request) -> web.Response:
         entry = await app.annotate(key, data=payload.get("data"))
     except ann.AnnotationError as exc:
         raise _bad_request(str(exc)) from exc
-    # A null entry is one that did not reach the disk. Not an error status: the
-    # tap was acted on, and the state below carries the log fault to the page.
+    # A null entry is one the log refused. Not an error status: the tap was
+    # acted on, and the state below carries the log fault to the page. An entry
+    # is accepted, not yet saved; a later failure arrives the same way (#41).
     saved = entry.as_dict() if entry is not None else None
     return web.json_response({"entry": saved, "state": app.snapshot()})
 
