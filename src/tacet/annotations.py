@@ -179,6 +179,8 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("recording-stopped", "Recording stopped", Category.SESSION, button=False),
     _instant("armed", "Armed", Category.SESSION, button=False),
     _instant("stood-down", "Stood down", Category.SESSION, button=False),
+    _instant("stand-down-requested", "Stand down requested", Category.SESSION, button=False),
+    _instant("stand-down-cancelled", "Stand down cancelled", Category.SESSION, button=False),
     # Band, from design.md 5.6
     _instant("band-enters-stadium", "Band enters stadium", Category.BAND),
     _instant("band-enters-stands", "Band enters stands", Category.BAND),
@@ -224,6 +226,9 @@ VOCABULARY: tuple[EventType, ...] = (
     # Written by the box when a send fails partway through a move, so a
     # `commanded` entry is never the only word on a move that did not happen.
     _instant("move-failed", "Fader move failed", Category.FADER, button=False),
+    # Written by the box when a fade or ride-in sends its last step. Those run
+    # on after their `commanded` entry, whose `delivered` is therefore null.
+    _instant("move-landed", "Fader move landed", Category.FADER, button=False),
     _instant("up-whistle", "Up on whistle", Category.FADER, action=Action.OPEN),
     _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
     _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN_SLOW),

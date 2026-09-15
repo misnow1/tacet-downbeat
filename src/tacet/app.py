@@ -46,8 +46,20 @@ MOVE_PUSH_SECONDS = 0.1
 
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
+#: Written when the box reaches STANDING DOWN, not when it is asked to. Asked
+#: while the fader is up, it fades first, and a trigger can snap it back before
+#: the fade lands; the request and its cancellation are entries of their own so
+#: the log never says the box stood down when it did not (#50).
 STOOD_DOWN = "stood-down"
+STAND_DOWN_REQUESTED = "stand-down-requested"
+STAND_DOWN_CANCELLED = "stand-down-cancelled"
 COMMANDED = "commanded"
+#: How a move that ran in the background ended. A snap open is awaited, so its
+#: `commanded` entry already knows whether it was delivered; a fade or ride-in
+#: is still running when that entry is written, so `delivered` there is null
+#: and one of these follows - unless a newer move replaced it, in which case
+#: the newer `commanded` entry records where the fader had got to (#50).
+MOVE_LANDED = "move-landed"
 MOVE_FAILED = "move-failed"
 #: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
 #: this event and the box warns when a log already holds one, so all of them
@@ -56,6 +68,25 @@ RECORDING_STARTED = ann.ANCHOR_EVENT
 
 #: Shown when `/record` could not be sent. Quoted in docs/gameday.md.
 RECORD_SEND_FAILED = "Could not send the start to Reaper ({error}). Nothing started; tap again, or start it in Reaper."
+
+
+def session_entries(before: state.Machine, after: state.Machine) -> tuple[str, ...]:
+    """The session entries one transition earns, from the machines alone.
+
+    Pure, so every path to and from STANDING DOWN is decided in one place
+    rather than at each call site that happens to cause one.
+    """
+    down = state.State.STANDING_DOWN
+    entries: list[str] = []
+    if before.state is down and after.state is not down:
+        entries.append(ARMED)
+    if after.pending_stand_down and not before.pending_stand_down:
+        entries.append(STAND_DOWN_REQUESTED)
+    if before.pending_stand_down and not after.pending_stand_down and after.state is not down:
+        entries.append(STAND_DOWN_CANCELLED)
+    if after.state is down and before.state is not down:
+        entries.append(STOOD_DOWN)
+    return tuple(entries)
 
 
 class App:
@@ -97,10 +128,10 @@ class App:
     # -- operator actions -------------------------------------------------
 
     async def arm(self) -> state.Outcome:
-        return await self._command(state.Command.ARM, annotation=ARMED)
+        return await self._command(state.Command.ARM)
 
     async def stand_down(self) -> state.Outcome:
-        return await self._command(state.Command.STAND_DOWN, annotation=STOOD_DOWN)
+        return await self._command(state.Command.STAND_DOWN)
 
     async def trigger(self, *, source: state.Source = state.Source.OPERATOR, detail: str = "") -> state.Outcome:
         return await self._command(state.Command.TRIGGER, source=source, detail=detail)
@@ -114,18 +145,18 @@ class App:
         *,
         source: state.Source = state.Source.OPERATOR,
         detail: str = "",
-        annotation: str | None = None,
         open_seconds: float | None = None,
     ) -> state.Outcome:
-        outcome = state.step(self.machine, state.Event(command, source=source, detail=detail))
+        before = self.machine
+        outcome = state.step(before, state.Event(command, source=source, detail=detail))
         self.machine = outcome.machine
         self._last_refusal = outcome.refusal
 
         if outcome.fader is not None:
             await self._move_fader(outcome.fader, source=source, detail=detail, open_seconds=open_seconds)
-        if annotation is not None and outcome.changed:
+        for key in session_entries(before, outcome.machine):
             self._record(
-                annotation,
+                key,
                 data={"state": self.machine.state.value},
                 project_seconds=self._playhead(),
             )
@@ -143,6 +174,8 @@ class App:
         # A console that cannot be reached must not take the box down with it.
         # The fault is recorded and shown; the operator stays in control.
         failed = False
+        # A move left running in the background has delivered nothing yet.
+        background = command is state.FaderCommand.FADE or open_seconds is not None
         try:
             if command is state.FaderCommand.OPEN:
                 self._cancel_move()
@@ -177,7 +210,7 @@ class App:
                 "source": source.value,
                 "detail": detail,
                 "state": self.machine.state.value,
-                "delivered": self._console.healthy,
+                "delivered": None if background and not failed else self._console.healthy,
             },
             project_seconds=self._playhead(),
         )
@@ -196,16 +229,24 @@ class App:
         self.machine = state.step(self.machine, state.Event(state.Command.MOVE_FAILED)).machine
         self._record(
             MOVE_FAILED,
-            data={
-                "level": self._console.commanded_level,
-                "db": _finite(dm7.to_db(self._console.commanded_level)),
-                "target": target,
-                "target_db": _finite(dm7.to_db(target)),
-                "error": self._console.last_error,
-                "state": self.machine.state.value,
-            },
+            data={**self._move_end(target), "error": self._console.last_error},
             project_seconds=self._playhead(),
         )
+
+    def _move_landed(self, target: int) -> None:
+        """A background move sent its last step. The `commanded` entry that
+        started it could not say so, because it was written first."""
+        self._record(MOVE_LANDED, data=self._move_end(target), project_seconds=self._playhead())
+
+    def _move_end(self, target: int) -> dict[str, Any]:
+        """Where a move ended up against where it was going, for the log."""
+        return {
+            "level": self._console.commanded_level,
+            "db": _finite(dm7.to_db(self._console.commanded_level)),
+            "target": target,
+            "target_db": _finite(dm7.to_db(target)),
+            "state": self.machine.state.value,
+        }
 
     # -- the fade ---------------------------------------------------------
 
@@ -237,6 +278,9 @@ class App:
             return
         except asyncio.CancelledError:
             return
+        else:
+            if self._move_task is this:
+                self._move_landed(self._open_level)
         finally:
             # No command follows: the machine reached OPEN when the tap landed,
             # and only the gesture was still running.
@@ -296,6 +340,9 @@ class App:
             return
         except asyncio.CancelledError:
             return
+        else:
+            if self._move_task is this:
+                self._move_landed(dm7.MINUS_INF)
         finally:
             self._settle(this)
         # Only complete the fade if nothing replaced it meanwhile. RELEASING on
