@@ -62,6 +62,15 @@ COMMANDED = "commanded"
 #: the newer `commanded` entry records where the fader had got to (#50).
 MOVE_LANDED = "move-landed"
 MOVE_FAILED = "move-failed"
+#: A fader command that arrived too late to execute (#16).
+STALE_TAP = "stale-tap"
+
+#: What the page says about a fader tap that arrived too late. Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+STALE_REFUSAL = (
+    "That tap was not done: it took {delay:.1f}s to reach the box, and a fader tap later than "
+    "{threshold:.1f}s is not acted on. Look at the band, and tap again if you still mean it."
+)
 #: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
 #: this event and the box warns when a log already holds one, so all of them
 #: have to agree or the warning goes quiet.
@@ -130,6 +139,7 @@ class App:
         slow_open_seconds: float = dm7.DEFAULT_SLOW_OPEN_SECONDS,
         open_level: int = dm7.UNITY,
         monotonic: Callable[[], float] = time.monotonic,
+        stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
     ) -> None:
         self._console = console
         self._log = log
@@ -139,6 +149,11 @@ class App:
         self._slow_open_seconds = slow_open_seconds
         self._open_level = open_level
         self._monotonic = monotonic
+        self._stale_tap_seconds = stale_tap_seconds
+        #: The last fader tap refused as stale, until the next command. Shown
+        #: loudly: the operator tapped, nothing happened, and they have to
+        #: decide again (#16).
+        self._stale: dict[str, float] | None = None
 
         self._move_task: asyncio.Task[None] | None = None
         #: Where the move in flight is heading, or None when nothing is
@@ -168,6 +183,9 @@ class App:
 
     async def stand_down(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
         with _tapped(tap):
+            # A fader tap: standing down fades an open fader.
+            if self._refuse_stale("stand_down", tap):
+                return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
             return await self._command(state.Command.STAND_DOWN)
 
     async def trigger(
@@ -178,6 +196,8 @@ class App:
         tap: taps.TapTiming | None = None,
     ) -> state.Outcome:
         with _tapped(tap):
+            if self._refuse_stale("trigger", tap):
+                return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
             return await self._command(state.Command.TRIGGER, source=source, detail=detail)
 
     async def release(
@@ -188,7 +208,31 @@ class App:
         tap: taps.TapTiming | None = None,
     ) -> state.Outcome:
         with _tapped(tap):
+            if self._refuse_stale("release", tap):
+                return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
             return await self._command(state.Command.RELEASE, source=source, detail=detail)
+
+    def _stale_verdict(self, tap: taps.TapTiming | None) -> bool:
+        """Whether this fader tap is too late to execute, noting it for the
+        page if so. Every command clears the last one."""
+        if tap is None or not taps.is_stale(tap, self._stale_tap_seconds):
+            self._stale = None
+            return False
+        assert tap.delay is not None
+        self._stale = {"delay": tap.delay, "threshold": self._stale_tap_seconds}
+        self._last_refusal = STALE_REFUSAL.format(delay=tap.delay, threshold=self._stale_tap_seconds)
+        return True
+
+    def _refuse_stale(self, command: str, tap: taps.TapTiming | None) -> bool:
+        """Refuse a bare fader command that arrived too late: logged with its
+        true tap time, said on the page, and not executed (#16)."""
+        if not self._stale_verdict(tap):
+            return False
+        self._record(
+            STALE_TAP, data={"command": command, "state": self.machine.state.value}, project_seconds=self._playhead()
+        )
+        self._notify()
+        return True
 
     def now(self) -> float:
         """The box's monotonic clock: what snapshots are stamped with, what the
@@ -459,10 +503,21 @@ class App:
         if taps.TAP_FIELD in data:
             raise ann.DataError(f"data {taps.TAP_FIELD!r} is the box's own, and not the operator's to set")
         with _tapped(tap):
-            return await self._annotate(event, data)
+            return await self._annotate(event, data, tap)
 
-    async def _annotate(self, event: ann.EventType, data: dict[str, Any]) -> ann.Entry | None:
+    async def _annotate(
+        self, event: ann.EventType, data: dict[str, Any], tap: taps.TapTiming | None
+    ) -> ann.Entry | None:
         event_key = event.key
+        if event.action is not None and self._stale_verdict(tap):
+            # The reason is kept - the operator saw what they saw - and marked
+            # as a tap that was not acted on. Only annotation-only taps are
+            # never refused (#16).
+            entry = self._record(
+                event_key, data={**data, "stale": True, "executed": False}, project_seconds=self._playhead()
+            )
+            self._notify()
+            return entry
         if event.action is not None:
             # The move goes first. A missed downbeat is unrecoverable and must
             # not wait behind a log write.
@@ -634,6 +689,9 @@ class App:
             "state": self.machine.state.value,
             "why": state.describe(self.machine),
             "refusal": refusal,
+            # The last fader tap refused as too late, or None. The page shows
+            # the refusal loudly while this is set (#16).
+            "stale_tap": self._stale,
             "detector_enabled": self.machine.allow_detector,
             "fader": {
                 "commanded": self._console.commanded_level,

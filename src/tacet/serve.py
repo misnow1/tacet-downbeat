@@ -52,7 +52,7 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, reaper, web
+from . import config, disk, dm7, mirror, reaper, taps, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -120,6 +120,7 @@ def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQu
         recorder=recorder,
         fade_seconds=args.fade,
         slow_open_seconds=args.slow_open,
+        stale_tap_seconds=args.stale_tap,
     )
     return app, log, queue
 
@@ -390,6 +391,7 @@ def startup_lines(
     if args.quantized:
         lines.append(_note("fader values snapped to Table 1"))
     lines.append(_row("fade", f"{args.fade:.1f}s close, fast open, {args.slow_open:.1f}s ride-in"))
+    lines.append(_note(f"a fader tap arriving over {args.stale_tap:.1f}s late is not executed"))
 
     if args.reaper_host:
         lines.append(
@@ -445,6 +447,7 @@ CONFIG_MAPPING = {
     "game_hours": "capture.game_hours",
     "fade": "fader.fade_seconds",
     "slow_open": "fader.slow_open_seconds",
+    "stale_tap": "fader.stale_tap_seconds",
     "listen": "ui.listen",
     "http_port": "ui.port",
 }
@@ -494,6 +497,13 @@ def parser() -> argparse.ArgumentParser:
         default=dm7.DEFAULT_SLOW_OPEN_SECONDS,
         metavar="SECONDS",
         help="ride-in for the 'up slow' button, used when the start was missed",
+    )
+    p.add_argument(
+        "--stale-tap",
+        type=float,
+        default=taps.DEFAULT_STALE_TAP_SECONDS,
+        metavar="SECONDS",
+        help="a fader tap that arrives later than this is logged and not executed",
     )
     # BooleanOptionalAction, not store_true: a config file that sets
     # quantized = true has to be refusable from the command line, or the

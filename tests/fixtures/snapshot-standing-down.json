@@ -245,6 +245,7 @@
     "recording": false
   },
   "refusal": null,
+  "stale_tap": null,
   "state": "standing-down",
   "why": "Standing down. The fader will not move until you arm it. You are driving; the detector cannot move the fader."
 }

@@ -44,6 +44,7 @@ GAME|timeout	end	timeout-42
 FDR|commanded	-	-
 FDR|move-failed	-	-
 FDR|move-landed	-	-
+FDR|stale-tap	-	-
 FDR|up-whistle	-	-
 FDR|up-drums	-	-
 FDR|up-slow	-	-

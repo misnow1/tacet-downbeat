@@ -30,6 +30,7 @@ region	GAME|timeout
 marker	FDR|commanded
 marker	FDR|move-failed
 marker	FDR|move-landed
+marker	FDR|stale-tap
 marker	FDR|up-whistle
 marker	FDR|up-drums
 marker	FDR|up-slow

@@ -236,6 +236,9 @@ VOCABULARY: tuple[EventType, ...] = (
     # Written by the box when a fade or ride-in sends its last step. Those run
     # on after their `commanded` entry, whose `delivered` is therefore null.
     _instant("move-landed", "Fader move landed", Category.FADER, button=False),
+    # Written by the box when a fader tap arrived too late to execute (#16). The
+    # fader buttons in the grid log their own entry instead, marked stale.
+    _instant("stale-tap", "Fader tap arrived late, not executed", Category.FADER, button=False),
     _instant("up-whistle", "Up on whistle", Category.FADER, action=Action.OPEN),
     _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
     _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN_SLOW),

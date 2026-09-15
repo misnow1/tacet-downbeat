@@ -245,6 +245,7 @@
     "recording": true
   },
   "refusal": "Reaper has stopped answering. Start the recording in Reaper.",
+  "stale_tap": null,
   "state": "open",
   "why": "Open at unity. The last fader move did not finish; tap it again to retry. You are driving; the detector cannot move the fader."
 }

@@ -104,6 +104,11 @@ class TestStartupBannerSaysWhatItWasTold(unittest.TestCase):
     def test_it_reports_the_fade(self):
         self.assertIn("2.0s close", banner())
 
+    def test_it_says_how_late_a_fader_tap_may_be(self):
+        # #16: the threshold is a site value, so it is said out loud.
+        self.assertIn("over 2.0s late is not executed", banner())
+        self.assertIn("over 4.5s late", banner("--stale-tap", "4.5"))
+
     def test_quantized_is_mentioned_only_when_it_is_on(self):
         self.assertNotIn("Table 1", banner())
         self.assertIn("Table 1", banner("--quantized"))

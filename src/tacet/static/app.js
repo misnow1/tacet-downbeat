@@ -10,7 +10,8 @@ const TAP_TIMEOUT_MS = 10000;
 // Page-side, so they survive every snapshot render: the box never hears about a
 // tap that did not reach it, and so can never say so itself (#11).
 const TAP_FAILED = "Tap did not reach the box";
-const TAP_FAILED_ADVICE = ". Check the fader, and tap again if it did not happen.";
+const TAP_FAILED_ADVICE = ". Check the fader, and tap again if it did not happen."
+  + " A fader tap that gets there late is not acted on.";
 const TAP_UNTIMED = "Sent before the page had timed its link to the box, "
   + "so how late that tap arrived is not known.";
 
@@ -88,10 +89,11 @@ function snapshotIn(result) {
   return result.state !== null && typeof result.state === "object" ? result.state : result;
 }
 
-function showRefusal(text) {
+function showRefusal(text, loud = false) {
   const node = $("refusal");
   node.textContent = text || "";
   node.style.display = text ? "block" : "none";
+  node.className = text && loud ? "loud" : "";
 }
 
 // A category is reached in a hurry if tapping something in it moves the fader.
@@ -247,7 +249,10 @@ function render(next) {
   snapshot = next;
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
-  showRefusal(next.refusal);
+  // A fader tap that arrived too late was not done. Nothing moved, so nothing
+  // else on the page changes to say so, and the operator has to decide again
+  // (#16).
+  showRefusal(next.refusal, Boolean(next.stale_tap));
   const saving = savingBanner(next.log, next.mirror);
   $("saving").className = saving ? saving[0] : "";
   $("saving").textContent = saving ? saving[1] : "";

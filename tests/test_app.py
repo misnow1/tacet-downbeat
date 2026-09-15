@@ -109,6 +109,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         sync=None,
         queue=None,
         console_class=dm7.Dm7Client,
+        stale_tap_seconds=taps.DEFAULT_STALE_TAP_SECONDS,
     ):
         options = {} if opener is None else {"opener": opener}
         if sync is not None:
@@ -130,6 +131,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             recorder=self.reaper,
             fade_seconds=fade,
             monotonic=clock,
+            stale_tap_seconds=stale_tap_seconds,
         )
 
     def expect_push(self, app, condition):
@@ -1662,7 +1664,9 @@ class TestEveryEntryATapProducesCarriesItsTiming(AppTestCase):
     tapped as well as when it arrived - including the ones a fade writes after
     the request has been answered."""
 
-    TAP = taps.TapTiming(received=100.0, tapped=97.5, delay=2.5, uncertainty=0.04)
+    # Prompt enough to be executed: a stale fader tap is refused, not stamped
+    # and run (#16), and that has tests of its own.
+    TAP = taps.TapTiming(received=100.0, tapped=99.5, delay=0.5, uncertainty=0.04)
 
     def taps_by_event(self):
         return {entry.event: entry.data.get("tap") for entry in self.entries()}
@@ -1747,3 +1751,118 @@ class TestSnapshotsSayWhenTheyWereTaken(AppTestCase):
         clock = [42.0]
         app = self.build(monotonic=lambda: clock[0])
         self.assertEqual(app.now(), 42.0)
+
+
+def late(delay, *, uncertainty=0.05, received=100.0):
+    return taps.TapTiming(received=received, tapped=received - delay, delay=delay, uncertainty=uncertainty)
+
+
+class TestStaleFaderTapsAreNotExecuted(AppTestCase):
+    """#16: a late open brings the PA up after the music stopped, and a late
+    fade cuts a band mid-phrase. A fader tap that arrived later than the
+    threshold is logged and said out loud, and the operator decides again."""
+
+    STALE = late(taps.DEFAULT_STALE_TAP_SECONDS + 1.0)
+    PROMPT = late(0.1)
+
+    def events(self):
+        return [entry.event for entry in self.entries()]
+
+    async def open_app(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        return app
+
+    def assert_refused_loudly(self, app, command):
+        snapshot = app.snapshot()
+        self.assertIn("not done", snapshot["refusal"])
+        self.assertIn("3.0s", snapshot["refusal"])
+        self.assertEqual(snapshot["stale_tap"], {"delay": 3.0, "threshold": taps.DEFAULT_STALE_TAP_SECONDS})
+        stale = [e for e in self.entries() if e.event == tacet_app.STALE_TAP]
+        self.assertEqual(len(stale), 1)
+        self.assertEqual(stale[0].data["command"], command)
+        self.assertEqual(stale[0].data["tap"], self.STALE.as_data())
+
+    async def test_a_stale_open_does_not_open(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger(tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertNotIn(tacet_app.COMMANDED, self.events())
+        self.assert_refused_loudly(app, "trigger")
+
+    async def test_a_stale_fade_does_not_fade(self):
+        app = await self.open_app()
+        sent = len(self.console_sender.packets)
+        await app.release(tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(len(self.console_sender.packets), sent)
+        self.assert_refused_loudly(app, "release")
+
+    async def test_a_stale_stand_down_does_not_stand_down(self):
+        # It fades an open fader, so it is a fader tap.
+        app = await self.open_app()
+        await app.stand_down(tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertNotIn(tacet_app.STAND_DOWN_REQUESTED, self.events())
+        self.assert_refused_loudly(app, "stand_down")
+
+    async def test_a_stale_fader_button_keeps_its_reason_and_says_it_was_not_done(self):
+        app = self.build()
+        await app.arm()
+        entry = await app.annotate("up-drums", tap=self.STALE)
+        assert entry is not None
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual((entry.data["stale"], entry.data["executed"]), (True, False))
+        self.assertEqual(entry.data["tap"], self.STALE.as_data())
+        self.assertNotIn(tacet_app.STALE_TAP, self.events())
+        self.assertIsNotNone(app.snapshot()["stale_tap"])
+
+    async def test_an_annotation_is_never_refused_only_stamped(self):
+        app = self.build()
+        entry = await app.annotate("touchdown-sequence", tap=self.STALE)
+        assert entry is not None
+        self.assertNotIn("stale", entry.data)
+        self.assertEqual(entry.data["tap"], self.STALE.as_data())
+        self.assertIsNone(app.snapshot()["stale_tap"])
+
+    async def test_spans_arming_and_recording_are_never_refused(self):
+        app = self.build()
+        await app.arm(tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertIsNotNone(await app.start_span("q1", tap=self.STALE))
+        await app.start_recording(tap=self.STALE)
+        self.assertIn(ann.ANCHOR_EVENT, self.events())
+        self.assertNotIn(tacet_app.STALE_TAP, self.events())
+
+    async def test_a_prompt_tap_is_executed(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger(tap=self.PROMPT)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertIsNone(app.snapshot()["stale_tap"])
+
+    async def test_an_untimed_tap_is_executed_however_late_it_might_be(self):
+        # It cannot be judged, so it is not refused (#16).
+        app = self.build()
+        await app.arm()
+        await app.trigger(tap=taps.TapTiming(received=100.0))
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def test_the_threshold_is_the_boxs_to_set(self):
+        app = self.build(stale_tap_seconds=10.0)
+        await app.arm()
+        await app.trigger(tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def test_the_next_tap_that_is_done_clears_the_warning(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger(tap=self.STALE)
+        await app.trigger(tap=self.PROMPT)
+        snapshot = app.snapshot()
+        self.assertIsNone(snapshot["stale_tap"])
+        self.assertIsNone(snapshot["refusal"])

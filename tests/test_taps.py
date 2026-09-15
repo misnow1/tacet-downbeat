@@ -80,3 +80,37 @@ class TestReadingADelayBack(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIsAFaderTapStale(unittest.TestCase):
+    """#16: a fader tap that arrives late is not executed. Judged at the
+    favourable end of the estimate, so the clock's error can only ever let a
+    late tap through, never refuse a prompt one."""
+
+    THRESHOLD = 2.0
+
+    def stale(self, delay, uncertainty=0.0):
+        return taps.is_stale(
+            taps.TapTiming(received=10.0, tapped=10.0 - delay, delay=delay, uncertainty=uncertainty),
+            self.THRESHOLD,
+        )
+
+    def test_the_default_is_two_seconds(self):
+        self.assertEqual(taps.DEFAULT_STALE_TAP_SECONDS, 2.0)
+
+    def test_around_the_threshold(self):
+        self.assertFalse(self.stale(1.99))
+        self.assertFalse(self.stale(2.0))
+        self.assertTrue(self.stale(2.01))
+
+    def test_the_uncertainty_is_given_to_the_tap(self):
+        self.assertFalse(self.stale(2.5, uncertainty=0.5))
+        self.assertTrue(self.stale(2.5, uncertainty=0.4))
+
+    def test_an_unknown_offset_is_never_stale(self):
+        # It cannot be judged, so it is not refused. The page says it was untimed.
+        self.assertFalse(taps.is_stale(taps.TapTiming(received=10.0), self.THRESHOLD))
+
+    def test_a_prompt_tap_is_not_stale(self):
+        self.assertFalse(self.stale(0.0))
+        self.assertFalse(self.stale(-0.03, uncertainty=0.05))
