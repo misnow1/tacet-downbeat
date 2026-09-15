@@ -26,6 +26,15 @@ prints a banner at startup naming the console, the DCA, Reaper, the log and the
 queue, followed by the pre-kickoff checklist. The `config` row in it says which
 file was used, or `none (flags only)`. Everything in the banner is what the box
 was told, never what it has confirmed.
+
+To find out whether a command would start, without starting it:
+
+    tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl --check
+
+prints the same banner, or the same refusal, and exits: zero if the box would
+have started. Nothing binds, nothing is sent, and the log and queue are only
+read. `--check` is a flag and never a config key, since a file that set it
+would stop the box from ever starting.
 """
 
 from __future__ import annotations
@@ -473,6 +482,13 @@ def parser() -> argparse.ArgumentParser:
         default=False,
         help="snap fader values to Table 1; set this if the console rounds",
     )
+    # Not in CONFIG_MAPPING, and never: it chooses what the tool does, like
+    # verify_dm7's --fade. A config file that set it would never start the box.
+    p.add_argument(
+        "--check",
+        action="store_true",
+        help="print the banner, or the refusal, and exit without starting: zero if it would start",
+    )
     return p
 
 
@@ -506,6 +522,10 @@ def main(argv: list[str] | None = None) -> int:
         p.error(f"--log {args.log} cannot be read: {exc}. Nothing in it was changed.")
     for line in banner:
         print(line)
+    # Everything above only reads, which is what makes this the whole of
+    # --check (#79): the same refusals, the same banner, and nothing opened.
+    if args.check:
+        return 0
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args))
     return 0
