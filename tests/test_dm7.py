@@ -277,6 +277,142 @@ class TestSending(unittest.TestCase):
         self.assertTrue(c.healthy)
 
 
+class TestLatestDue(unittest.TestCase):
+    OFFSETS = (0.02, 0.04, 0.06, 0.08)
+
+    def test_nothing_overdue_is_the_next_step(self):
+        self.assertEqual(dm7.latest_due(self.OFFSETS, 1, 0.04), 1)
+
+    def test_a_stall_skips_to_the_newest_step_already_due(self):
+        self.assertEqual(dm7.latest_due(self.OFFSETS, 0, 0.065), 2)
+
+    def test_steps_already_sent_are_never_chosen_again(self):
+        self.assertEqual(dm7.latest_due(self.OFFSETS, 3, 0.5), 3)
+
+    def test_the_last_step_is_chosen_once_everything_is_overdue(self):
+        self.assertEqual(dm7.latest_due(self.OFFSETS, 0, 1.0), len(self.OFFSETS) - 1)
+
+
+class FakeLoopClock:
+    """Time that moves only when the drive sleeps or the loop is made to stall.
+
+    `stalls` maps a send, counted from one, to how long the loop is blocked
+    straight after it - the way a slow fsync on the event loop would block it.
+    """
+
+    def __init__(self, *, stall_every: float = 0.0, stalls: dict[int, float] | None = None) -> None:
+        self.now = 0.0
+        self.stall_every = stall_every
+        self.stalls = stalls or {}
+        self.sends: list[tuple[float, int]] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        await asyncio.sleep(0)
+
+    def send(self, packet: bytes) -> None:
+        message = osc.decode_packet(packet)
+        assert isinstance(message, osc.Message)
+        self.sends.append((self.now, cast("int", message.args[0])))
+        self.now += self.stall_every + self.stalls.get(len(self.sends), 0.0)
+
+
+def stalled_client(clock: FakeLoopClock, **kwargs: Any) -> dm7.Dm7Client:
+    return dm7.Dm7Client(
+        UNREACHABLE_HOST,
+        dca=3,
+        sender=clock,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        tick_hz=dm7.DEFAULT_TICK_HZ,
+        **kwargs,
+    )
+
+
+#: The baseline review's measurement (#40): a loop blocked 30 ms per iteration
+#: through a 2 s fade.
+STALL_EVERY = 0.03
+#: One long stall, as a slow fsync would cause, and the send it follows.
+LONG_STALL = 0.105
+STALLED_SEND = 10
+
+
+class TestAStalledDrive(unittest.IsolatedAsyncioTestCase):
+    """#40: steps already past due were sent back to back, so a stalled loop
+    sent the console a burst of stale levels and nobody could tell afterwards."""
+
+    def fade_steps(self) -> list[tuple[float, int]]:
+        return list(dm7.ramp_steps(dm7.UNITY, dm7.MINUS_INF, dm7.DEFAULT_FADE_SECONDS, tick_hz=dm7.DEFAULT_TICK_HZ))
+
+    async def test_a_stalled_drive_skips_to_the_latest_due_step(self):
+        clock = FakeLoopClock(stall_every=STALL_EVERY)
+        c = stalled_client(clock, initial_level=dm7.UNITY)
+        await c.fade_out()
+
+        steps = self.fade_steps()
+        offsets = [offset for offset, _ in steps]
+        for sent_at, level in clock.sends:
+            newest = dm7.latest_due(offsets, 0, sent_at)
+            self.assertEqual(level, steps[newest][1], f"sent at {sent_at:.3f}")
+        self.assertLess(len(clock.sends), len(steps))
+        self.assertEqual(clock.sends[-1][1], dm7.MINUS_INF)
+        self.assertEqual(c.commanded_level, dm7.MINUS_INF)
+
+    async def test_nothing_is_sent_twice_in_one_instant(self):
+        clock = FakeLoopClock(stall_every=STALL_EVERY)
+        c = stalled_client(clock, initial_level=dm7.UNITY)
+        await c.fade_out()
+        times = [sent_at for sent_at, _ in clock.sends]
+        self.assertEqual(len(times), len(set(times)))
+
+    async def test_the_worst_lateness_and_the_skipped_steps_are_recorded(self):
+        clock = FakeLoopClock(stalls={STALLED_SEND: LONG_STALL})
+        c = stalled_client(clock, initial_level=dm7.UNITY)
+        await c.fade_out()
+
+        # Measured from the oldest step not yet sent, not from the one that was:
+        # the fader was stuck from the moment the next step fell due.
+        tick = 1 / dm7.DEFAULT_TICK_HZ
+        self.assertAlmostEqual(c.timing.worst_lateness, LONG_STALL - tick)
+        self.assertEqual(c.timing.skipped, round(LONG_STALL / tick) - 1)
+
+    def assert_on_time(self, timing: dm7.MoveTiming) -> None:
+        # Almost: the fake clock sums floats, and nothing here is jitter.
+        self.assertAlmostEqual(timing.worst_lateness, 0.0)
+        self.assertEqual(timing.skipped, 0)
+
+    async def test_an_unstalled_drive_sends_every_step_on_time(self):
+        clock = FakeLoopClock()
+        c = stalled_client(clock, initial_level=dm7.UNITY)
+        await c.fade_out()
+        steps = self.fade_steps()
+        self.assertEqual([sent_at for sent_at, _ in clock.sends], [offset for offset, _ in steps[:-1]])
+        self.assert_on_time(c.timing)
+
+    async def test_a_close_steps_from_the_floor_to_silence_in_one_packet(self):
+        # The floor and -inf fall due in the same instant. Sending both back to
+        # back was a burst of two, and the floor was never going to be heard.
+        clock = FakeLoopClock()
+        c = stalled_client(clock, initial_level=dm7.UNITY)
+        await c.fade_out()
+        (floor_at, floor), (silence_at, silence) = self.fade_steps()[-2:]
+        self.assertEqual((floor, silence, floor_at), (dm7.DEFAULT_FADE_FLOOR, dm7.MINUS_INF, silence_at))
+        sent = [level for _, level in clock.sends]
+        self.assertNotIn(dm7.DEFAULT_FADE_FLOOR, sent)
+        self.assertEqual(sent[-1], dm7.MINUS_INF)
+
+    async def test_each_move_is_timed_afresh(self):
+        clock = FakeLoopClock(stalls={STALLED_SEND: LONG_STALL})
+        c = stalled_client(clock, initial_level=dm7.UNITY)
+        await c.fade_out()
+        self.assertGreater(c.timing.worst_lateness, 0.0)
+        await c.open()
+        self.assert_on_time(c.timing)
+
+
 class TestMoves(unittest.IsolatedAsyncioTestCase):
     async def test_open_ends_at_unity(self):
         c, sender = client()
