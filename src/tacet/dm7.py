@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 
 from . import osc
 from .net import ClosableSender, Sender, TransportError, UdpSender
@@ -114,6 +115,43 @@ TABLE_1 = (
 )
 
 
+@dataclass(frozen=True)
+class Taper:
+    """The shape of a ride-in: fast through the bottom, slow through the top.
+
+    The ramp reaches `knee_level` at `knee_fraction` of its duration, then
+    rises linearly in dB to the target over the rest. A hand on a fader does
+    roughly this: the bottom of the travel is inaudible under a crowd, so it is
+    got through quickly, and the time goes where the band can be heard (#8).
+    """
+
+    knee_level: int
+    knee_fraction: float
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.knee_fraction < 1.0:
+            raise ValueError(f"knee_fraction must be strictly between 0 and 1, got {self.knee_fraction}")
+
+    def shapes(self, start: int, target: int) -> bool:
+        """Only a rise that crosses the knee has a bottom to rush. Anything else,
+        closes included, is left linear."""
+        return start < self.knee_level < target
+
+    def level_at(self, start: int, target: int, fraction: float) -> float:
+        if fraction <= self.knee_fraction:
+            return start + (self.knee_level - start) * (fraction / self.knee_fraction)
+        above = (fraction - self.knee_fraction) / (1.0 - self.knee_fraction)
+        return self.knee_level + (target - self.knee_level) * above
+
+
+#: The ride-in shape, a guess until it is fitted against hand rides captured on
+#: game 3's post-DCA reference channel (#8, #13). -20 dB is where the band starts
+#: to read over a crowd; 15% of the duration is quick without being a snap.
+RIDE_IN_KNEE_LEVEL = -20 * UNITS_PER_DB
+RIDE_IN_KNEE_FRACTION = 0.15
+RIDE_IN_TAPER = Taper(knee_level=RIDE_IN_KNEE_LEVEL, knee_fraction=RIDE_IN_KNEE_FRACTION)
+
+
 def clamp(level: int) -> int:
     return max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
 
@@ -140,16 +178,17 @@ def ramp_steps(
     tick_hz: float = DEFAULT_TICK_HZ,
     fade_floor: int = DEFAULT_FADE_FLOOR,
     quantized: bool = False,
+    taper: Taper | None = None,
 ) -> Iterator[tuple[float, int]]:
     """Yield ``(offset_seconds, level)`` for one fader move.
 
     Pure, so the shape of a ramp can be tested without a socket or a clock.
 
-    Interpolation is linear in dB, which is what a fade-out wants and roughly
-    what a hand on a fader does over the top of its travel. It is a starting
-    guess, not a measured curve: the real one comes out of Phase 1, by comparing
-    the post-DCA reference channel against the pre-fader mics. Tune it against
-    captured games, never in a quiet room. A close to -inf ramps
+    Interpolation is linear in dB, which is what a fade-out wants. A ride-in
+    passes a `taper` instead, which only shapes a rise that crosses its knee.
+    Both are starting guesses, not measured curves: the real ones come out of
+    Phase 1, by comparing the post-DCA reference channel against the pre-fader
+    mics. Tune them against captured games, never in a quiet room. A close to -inf ramps
     to `fade_floor` and then steps the rest of the way: -inf is not a dB value and
     cannot be interpolated toward, and the last few dB are inaudible anyway.
 
@@ -178,10 +217,15 @@ def ramp_steps(
 
     ticks = max(MIN_RAMP_TICKS, round(duration * tick_hz))
     emitted = start  # the console is already here; do not restate it
+    shaped = taper if taper is not None and taper.shapes(ramp_start, ramp_target) else None
 
     for tick in range(1, ticks + 1):
         fraction = tick / ticks
-        level = clamp(round(ramp_start + (ramp_target - ramp_start) * fraction))
+        if shaped is not None:
+            exact = shaped.level_at(ramp_start, ramp_target, fraction)
+        else:
+            exact = ramp_start + (ramp_target - ramp_start) * fraction
+        level = clamp(round(exact))
         if quantized:
             level = quantize(level)
         if level != emitted:
@@ -275,7 +319,12 @@ class Dm7Client:
         """The ~2 s close. Same fade for every reason the music stopped."""
         await self._move(MINUS_INF, seconds)
 
-    async def _move(self, target: int, seconds: float) -> None:
+    async def ride_in(self, level: int = UNITY, seconds: float = DEFAULT_SLOW_OPEN_SECONDS) -> None:
+        """A deliberate, tapered open: fast through the inaudible bottom, slow
+        through the top (#8). Superseded like any other move."""
+        await self._move(level, seconds, taper=RIDE_IN_TAPER)
+
+    async def _move(self, target: int, seconds: float, *, taper: Taper | None = None) -> None:
         self.cancel_ramp()
         steps = list(
             ramp_steps(
@@ -285,6 +334,7 @@ class Dm7Client:
                 tick_hz=self.tick_hz,
                 fade_floor=self.fade_floor,
                 quantized=self.quantized,
+                taper=taper,
             )
         )
         ramp = asyncio.ensure_future(self._drive(steps))

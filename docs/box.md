@@ -200,9 +200,13 @@ is settled there is no arrow, because there is nowhere else to be. To check the
 expectation against reality, look at the DCA in StageMix; that comparison is the
 only thing that can catch a wrong DCA number or a console that is not listening.
 
-`Up slow` rides in over **1.5 seconds**. Retune it with
-`fader.slow_open_seconds` or `--slow-open`; the other open buttons are
-unaffected.
+`Up slow` rides in over **1.5 seconds**, tapered the way a hand rides it: fast
+through the bottom of the travel, which is inaudible under a crowd, reaching
+-20 dB in the first 15% of the ride, then slowly through the top where the band
+can be heard. Retune the length with `fader.slow_open_seconds` or
+`--slow-open`; the other open buttons are unaffected. The shape itself is a
+guess until it is fitted against the hand rides on game 3's post-DCA reference
+channel, so it is not a config key.
 
 ---
 

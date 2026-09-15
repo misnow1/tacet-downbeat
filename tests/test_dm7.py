@@ -140,6 +140,94 @@ class TestRampSteps(unittest.TestCase):
         self.assertEqual(self.steps(0, 99999, 0.1)[-1][1], dm7.LEVEL_MAX)
 
 
+def crossing(steps, level):
+    """When a rising ramp first reaches `level`."""
+    return next(offset for offset, emitted in steps if emitted >= level)
+
+
+class TestTheRideInTaper(unittest.TestCase):
+    """#8: fast through the bottom, slow through the top.
+
+    Linear in dB spent half a ride-in below -30 dB, inaudible under a crowd,
+    and rushed the audible top. The shape is pinned here, not the levels: the
+    knee's constants are a guess to be refitted against game 3's post-DCA
+    reference channel, and refitting them must not rewrite these tests.
+    """
+
+    TAPER = dm7.RIDE_IN_TAPER
+    DURATION = 1.5
+    HZ = 50.0
+
+    def ride(self, start=dm7.MINUS_INF, target=dm7.UNITY, **kwargs):
+        kwargs.setdefault("tick_hz", self.HZ)
+        return list(dm7.ramp_steps(start, target, self.DURATION, taper=self.TAPER, **kwargs))
+
+    def linear(self, start=dm7.MINUS_INF, target=dm7.UNITY):
+        return list(dm7.ramp_steps(start, target, self.DURATION, tick_hz=self.HZ))
+
+    def test_the_knee_is_below_the_open_level_and_early_in_the_ride(self):
+        self.assertLess(dm7.DEFAULT_FADE_FLOOR, self.TAPER.knee_level)
+        self.assertLess(self.TAPER.knee_level, dm7.UNITY)
+        self.assertGreater(self.TAPER.knee_fraction, 0.0)
+        self.assertLess(self.TAPER.knee_fraction, 0.5)
+
+    def test_it_rises_steadily_to_the_target_within_the_duration(self):
+        steps = self.ride()
+        offsets = [offset for offset, _ in steps]
+        levels = [level for _, level in steps]
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertEqual(levels, sorted(levels))
+        self.assertEqual(len(levels), len(set(levels)))
+        self.assertEqual(levels[-1], dm7.UNITY)
+        self.assertLessEqual(offsets[-1], self.DURATION + 1e-9)
+
+    def test_it_reaches_the_knee_by_the_knee_fraction(self):
+        tick = 1 / self.HZ
+        knee_at = crossing(self.ride(), self.TAPER.knee_level)
+        self.assertLessEqual(knee_at, self.TAPER.knee_fraction * self.DURATION + tick)
+
+    def test_most_of_the_ride_is_spent_above_the_knee(self):
+        knee_at = crossing(self.ride(), self.TAPER.knee_level)
+        self.assertLess(knee_at, self.DURATION - knee_at)
+
+    def test_it_gets_through_the_bottom_sooner_than_a_linear_ride(self):
+        self.assertLess(
+            crossing(self.ride(), self.TAPER.knee_level),
+            crossing(self.linear(), self.TAPER.knee_level),
+        )
+
+    def test_it_moves_faster_below_the_knee_than_above_it(self):
+        steps = self.ride()
+        knee_at = crossing(steps, self.TAPER.knee_level)
+        first_level = steps[0][1]
+        below = (self.TAPER.knee_level - first_level) / knee_at
+        above = (dm7.UNITY - self.TAPER.knee_level) / (self.DURATION - knee_at)
+        self.assertGreater(below, above)
+
+    def test_a_ride_that_starts_above_the_knee_is_linear(self):
+        # A retry after a ride-in failed near the top has no bottom to rush.
+        start = self.TAPER.knee_level + 500
+        self.assertEqual(self.ride(start=start), self.linear(start=start))
+
+    def test_a_ride_that_ends_below_the_knee_is_linear(self):
+        target = self.TAPER.knee_level - 500
+        self.assertEqual(self.ride(target=target), self.linear(target=target))
+
+    def test_a_taper_never_shapes_a_close(self):
+        # Closes are unchanged (#8): the 2 s fade keeps its shape.
+        down = list(dm7.ramp_steps(dm7.UNITY, dm7.MINUS_INF, 2.0, tick_hz=self.HZ, taper=self.TAPER))
+        self.assertEqual(down, list(dm7.ramp_steps(dm7.UNITY, dm7.MINUS_INF, 2.0, tick_hz=self.HZ)))
+
+    def test_a_quantized_ride_in_only_emits_table_1_values(self):
+        for _, level in self.ride(quantized=True):
+            self.assertIn(level, dm7.TABLE_1)
+
+    def test_a_knee_outside_the_ride_is_refused(self):
+        for fraction in (0.0, 1.0, -0.1, 1.5):
+            with self.subTest(fraction=fraction), self.assertRaises(ValueError):
+                dm7.Taper(knee_level=self.TAPER.knee_level, knee_fraction=fraction)
+
+
 class TestSending(unittest.TestCase):
     def test_send_level_emits_one_int_argument_at_the_fader_address(self):
         c, sender = client()
@@ -219,10 +307,25 @@ class TestMoves(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(sender.levels()[-1], sender.levels()[1])
         self.assertNotIn(dm7.MINUS_INF, sender.levels()[1:])
 
+    async def test_a_ride_in_sends_the_tapered_curve(self):
+        c, sender = client()
+        await c.ride_in(seconds=0.2)
+        expected = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=100.0, taper=dm7.RIDE_IN_TAPER)
+        self.assertEqual(sender.levels(), [level for _, level in expected])
+        self.assertEqual(c.commanded_level, dm7.UNITY)
+
+    async def test_an_open_over_the_same_time_is_not_tapered(self):
+        c, sender = client()
+        await c.open(seconds=0.2)
+        expected = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=100.0)
+        self.assertEqual(sender.levels(), [level for _, level in expected])
+
     async def test_every_packet_of_a_full_cycle_is_a_fader_level_write(self):
         # The hard constraint, asserted directly: faders only, never mutes.
         c, sender = client(initial_level=dm7.MINUS_INF)
         await c.open(seconds=0.01)
+        await c.fade_out(seconds=0.05)
+        await c.ride_in(seconds=0.05)
         await c.fade_out(seconds=0.05)
         self.assertGreater(len(sender.packets), 3)
         for message in sender.messages():

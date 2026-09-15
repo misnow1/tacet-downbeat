@@ -1283,6 +1283,16 @@ class TestUpSlowRidesIn(AppTestCase):
         self.assertLess(app._console.commanded_level, dm7.UNITY)
         await app.wait_for_fade()
 
+    async def test_up_slow_rides_in_on_the_taper(self):
+        # #8: fast through the bottom, slow through the top.
+        app = self.build()
+        app._slow_open_seconds = 0.2
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        tapered = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=200.0, taper=dm7.RIDE_IN_TAPER)
+        self.assertEqual(self.console_sender.levels(), [level for _, level in tapered])
+
     async def test_up_slow_gets_all_the_way_there(self):
         app = self.build()
         app._slow_open_seconds = 0.2
