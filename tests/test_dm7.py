@@ -1,4 +1,5 @@
 import asyncio
+import math
 import unittest
 from typing import Any, cast
 
@@ -310,7 +311,9 @@ class FakeLoopClock:
         return self.now
 
     async def sleep(self, seconds: float) -> None:
-        self.now += seconds
+        # Never less than the next representable time: a remainder below the
+        # clock's resolution would otherwise leave it where it was, forever.
+        self.now = max(self.now + seconds, math.nextafter(self.now, math.inf))
         await asyncio.sleep(0)
 
     def send(self, packet: bytes) -> None:
