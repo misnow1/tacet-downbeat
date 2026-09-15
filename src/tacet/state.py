@@ -58,6 +58,8 @@ class Command(StrEnum):
     #: A send failed partway through a move, so the fader stopped short of
     #: where the state says it is going. Reported by the shell, never tapped.
     MOVE_FAILED = "move-failed"
+    #: A ride-in reached the top. Reported by the shell, never tapped.
+    RIDE_IN_COMPLETE = "ride-in-complete"
 
 
 class FaderCommand(StrEnum):
@@ -71,6 +73,11 @@ class Event:
     source: Source = Source.OPERATOR
     #: Free text for the why line - "whistle", "drums", "operator button".
     detail: str = ""
+    #: A trigger that rides the fader in rather than snapping it: `up-slow`.
+    #: The machine still has no opinion about how long a move takes; it only
+    #: needs to know that a slower one is under way, so a fast one can take
+    #: over (#45).
+    gradual: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,10 @@ class Machine:
     #: Never set by a healthy move, so a panic tap on a fade that is still
     #: running does not restart it.
     stalled: bool = False
+    #: A ride-in is on its way up. While set, a fast trigger snaps the rest of
+    #: the way: the whistle or the drums say the band is coming in now, and the
+    #: downbeat wins over the gesture (#45). A slow trigger does not restart it.
+    riding_in: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,15 +136,29 @@ def _standing_down(machine: Machine, event: Event) -> Outcome:
 
 
 def _move_failed(machine: Machine) -> Outcome:
-    return Outcome(machine=replace(machine, stalled=True))
+    return Outcome(machine=replace(machine, stalled=True, riding_in=False))
+
+
+def _opening(machine: Machine, event: Event) -> Outcome:
+    """Every open the machine emits, fast or gradual, and nothing pending."""
+    return Outcome(
+        machine=replace(machine, state=State.OPEN, pending_stand_down=False, stalled=False, riding_in=event.gradual),
+        fader=FaderCommand.OPEN,
+    )
+
+
+def _closing(machine: Machine, *, pending_stand_down: bool) -> Outcome:
+    return Outcome(
+        machine=replace(
+            machine, state=State.RELEASING, pending_stand_down=pending_stand_down, stalled=False, riding_in=False
+        ),
+        fader=FaderCommand.FADE,
+    )
 
 
 def _idle(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.TRIGGER:
-        return Outcome(
-            machine=replace(machine, state=State.OPEN, pending_stand_down=False),
-            fader=FaderCommand.OPEN,
-        )
+        return _opening(machine, event)
     if event.command is Command.STAND_DOWN:
         return Outcome(machine=replace(machine, state=State.STANDING_DOWN))
     if event.command is Command.ARM:
@@ -144,18 +169,20 @@ def _idle(machine: Machine, event: Event) -> Outcome:
 
 def _open(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.RELEASE:
-        return Outcome(machine=replace(machine, state=State.RELEASING, stalled=False), fader=FaderCommand.FADE)
+        return _closing(machine, pending_stand_down=False)
     if event.command is Command.STAND_DOWN:
         # Fade out and stand down when it lands, rather than slamming shut.
-        return Outcome(
-            machine=replace(machine, state=State.RELEASING, pending_stand_down=True, stalled=False),
-            fader=FaderCommand.FADE,
-        )
+        return _closing(machine, pending_stand_down=True)
     if event.command is Command.MOVE_FAILED:
         return _move_failed(machine)
     if event.command is Command.TRIGGER and machine.stalled:
-        # The open never got there. Send it again.
-        return Outcome(machine=replace(machine, stalled=False), fader=FaderCommand.OPEN)
+        # The open never got there. Send it again, at the speed now asked for.
+        return _opening(machine, event)
+    if event.command is Command.TRIGGER and machine.riding_in and not event.gradual:
+        # The band is coming in now; snap the rest of the way.
+        return _opening(machine, event)
+    if event.command is Command.RIDE_IN_COMPLETE and machine.riding_in:
+        return Outcome(machine=replace(machine, riding_in=False))
     # A trigger while open only confirms what is already true.
     return _unchanged(machine)
 
@@ -164,10 +191,7 @@ def _releasing(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.TRIGGER:
         # The snap back. A pending stand-down is cancelled: the band started
         # again, so standing down would now be wrong.
-        return Outcome(
-            machine=replace(machine, state=State.OPEN, pending_stand_down=False, stalled=False),
-            fader=FaderCommand.OPEN,
-        )
+        return _opening(machine, event)
     if event.command is Command.FADE_COMPLETE:
         landing = State.STANDING_DOWN if machine.pending_stand_down else State.IDLE
         return Outcome(machine=replace(machine, state=landing, pending_stand_down=False, stalled=False))

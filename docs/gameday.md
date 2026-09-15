@@ -415,6 +415,13 @@ Three kinds of button:
   already missed, where snapping open under a phrase in progress is its own kind
   of wrong. Retune it with `fader.slow_open_seconds` or `--slow-open`; the other
   two are unaffected.
+
+  `Up on whistle` or `Up on drums` tapped while `Up slow` is still riding in
+  **snaps the rest of the way**. The whistle means the band is about to play, so
+  the downbeat wins over the gesture. If the play is then called back or
+  flagged and nothing plays, fade as usual. Tapping `Up slow` again mid-ride
+  does not restart it, and once the ride-in has arrived the whistle changes
+  nothing.
 - **Everything else** - records only, moves nothing.
 
 Buttons marked `(start)` are spans: tap once to open the region, again to close

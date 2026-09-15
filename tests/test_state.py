@@ -220,6 +220,81 @@ class TestAFailedMoveCanBeRetried(unittest.TestCase):
         self.assertNotEqual(text, st.describe(releasing()))
 
 
+def ride_in(m):
+    """A trigger that opens gradually: `up-slow`, and later `up-for-score`."""
+    return st.step(m, st.Event(st.Command.TRIGGER, gradual=True))
+
+
+class TestAFastOpenSnapsDuringARideIn(unittest.TestCase):
+    """#45, decided: snap.
+
+    A ride-in exists to have the fader up before the band comes in. The whistle
+    or the drums say the band is coming in now, so the rest of the ride-in has
+    nothing left to do and the downbeat wins.
+    """
+
+    def test_a_ride_in_opens_and_is_marked_in_flight(self):
+        outcome = ride_in(armed())
+        self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertTrue(outcome.machine.riding_in)
+
+    def test_a_snap_open_is_not_a_ride_in(self):
+        self.assertFalse(send(armed(), st.Command.TRIGGER).machine.riding_in)
+
+    def test_a_fast_trigger_during_a_ride_in_snaps(self):
+        outcome = send(opened(riding_in=True), st.Command.TRIGGER)
+        self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertFalse(outcome.machine.riding_in)
+
+    def test_a_slow_trigger_during_a_ride_in_does_not_restart_it(self):
+        outcome = ride_in(opened(riding_in=True))
+        self.assertIsNone(outcome.fader)
+        self.assertFalse(outcome.changed)
+        self.assertTrue(outcome.machine.riding_in)
+
+    def test_once_the_ride_in_lands_a_trigger_changes_nothing(self):
+        landed = send(opened(riding_in=True), st.Command.RIDE_IN_COMPLETE)
+        self.assertEqual(landed.machine.state, st.State.OPEN)
+        self.assertFalse(landed.machine.riding_in)
+        self.assertIsNone(landed.fader)
+        self.assertIsNone(send(landed.machine, st.Command.TRIGGER).fader)
+
+    def test_a_ride_in_landing_anywhere_else_changes_nothing(self):
+        # A late report from a ride-in that was already replaced.
+        for m in (machine(), armed(), opened(), releasing()):
+            with self.subTest(state=m.state):
+                outcome = send(m, st.Command.RIDE_IN_COMPLETE)
+                self.assertFalse(outcome.changed)
+                self.assertIsNone(outcome.fader)
+
+    def test_a_close_ends_the_ride_in(self):
+        for command in (st.Command.RELEASE, st.Command.STAND_DOWN):
+            with self.subTest(command=command):
+                outcome = send(opened(riding_in=True), command)
+                self.assertEqual(outcome.fader, st.FaderCommand.FADE)
+                self.assertFalse(outcome.machine.riding_in)
+
+    def test_a_failed_ride_in_is_no_longer_in_flight(self):
+        outcome = send(opened(riding_in=True), st.Command.MOVE_FAILED)
+        self.assertTrue(outcome.machine.stalled)
+        self.assertFalse(outcome.machine.riding_in)
+
+    def test_retrying_a_failed_open_takes_the_speed_of_the_retry(self):
+        self.assertTrue(ride_in(opened(stalled=True)).machine.riding_in)
+        self.assertFalse(send(opened(stalled=True, riding_in=True), st.Command.TRIGGER).machine.riding_in)
+
+    def test_a_snap_back_from_a_fade_can_itself_ride_in(self):
+        self.assertTrue(ride_in(releasing()).machine.riding_in)
+        self.assertFalse(send(releasing(), st.Command.TRIGGER).machine.riding_in)
+
+    def test_the_detector_gate_still_comes_first(self):
+        outcome = send(opened(riding_in=True), st.Command.TRIGGER, source=st.Source.DETECTOR)
+        self.assertIsNone(outcome.fader)
+        self.assertTrue(outcome.machine.riding_in)
+
+
 class TestNeverMutes(unittest.TestCase):
     def test_the_only_fader_commands_are_open_and_fade(self):
         # Faders only, never mutes. There is no mute to reach for.
