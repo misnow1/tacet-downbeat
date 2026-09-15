@@ -1051,6 +1051,20 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
   check("an annotation's answer renders, wrapped", nodes.get("state").textContent, "OPEN");
 }
 
+// -- a fader tap that arrived too late ---------------------------------------
+
+{
+  const { context, nodes } = browser();
+  const refusal = "That tap was not done: it took 3.0s to reach the box";
+  context.render({ ...snapshot(), refusal, stale_tap: { delay: 3.0, threshold: 2.0 } });
+  check("#16: a stale fader tap is refused loudly", nodes.get("refusal").className, "loud");
+  check("in the box's words", nodes.get("refusal").textContent, refusal);
+  context.render({ ...snapshot(), refusal: "already recording", stale_tap: null });
+  check("an ordinary refusal is not shouted", nodes.get("refusal").className, "");
+  context.render(snapshot());
+  check("and nothing to refuse hides the line", nodes.get("refusal").style.display, "none");
+}
+
 // -- snapshots out of order -----------------------------------------------
 
 {

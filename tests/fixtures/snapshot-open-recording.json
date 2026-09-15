@@ -250,6 +250,7 @@
     "recording": true
   },
   "refusal": null,
+  "stale_tap": null,
   "state": "open",
   "why": "Open at unity. You are driving; the detector cannot move the fader."
 }

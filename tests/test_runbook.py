@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, config, disk, serve
+from tacet import annotations, app, config, disk, serve
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -136,6 +136,10 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             with self.subTest(message[:40]):
                 quoted = message.split(":")[0].split("{")[0].strip()
                 self.assertIn(quoted, self.troubleshooting)
+
+    def test_the_runbook_quotes_the_stale_tap_refusal(self) -> None:
+        # Quoted up to the first value filled in.
+        self.assertIn(app.STALE_REFUSAL.split("{")[0].strip(), self.troubleshooting)
 
     def test_the_runbook_quotes_the_stopped_writer(self) -> None:
         # Quoted up to the semicolon; the page puts "Log not saving: " before it.

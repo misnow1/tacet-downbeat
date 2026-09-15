@@ -451,6 +451,7 @@ background:var(--line);margin-right:6px}
 #pulse.stale::before{background:var(--warn)}
 #why{color:var(--dim);margin-top:4px}
 #refusal{color:#ffb4a9;margin-top:6px;display:none}
+#refusal.loud{color:#fff;background:var(--warn);border-radius:8px;padding:8px 10px;font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach
    it, so this is not wiped by a snapshot the way the refusal line is. */
 #tap{margin-top:6px;display:none}

@@ -121,6 +121,7 @@ SCHEMA: tuple[Option, ...] = (
     Option("capture", "game_hours", "float", "how long a game to leave room for"),
     Option("fader", "fade_seconds", "float", "close fade length"),
     Option("fader", "slow_open_seconds", "float", "ride-in for up-slow, when the start was missed"),
+    Option("fader", "stale_tap_seconds", "float", "a fader tap arriving later than this is not executed"),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "port", "port the web UI binds to"),
 )

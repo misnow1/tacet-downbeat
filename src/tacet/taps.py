@@ -115,6 +115,30 @@ def timing(tap: Tap | None, received: float) -> TapTiming:
     return TapTiming(received=received, tapped=tapped, delay=received - tapped, uncertainty=tap.uncertainty)
 
 
+#: How late a fader tap may arrive and still be executed (#16).
+#:
+#: Seconds, not milliseconds, because the offset it is judged on is an estimate.
+#: A late open brings the band PA up after the music has stopped; a late fade
+#: cuts a band mid-phrase. Retune from game 3's logged per-tap delays, as
+#: `fader.stale_tap_seconds`.
+DEFAULT_STALE_TAP_SECONDS = 2.0
+
+
+def is_stale(tap: TapTiming, threshold: float) -> bool:
+    """Whether a fader tap arrived too late to execute. Pure.
+
+    Judged at the favourable end of the estimate - late even if the clock is out
+    by the whole of its uncertainty in the tap's favour - so the estimate's
+    error can let a late tap through but never refuse a prompt one. A tap with
+    no estimate cannot be judged and is never stale: refusing on a number that
+    does not exist would be a silent failure of its own, so it runs, and the
+    page says it was untimed.
+    """
+    if tap.delay is None or tap.uncertainty is None:
+        return False
+    return tap.delay - tap.uncertainty > threshold
+
+
 def delay_of(data: Any) -> float | None:
     """The logged delay in an entry's `data`, or None if it has none or it is
     not a number. For reading logs back, which may have been written by

@@ -65,6 +65,11 @@ fade_seconds = 2.0          # --fade
 # Tapered: fast through the bottom, slow through the top. This sets the
 # length; the shape is fixed. The other two open buttons still snap.
 slow_open_seconds = 1.5     # --slow-open
+# A fader tap that reaches the box later than this is logged and not executed:
+# a late open brings the PA up after the music stopped, a late fade cuts a
+# phrase. Generous, because the page's clock estimate is approximate. Retune
+# from the per-tap delays game 3 logs. Annotations are never refused.
+stale_tap_seconds = 2.0     # --stale-tap
 
 # The operator page.
 [ui]
