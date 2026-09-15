@@ -36,6 +36,10 @@ An empty row below now means nobody wrote it down, not that nobody knows.
 Put them in `tacet.toml` on the box too, so the startup command below is one
 line. See [box.md](box.md#tacettoml).
 
+Check the config before leaving for the stadium: `tacet-serve --log
+~/games/<YYYY-MM-DD>.jsonl --check` prints the banner or the refusal and starts
+nothing. See [box.md](box.md#checking-without-starting).
+
 ---
 
 ## Starting up, in order

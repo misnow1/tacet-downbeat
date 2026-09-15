@@ -411,3 +411,105 @@ class TestAnUnreadableLogStopsTheBoxInWords(_RunMain):
         code, stderr = self.run_with_the_log()
         self.assertEqual(code, 2)
         self.assertIn("cannot be read", stderr)
+
+
+class TestCheckAnswersWithoutStarting(unittest.TestCase):
+    """#79: `--check` is a real start that stops after the banner.
+
+    Every assertion compares against an actual start of the same command, so
+    `--check` cannot grow wording of its own: the troubleshooting table has to
+    describe what the operator sees on the day.
+    """
+
+    CONSOLE = ("--console-host", "192.0.2.1", "--dca", "3")
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.config = self.root / "tacet.toml"
+        self.config.write_text("", encoding="utf-8")
+        self.log = self.root / "game.jsonl"
+        self.queue = self.root / "queue.tsv"
+
+    def start(self, argv, *, config=True):
+        """(exit code, stdout, stderr) for `serve.main`, which never binds:
+        `asyncio.run` is replaced, and reports whether it was reached."""
+        stdout, stderr = io.StringIO(), io.StringIO()
+        prefix = ["--config", str(self.config)] if config else []
+        with (
+            mock.patch("sys.stdout", stdout),
+            mock.patch("sys.stderr", stderr),
+            # Closed, not run: a real start's coroutine is made and never awaited.
+            mock.patch("tacet.serve.asyncio.run", side_effect=lambda coroutine: coroutine.close()) as run,
+        ):
+            code: int | str | None
+            try:
+                code = serve.main([*prefix, *argv])
+            except SystemExit as exit_:
+                code = exit_.code
+        self.ran = run.called
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def good(self):
+        return [*self.CONSOLE, "--log", str(self.log), "--queue", str(self.queue)]
+
+    def test_a_good_config_prints_the_banner_a_start_prints_and_exits_zero(self):
+        _, started, _ = self.start(self.good())
+        self.assertTrue(self.ran)
+        code, checked, stderr = self.start([*self.good(), "--check"])
+        self.assertEqual(code, 0)
+        self.assertFalse(self.ran)
+        self.assertEqual(checked, started)
+        self.assertIn("console", checked)
+        self.assertEqual(stderr, "")
+
+    def test_every_refusal_is_the_one_a_start_gives(self):
+        log = ("--log", str(self.log))
+        unreadable = self.root / "unreadable.jsonl"
+        unreadable.write_text("{ not json\n" + '{"v": 1}\n', encoding="utf-8")
+        cases = {
+            "unknown key": ("[console]\nnope = 1\n", [*self.CONSOLE, *log]),
+            "bad value": ("[console]\ndca = 'three'\n", [*self.CONSOLE[:2], *log]),
+            "bad port": ("", [*self.CONSOLE, *log, "--http-port", "70000"]),
+            "no console host": ("", ["--dca", "3", *log]),
+            "no log": ("", [*self.CONSOLE]),
+            "missing --config": (None, ["--config", str(self.root / "absent.toml"), *self.CONSOLE, *log]),
+            "unreadable log": ("", [*self.CONSOLE, "--log", str(unreadable)]),
+        }
+        for name, (text, argv) in cases.items():
+            with self.subTest(name):
+                if text is not None:
+                    self.config.write_text(text, encoding="utf-8")
+                started = self.start(argv, config=text is not None)
+                checked = self.start([*argv, "--check"], config=text is not None)
+                self.assertNotEqual(checked[0], 0)
+                self.assertEqual(checked[0], started[0])
+                self.assertEqual(checked[2], started[2])
+                self.assertTrue(checked[2])
+                self.assertFalse(self.ran)
+
+    def test_a_warning_is_not_a_refusal(self):
+        self.log.write_text('{"event": "recording-started"', encoding="utf-8")
+        code, stdout, _ = self.start([*self.good(), "--check"])
+        self.assertEqual(code, 0)
+        self.assertIn("WARNING", stdout)
+
+    def test_nothing_is_created(self):
+        self.start([*self.good(), "--check"])
+        self.assertFalse(self.log.exists())
+        self.assertFalse(self.queue.exists())
+
+    def test_a_torn_tail_is_reported_and_left_exactly_as_it_was(self):
+        with annotations.AnnotationLog(self.log) as log:
+            log.record("note")
+        torn_log = self.log.read_bytes() + b'{"v":1,"se'
+        torn_queue = b"NOTE|note\t-\t-\nGAME|q1\tsta"
+        self.log.write_bytes(torn_log)
+        self.queue.write_bytes(torn_queue)
+        _, stdout, _ = self.start([*self.good(), "--check"])
+        self.assertIn("torn write", stdout)
+        self.assertEqual(self.log.read_bytes(), torn_log)
+        self.assertEqual(self.queue.read_bytes(), torn_queue)
+        self.assertFalse(annotations.set_aside_path(self.log).exists())
+        self.assertFalse(annotations.set_aside_path(self.queue).exists())

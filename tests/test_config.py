@@ -278,7 +278,7 @@ class TestPrecedence(_TempConfig):
 
 
 class TestFlagsTheConfigMustNotReach(_TempConfig):
-    """Two flags read like config keys and are not. Both would misfire hardware."""
+    """Flags that read like config keys and are not. Each would misfire hardware, or the box."""
 
     def test_verify_dm7_fade_is_not_settable_from_the_config(self):
         # In verify_dm7, --fade is what *selects* the fade probe. Taking it from
@@ -287,6 +287,15 @@ class TestFlagsTheConfigMustNotReach(_TempConfig):
         args, _ = config.resolve(verify_dm7.parser(), verify_dm7.CONFIG_MAPPING, [], environ={}, search=[path])
         self.assertIsNone(args.fade)
         self.assertNotIn("fade", verify_dm7.CONFIG_MAPPING)
+
+    def test_serve_check_is_not_a_config_key(self):
+        # --check chooses what the tool does (#79). A file that set it would
+        # make the box never start.
+        self.assertNotIn("check", serve.CONFIG_MAPPING)
+        self.assertNotIn("check", {option.key for option in config.SCHEMA})
+        path = self.write("[ui]\ncheck = true\n")
+        with self.assertRaises(config.ConfigError):
+            config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[path])
 
     def test_verify_reaper_listen_is_a_duration_and_keeps_its_default(self):
         # ui.listen is a bind address; verify_reaper's --listen is seconds.

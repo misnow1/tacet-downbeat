@@ -157,6 +157,24 @@ tacet-serve \
 - Leave `--quantized` off: this console does not round (2026-09-12). `--no-quantized`
   turns it back off when the file sets it and you want it gone for one run.
 
+### Checking without starting
+
+Add `--check` to the exact command you will type on the day:
+
+```
+tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl --check
+```
+
+It prints what a real start would print and exits instead of binding: the
+banner and exit code 0 if the box would start, or the same refusal and the same
+non-zero code it would stop with. `WARNING` rows are not refusals, so they still
+exit 0. Nothing is bound or sent, the log and queue are neither created nor
+opened, and a torn end is reported but not repaired. Do it the night before, and
+after any edit to `tacet.toml`.
+
+`--check` is a flag only. A `check` key in the file is refused like any other
+unknown key, because a file that set it would stop the box from ever starting.
+
 ---
 
 ## Reading the page
