@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, state
+from . import dm7, state, taps
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, record_refusal
 
@@ -68,6 +69,34 @@ RECORDING_STARTED = ann.ANCHOR_EVENT
 
 #: Shown when `/record` could not be sent. Quoted in docs/troubleshooting.md.
 RECORD_SEND_FAILED = "Could not send the start to Reaper ({error}). Nothing started; tap again, or start it in Reaper."
+
+
+#: The tap being handled, while it is being handled (#11).
+#:
+#: A context variable rather than a parameter threaded through every private
+#: method, because "every entry the tap produces" includes entries written
+#: after the request was answered: the `move-landed` of a fade, the `stood-down`
+#: it leads to. Those are written by a task the tap started, and a task copies
+#: the context it was created in, so it carries its tap with it and a later tap
+#: cannot overwrite it.
+_TAP: contextvars.ContextVar[taps.TapTiming | None] = contextvars.ContextVar("tacet_tap", default=None)
+
+
+@contextlib.contextmanager
+def _tapped(tap: taps.TapTiming | None) -> Iterator[None]:
+    token = _TAP.set(tap)
+    try:
+        yield
+    finally:
+        _TAP.reset(token)
+
+
+def _stamped(data: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """`data` with the current tap's timing added, if there is a tap."""
+    tap = _TAP.get()
+    if tap is None:
+        return None if data is None else dict(data)
+    return {**(data or {}), taps.TAP_FIELD: tap.as_data()}
 
 
 def session_entries(before: state.Machine, after: state.Machine) -> tuple[str, ...]:
@@ -133,17 +162,38 @@ class App:
 
     # -- operator actions -------------------------------------------------
 
-    async def arm(self) -> state.Outcome:
-        return await self._command(state.Command.ARM)
+    async def arm(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+        with _tapped(tap):
+            return await self._command(state.Command.ARM)
 
-    async def stand_down(self) -> state.Outcome:
-        return await self._command(state.Command.STAND_DOWN)
+    async def stand_down(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+        with _tapped(tap):
+            return await self._command(state.Command.STAND_DOWN)
 
-    async def trigger(self, *, source: state.Source = state.Source.OPERATOR, detail: str = "") -> state.Outcome:
-        return await self._command(state.Command.TRIGGER, source=source, detail=detail)
+    async def trigger(
+        self,
+        *,
+        source: state.Source = state.Source.OPERATOR,
+        detail: str = "",
+        tap: taps.TapTiming | None = None,
+    ) -> state.Outcome:
+        with _tapped(tap):
+            return await self._command(state.Command.TRIGGER, source=source, detail=detail)
 
-    async def release(self, *, source: state.Source = state.Source.OPERATOR, detail: str = "") -> state.Outcome:
-        return await self._command(state.Command.RELEASE, source=source, detail=detail)
+    async def release(
+        self,
+        *,
+        source: state.Source = state.Source.OPERATOR,
+        detail: str = "",
+        tap: taps.TapTiming | None = None,
+    ) -> state.Outcome:
+        with _tapped(tap):
+            return await self._command(state.Command.RELEASE, source=source, detail=detail)
+
+    def now(self) -> float:
+        """The box's monotonic clock: what snapshots are stamped with, what the
+        page's clock estimate is measured against, and what taps are placed on."""
+        return self._monotonic()
 
     async def _command(
         self,
@@ -380,7 +430,13 @@ class App:
 
     # -- annotation -------------------------------------------------------
 
-    async def annotate(self, event_key: str, *, data: Mapping[str, Any] | None = None) -> ann.Entry | None:
+    async def annotate(
+        self,
+        event_key: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        tap: taps.TapTiming | None = None,
+    ) -> ann.Entry | None:
         """Record what the operator saw, and act on it when it says to.
 
         The fader buttons do both. Asking for the move and the reason as two
@@ -400,6 +456,13 @@ class App:
         """
         event = ann.operator_event(event_key)
         data = ann.operator_data(data)
+        if taps.TAP_FIELD in data:
+            raise ann.DataError(f"data {taps.TAP_FIELD!r} is the box's own, and not the operator's to set")
+        with _tapped(tap):
+            return await self._annotate(event, data)
+
+    async def _annotate(self, event: ann.EventType, data: dict[str, Any]) -> ann.Entry | None:
+        event_key = event.key
         if event.action is not None:
             # The move goes first. A missed downbeat is unrecoverable and must
             # not wait behind a log write.
@@ -415,26 +478,28 @@ class App:
         self._notify()
         return entry
 
-    async def start_span(self, event_key: str) -> str | None:
+    async def start_span(self, event_key: str, *, tap: taps.TapTiming | None = None) -> str | None:
         """The new span's id, or None when the log refused its start. A start
         accepted and then not saved closes the span again once the writer says
         so, and the button offers to start it again."""
         ann.operator_event(event_key)
         span_id: str | None
         try:
-            span_id = self._log.start_span(event_key, project_seconds=self._playhead())
+            with _tapped(tap):
+                span_id = self._log.start_span(event_key, data=_stamped(None), project_seconds=self._playhead())
         except ann.WriteError:
             span_id = None  # see _record
         self._notify()
         return span_id
 
-    async def end_span(self, span_id: str) -> ann.Entry | None:
+    async def end_span(self, span_id: str, *, tap: taps.TapTiming | None = None) -> ann.Entry | None:
         """None when the log refused the end. An end accepted and then not saved
         reopens the span once the writer says so, so the button offers to end
         it again and the next tap saves the end."""
         entry: ann.Entry | None
         try:
-            entry = self._log.end_span(span_id, project_seconds=self._playhead())
+            with _tapped(tap):
+                entry = self._log.end_span(span_id, data=_stamped(None), project_seconds=self._playhead())
         except ann.WriteError:
             entry = None  # see _record
         self._notify()
@@ -459,7 +524,7 @@ class App:
         all carry on.
         """
         try:
-            return self._log.record(event_key, data=data, project_seconds=project_seconds)
+            return self._log.record(event_key, data=_stamped(data), project_seconds=project_seconds)
         except ann.WriteError:
             return None
 
@@ -493,7 +558,11 @@ class App:
 
     # -- recorder ---------------------------------------------------------
 
-    async def start_recording(self) -> None:
+    async def start_recording(self, *, tap: taps.TapTiming | None = None) -> None:
+        with _tapped(tap):
+            await self._start_recording()
+
+    async def _start_recording(self) -> None:
         """Roll. There is no counterpart here; stopping happens in Reaper.
 
         Reaper's `/record` is a toggle, so a second tap would stop the
@@ -558,6 +627,10 @@ class App:
         # at: the commanded level already *is* the expectation.
         target = self._move_target
         return {
+            # When this was taken, on the box's clock. The page keeps the newest
+            # it has seen: a POST response held up on the wifi used to paint an
+            # older state over the pushes that overtook it (#11).
+            "at": self._monotonic(),
             "state": self.machine.state.value,
             "why": state.describe(self.machine),
             "refusal": refusal,

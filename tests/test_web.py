@@ -64,6 +64,15 @@ class TestPage(WebTestCase):
             self.assertNotIn(scheme, body)
 
 
+class TestThePageHasWhereTapsReport(WebTestCase):
+    async def test_the_tap_line_is_on_the_page(self):
+        # The script writes a failed tap here (#11); a page without it throws
+        # on the first tap that fails, which is exactly when it must not.
+        text = await (await self.client.get("/")).text()
+        self.assertIn('id="tap"', text)
+        self.assertIn("button.sending", text)
+
+
 class TestStateEndpoint(WebTestCase):
     async def test_returns_the_snapshot(self):
         payload = await (await self.client.get("/api/state")).json()
@@ -546,3 +555,92 @@ class TestEveryFaderActionIsColoured(unittest.TestCase):
             '.grid button[data-action="open"],\n.grid button[data-action="open-slow"]{border-color:var(--open)',
             web.PAGE,
         )
+
+
+class TestTapsAreStampedOnTheWayIn(WebTestCase):
+    """#11: every route the page taps carries the page's stamp, and the box
+    logs when it was tapped as well as when it arrived."""
+
+    def build_app(self, monotonic=time.monotonic):
+        self.clock = [5000.0]
+        return super().build_app(monotonic=lambda: self.clock[0])
+
+    def stamp(self, *, at, offset=None, uncertainty=None):
+        return {"tap": {"at": at, "offset": offset, "uncertainty": uncertainty}}
+
+    def logged(self):
+        self.log.flush()
+        return list(ann.read_entries(self.root / "game.jsonl"))
+
+    async def test_every_command_route_reads_the_stamp(self):
+        # Page clock 1000 s ahead of the box's, tapped 2 s before it arrived.
+        body = self.stamp(at=5998.0, offset=1000.0, uncertainty=0.05)
+        for path in ("/api/arm", "/api/trigger", "/api/release", "/api/stand-down", "/api/record"):
+            with self.subTest(path):
+                response = await self.client.post(path, json=body)
+                self.assertEqual(response.status, 200)
+        await self.tacet.wait_for_fade()
+        want = {"tapped": 4998.0, "received": 5000.0, "delay": 2.0, "uncertainty": 0.05}
+        for entry in self.logged():
+            with self.subTest(entry.event):
+                self.assertEqual(entry.data["tap"], want)
+
+    async def test_annotations_and_spans_read_it_too(self):
+        body = self.stamp(at=6000.0, offset=1000.5, uncertainty=0.01)
+        await self.client.post("/api/annotate", json={"key": "note", "data": {"text": "x"}, **body})
+        started = await (await self.client.post("/api/span/start", json={"key": "q1", **body})).json()
+        await self.client.post("/api/span/end", json={"span_id": started["span_id"], **body})
+        for entry in self.logged():
+            with self.subTest(entry.event, phase=entry.phase):
+                self.assertEqual(entry.data["tap"]["delay"], 0.5)
+
+    async def test_a_tap_with_no_estimate_logs_when_it_arrived(self):
+        await self.client.post("/api/arm", json=self.stamp(at=123.0))
+        tap = self.logged()[-1].data["tap"]
+        self.assertEqual(tap, {"tapped": None, "received": 5000.0, "delay": None, "uncertainty": None})
+
+    async def test_a_command_with_no_body_still_works(self):
+        # curl, or a page cached from before the stamp.
+        response = await self.client.post("/api/arm")
+        self.assertEqual(response.status, 200)
+        self.assertIsNone(self.logged()[-1].data["tap"]["delay"])
+
+    async def test_a_malformed_stamp_is_a_client_error_and_does_nothing(self):
+        response = await self.client.post("/api/arm", json={"tap": {"at": "soon"}})
+        self.assertEqual(response.status, 400)
+        self.assertIn("tap", (await response.json())["error"])
+        self.assertEqual(self.tacet.machine.state.value, "standing-down")
+
+
+class TestTheClockCanBeAskedOverTheSocket(WebTestCase):
+    """#11: the page estimates its offset from the box by a round trip on the
+    socket it already has open, triggered by each keepalive."""
+
+    def build_app(self, monotonic=time.monotonic):
+        return super().build_app(monotonic=lambda: 777.25)
+
+    async def test_a_ping_is_answered_with_the_box_clock(self):
+        async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
+            await socket.receive()  # the initial snapshot
+            await socket.send_str(json.dumps({"ping": 1234.5}))
+            reply = json.loads((await socket.receive()).data)
+        self.assertEqual(reply, {"pong": 1234.5, "box": 777.25})
+
+    def test_only_a_well_formed_ping_is_answered(self):
+        self.assertEqual(json.loads(web.pong_for('{"ping": 1.5}', 9.0) or ""), {"pong": 1.5, "box": 9.0})
+        for text in ("not json", "[]", '{"ping": "1"}', '{"ping": true}', '{"other": 1}', '{"ping": NaN}'):
+            with self.subTest(text):
+                self.assertIsNone(web.pong_for(text, 9.0))
+
+    def test_a_pong_is_neither_a_snapshot_nor_a_keepalive(self):
+        frame = json.loads(web.pong_for('{"ping": 1.0}', 2.0) or "")
+        self.assertNotIn("state", frame)
+        self.assertNotIn("keepalive", frame)
+
+
+class TestTheTimestampAloneIsNotNews(WebTestCase):
+    def test_a_snapshot_that_differs_only_in_when_it_was_taken_is_not_sent(self):
+        before = self.tacet.snapshot()
+        after = {**before, "at": before["at"] + 1.0}
+        self.assertFalse(web.should_broadcast(before, after, elapsed=5.0))

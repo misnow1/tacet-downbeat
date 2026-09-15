@@ -261,3 +261,43 @@ class TestAStampedPlayheadBeatsTheArithmetic(unittest.TestCase):
         entries = [build(clock, 1, "recording-started"), build(clock, 2, "band-enters-stands")]
         result = markers.derive(entries, markers.find_anchor(entries))
         self.assertEqual(result.markers[-1].start, 1.0)
+
+
+class TheTapTimeBeatsTheArrival(unittest.TestCase):
+    """#11: an entry used to be placed where it arrived, and on stadium wifi a
+    tap can arrive seconds after the thumb. The box now logs the delay, and the
+    marker goes where the operator actually tapped."""
+
+    def tapped(self, delay, **kwargs):
+        tap = {"tapped": None, "received": None, "delay": delay, "uncertainty": 0.05}
+        return {"data": {"tap": tap}, **kwargs}
+
+    def test_a_stamped_playhead_is_moved_back_by_the_delay(self):
+        clock = StepClock()
+        entries = [
+            build(clock, 1, "recording-started"),
+            build(clock, 2, "drumline-cadence", **self.tapped(2.5, project_seconds=100.0)),
+        ]
+        self.assertEqual(markers.derive(entries, entries[0]).markers[-1].start, 97.5)
+
+    def test_the_arithmetic_is_moved_back_too(self):
+        clock = StepClock()
+        entries = [build(clock, 1, "recording-started"), build(clock, 2, "note", **self.tapped(0.25))]
+        self.assertEqual(markers.derive(entries, entries[0]).markers[-1].start, 0.75)
+
+    def test_a_tap_with_no_delay_is_placed_where_it_arrived(self):
+        clock = StepClock()
+        entries = [
+            build(clock, 1, "recording-started"),
+            build(clock, 2, "note", **self.tapped(None, project_seconds=40.0)),
+        ]
+        self.assertEqual(markers.derive(entries, entries[0]).markers[-1].start, 40.0)
+
+    def test_a_negative_delay_does_not_place_a_tap_after_it_arrived(self):
+        # Within the estimate's uncertainty of zero; a tap cannot follow its arrival.
+        clock = StepClock()
+        entries = [
+            build(clock, 1, "recording-started"),
+            build(clock, 2, "note", **self.tapped(-0.02, project_seconds=40.0)),
+        ]
+        self.assertEqual(markers.derive(entries, entries[0]).markers[-1].start, 40.0)
