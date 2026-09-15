@@ -306,6 +306,211 @@ class TestArming(AppTestCase):
         self.assertIn("stood-down", self.keys())
 
 
+def _after(*commands):
+    """The machine each command leaves, from boot. Built with the real state
+    machine so no test hand-assembles a machine that cannot occur."""
+    machines = [state.Machine()]
+    for command in commands:
+        machines.append(state.step(machines[-1], state.Event(command)).machine)
+    return machines
+
+
+class TestSessionEntries(unittest.TestCase):
+    """#50, the pure half: which session entries a transition earns.
+
+    Decided from the machine before and after, so a stand-down is logged when
+    it happens rather than when it was asked for.
+    """
+
+    C = state.Command
+
+    def entries_for(self, *commands):
+        machines = _after(*commands)
+        return tacet_app.session_entries(machines[-2], machines[-1])
+
+    def test_arming(self):
+        self.assertEqual(self.entries_for(self.C.ARM), (tacet_app.ARMED,))
+
+    def test_standing_down_while_closed_happens_at_once(self):
+        self.assertEqual(self.entries_for(self.C.ARM, self.C.STAND_DOWN), (tacet_app.STOOD_DOWN,))
+
+    def test_standing_down_while_open_is_only_a_request(self):
+        entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.STAND_DOWN)
+        self.assertEqual(entries, (tacet_app.STAND_DOWN_REQUESTED,))
+
+    def test_standing_down_while_fading_is_only_a_request(self):
+        entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.RELEASE, self.C.STAND_DOWN)
+        self.assertEqual(entries, (tacet_app.STAND_DOWN_REQUESTED,))
+
+    def test_asking_twice_is_one_request(self):
+        entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.STAND_DOWN, self.C.STAND_DOWN)
+        self.assertEqual(entries, ())
+
+    def test_the_fade_landing_is_the_stand_down(self):
+        entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.STAND_DOWN, self.C.FADE_COMPLETE)
+        self.assertEqual(entries, (tacet_app.STOOD_DOWN,))
+
+    def test_a_snap_back_cancels_the_request(self):
+        entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.STAND_DOWN, self.C.TRIGGER)
+        self.assertEqual(entries, (tacet_app.STAND_DOWN_CANCELLED,))
+
+    def test_an_ordinary_close_earns_nothing(self):
+        for commands in ((self.C.TRIGGER,), (self.C.TRIGGER, self.C.RELEASE), (self.C.RELEASE,)):
+            with self.subTest(commands=commands):
+                self.assertEqual(self.entries_for(self.C.ARM, *commands), ())
+        landing = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.RELEASE, self.C.FADE_COMPLETE)
+        self.assertEqual(landing, ())
+
+    def test_a_failed_move_earns_nothing(self):
+        # move-failed is written by the shell, with the level the fader stopped at.
+        entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.STAND_DOWN, self.C.MOVE_FAILED)
+        self.assertEqual(entries, ())
+
+
+class TestAStandDownIsLoggedWhenItLands(AppTestCase):
+    """#50: `stood-down` used to be written at the tap, before the fade.
+
+    A trigger that snapped back meanwhile left a log saying the box stood down,
+    with nothing to contradict it.
+    """
+
+    async def test_a_cancelled_stand_down_is_not_logged_as_stood_down(self):
+        app = self.build(fade=1.0)
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        await app.trigger()
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        keys = self.keys()
+        self.assertNotIn(tacet_app.STOOD_DOWN, keys)
+        self.assertLess(keys.index(tacet_app.STAND_DOWN_REQUESTED), keys.index(tacet_app.STAND_DOWN_CANCELLED))
+
+    async def test_a_stand_down_during_a_song_is_logged_when_the_fade_lands(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        self.assertIn(tacet_app.STAND_DOWN_REQUESTED, self.keys())
+        self.assertNotIn(tacet_app.STOOD_DOWN, self.keys())
+
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        keys = self.keys()
+        self.assertEqual(keys[-1], tacet_app.STOOD_DOWN)
+        self.assertEqual(self.entries()[-1].data["state"], state.State.STANDING_DOWN.value)
+        # The fade is reported delivered before the stand-down it made possible.
+        self.assertEqual(keys[-2], tacet_app.MOVE_LANDED)
+
+    async def test_a_stand_down_whose_fade_fails_is_never_logged_as_stood_down(self):
+        sender = FlakySender()
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.trigger()
+        sender.fail_after = len(sender.packets) + 2
+        await app.stand_down()
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        keys = self.keys()
+        self.assertIn(tacet_app.STAND_DOWN_REQUESTED, keys)
+        self.assertIn(tacet_app.MOVE_FAILED, keys)
+        self.assertNotIn(tacet_app.STOOD_DOWN, keys)
+
+    async def test_a_stand_down_with_nothing_to_fade_lands_at_once(self):
+        # The open never went out, so the box's fader is still at -inf and the
+        # fade has no step to send. That is a landing, not a failure.
+        app = self.build(console_sender=FailingSender())
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(self.keys()[-1], tacet_app.STOOD_DOWN)
+
+    async def test_a_second_tap_while_fading_writes_no_second_request(self):
+        app = self.build(fade=1.0)
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        await app.stand_down()
+        self.assertEqual(self.keys().count(tacet_app.STAND_DOWN_REQUESTED), 1)
+        await app.trigger()
+
+
+class TestDeliveryIsRecordedWhenTheMoveEnds(AppTestCase):
+    """#50: `delivered` was read before a fade or ride-in had sent anything, so
+    it described the previous send.
+
+    A move the box awaits (the snap open) is delivered or not by the time its
+    `commanded` entry is written. A move that runs on in the background is
+    neither yet: `delivered` is null, and the move ends in `move-landed` or
+    `move-failed`, unless a newer move replaces it.
+    """
+
+    def commanded(self):
+        return [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+
+    def landed(self):
+        return [e for e in self.entries() if e.event == tacet_app.MOVE_LANDED]
+
+    async def test_a_snap_open_is_delivered_when_it_is_logged(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        self.assertIs(self.commanded()[-1].data["delivered"], True)
+        self.assertEqual(self.landed(), [])
+
+    async def test_a_fade_is_undecided_when_logged_and_landed_when_done(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        self.assertIsNone(self.commanded()[-1].data["delivered"])
+        self.assertEqual(self.landed(), [])
+
+        await app.wait_for_fade()
+        landed = self.landed()
+        self.assertEqual(len(landed), 1)
+        self.assertEqual(landed[0].data["target"], dm7.MINUS_INF)
+        self.assertEqual(landed[0].data["level"], dm7.MINUS_INF)
+
+    async def test_a_ride_in_is_undecided_when_logged_and_landed_when_done(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-slow")
+        self.assertIsNone(self.commanded()[-1].data["delivered"])
+
+        await app.wait_for_fade()
+        landed = self.landed()
+        self.assertEqual(len(landed), 1)
+        self.assertEqual(landed[0].data["target"], dm7.UNITY)
+        self.assertEqual(landed[0].data["level"], dm7.UNITY)
+
+    async def test_a_failed_fade_is_failed_and_never_landed(self):
+        sender = FlakySender()
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.trigger()
+        sender.fail_after = len(sender.packets) + 2
+        await app.release()
+        await app.wait_for_fade()
+        self.assertIsNone(self.commanded()[-1].data["delivered"])
+        self.assertIn(tacet_app.MOVE_FAILED, self.keys())
+        self.assertEqual(self.landed(), [])
+
+    async def test_a_superseded_fade_never_lands(self):
+        app = self.build(fade=1.0)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await asyncio.sleep(UNDER_WAY)
+        await app.trigger()
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        await app.wait_for_fade()
+        self.assertEqual(self.landed(), [])
+        self.assertEqual([e.data["delivered"] for e in self.commanded()], [True, None, True])
+
+
 class TestFader(AppTestCase):
     async def test_trigger_opens_the_fader_to_unity(self):
         app = self.build()
@@ -396,7 +601,9 @@ class TestFailures(AppTestCase):
         await app.arm()
         await app.trigger()
         await app.stand_down()
-        self.assertIn("stood-down", self.keys())
+        # Taken and recorded. Not `stood-down`: the fade to get there cannot
+        # reach a console that is not answering, so it never lands (#50).
+        self.assertIn(tacet_app.STAND_DOWN_REQUESTED, self.keys())
 
 
 class TestASenderErrorOfAnyKindIsAFailedMove(AppTestCase):

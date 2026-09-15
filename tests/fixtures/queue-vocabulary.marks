@@ -2,6 +2,8 @@ marker	SYS|recording-started
 marker	SYS|recording-stopped
 marker	SYS|armed
 marker	SYS|stood-down
+marker	SYS|stand-down-requested
+marker	SYS|stand-down-cancelled
 marker	BAND|band-enters-stadium
 marker	BAND|band-enters-stands
 marker	BAND|band-exits-stands
@@ -27,6 +29,7 @@ region	GAME|timeout-injury
 region	GAME|timeout
 marker	FDR|commanded
 marker	FDR|move-failed
+marker	FDR|move-landed
 marker	FDR|up-whistle
 marker	FDR|up-drums
 marker	FDR|up-slow
