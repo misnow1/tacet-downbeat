@@ -1,8 +1,10 @@
 import json
+import threading
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from tacet import annotations as ann
 from tests.disk import Disk, no_space
@@ -141,11 +143,18 @@ class LogTestCase(unittest.TestCase):
 
 
 class TestAnnotationLog(LogTestCase):
-    def test_records_are_durable_immediately(self):
+    def test_records_are_on_disk_once_flushed(self):
         # The log is the source of truth; an entry not on disk is an entry lost.
         with self.log() as log:
             log.record("note", data={"text": "hello"})
+            self.assertTrue(log.flush())
             self.assertEqual(len(list(ann.read_entries(self.path))), 1)
+
+    def test_closing_writes_everything_accepted(self):
+        with self.log() as log:
+            for _ in range(20):
+                log.record("note")
+        self.assertEqual(len(list(ann.read_entries(self.path))), 20)
 
     def test_sequence_numbers_increment_from_one(self):
         with self.log() as log:
@@ -643,6 +652,7 @@ class TestEntriesAreJson(LogTestCase):
             self.assertFalse(log.health.healthy)
             self.assertIn("note", log.health.error)
             log.record("note", data={"text": "after"})
+            log.flush()
             self.assertTrue(log.health.healthy)
         lines = self.path.read_text().splitlines()
         self.assertEqual(len(lines), 2)
@@ -653,7 +663,12 @@ class TestEntriesAreJson(LogTestCase):
 class TestAFailingDisk(LogTestCase):
     """A disk that fills in the third quarter. The write fails; the box must
     say so, must not glue the next entry onto whatever part of the line landed,
-    and must start saving again once there is room."""
+    and must start saving again once there is room.
+
+    Writes happen on the log's own thread (#41), so a tap is accepted before
+    the disk has been tried. Each test flushes before it looks, and before it
+    changes the disk under a write that has not happened yet.
+    """
 
     def setUp(self):
         super().setUp()
@@ -662,23 +677,25 @@ class TestAFailingDisk(LogTestCase):
     def log(self, mirror=None):
         return ann.AnnotationLog(self.path, clock=self.clock, opener=self.disk.open, mirror=mirror)
 
-    def test_a_failed_write_raises_a_write_error(self):
+    def test_a_failed_write_is_accepted_then_reported(self):
         with self.log() as log:
             self.disk.full = True
-            with self.assertRaises(ann.WriteError) as caught:
-                log.record("note", data={"text": "lost"})
-        self.assertIn("No space left on device", str(caught.exception))
+            entry = log.record("note", data={"text": "lost"})
+            self.assertEqual(entry.seq, 1)
+            log.flush()
+            self.assertFalse(log.health.healthy)
+            self.assertIn("No space left on device", log.health.error)
 
     def test_a_failed_write_is_on_the_log_health_and_stays_counted(self):
         with self.log() as log:
             self.assertTrue(log.health.healthy)
             self.disk.full = True
-            with self.assertRaises(ann.WriteError):
-                log.record("note")
+            log.record("note")
+            log.flush()
             self.assertFalse(log.health.healthy)
-            self.assertIn("No space left on device", log.health.error)
             self.disk.full = False
             log.record("note")
+            log.flush()
             # Saving again, and says so; the entry it cost is still counted.
             self.assertTrue(log.health.healthy)
             self.assertEqual(log.health.failures, 1)
@@ -688,9 +705,10 @@ class TestAFailingDisk(LogTestCase):
         # the next line would land straight after the fragment.
         with self.log() as log:
             log.record("note", data={"text": "kept"})
+            log.flush()
             self.disk.full = self.disk.tears = True
-            with self.assertRaises(ann.WriteError):
-                log.record("note", data={"text": "torn"})
+            log.record("note", data={"text": "torn"})
+            log.flush()
             self.disk.full = False
             log.record("note", data={"text": "after"})
         texts = [entry.data["text"] for entry in ann.read_entries(self.path)]
@@ -704,43 +722,59 @@ class TestAFailingDisk(LogTestCase):
         with self.log() as log:
             log.record("note")
             self.disk.full = True
-            with self.assertRaises(ann.WriteError):
-                log.record("note")
+            log.record("note")
+            log.flush()
             self.disk.full = False
             self.path.unlink()
-            with self.assertRaises(ann.WriteError):
-                log.record("note")
+            log.record("note")
+            log.flush()
             self.assertFalse(self.path.exists())
             self.assertFalse(log.health.healthy)
 
-    def test_a_span_whose_start_was_not_saved_is_not_open(self):
+    def test_a_span_whose_start_was_not_saved_is_closed_again(self):
         with self.log() as log:
             self.disk.full = True
-            with self.assertRaises(ann.WriteError):
-                log.start_span("q3")
+            span = log.start_span("q3")
+            self.assertIn(span, log.open_spans())
+            log.flush()
             self.assertEqual(len(log.open_spans()), 0)
 
-    def test_a_span_whose_end_was_not_saved_is_still_open(self):
-        # So the button still reads (end), and tapping it again saves the end.
+    def test_a_span_whose_end_was_not_saved_is_open_again(self):
+        # So the button reads (end) again, and tapping it again saves the end.
         with self.log() as log:
             span = log.start_span("q3")
+            log.flush()
             self.disk.full = True
-            with self.assertRaises(ann.WriteError):
-                log.end_span(span)
+            log.end_span(span)
+            self.assertNotIn(span, log.open_spans())
+            log.flush()
             self.assertIn(span, log.open_spans())
             self.disk.full = False
             log.end_span(span)
+            log.flush()
+            self.assertNotIn(span, log.open_spans())
+        phases = [entry.phase for entry in ann.read_entries(self.path)]
+        self.assertEqual(phases, [ann.PHASE_START, ann.PHASE_END])
+
+    def test_a_span_that_saved_stays_closed(self):
+        with self.log() as log:
+            span = log.end_span(log.start_span("q3")).span_id
+            log.flush()
             self.assertNotIn(span, log.open_spans())
 
     def test_a_failing_mirror_does_not_cost_the_log_entry(self):
         # The queue is a regenerable view of the log. Its failure must neither
         # stop the entry being written nor fail the write that did land.
         class BrokenMirror:
-            def append(self, entry):
+            def write(self, entry):
                 raise no_space()
+
+            def sync(self):
+                pass
 
         with self.log(mirror=BrokenMirror()) as log:
             entry = log.record("note", data={"text": "kept"})
+            log.flush()
             self.assertTrue(log.health.healthy)
             self.assertFalse(log.mirror_health.healthy)
             self.assertIn("No space left on device", log.mirror_health.error)
@@ -750,14 +784,153 @@ class TestAFailingDisk(LogTestCase):
         written = []
 
         class Mirror:
-            def append(self, entry):
+            def write(self, entry):
                 written.append(entry.event)
+
+            def sync(self):
+                pass
 
         with self.log(mirror=Mirror()) as log:
             self.disk.full = True
+            log.record("note")
+            log.flush()
+        self.assertEqual(written, [])
+
+
+class Gate:
+    """A sync that holds the writer thread until the test lets it go."""
+
+    #: Long enough never to be the reason a test passes, short enough that a
+    #: test that forgets to open the gate fails rather than hangs.
+    HOLD_SECONDS = 10.0
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.opened = threading.Event()
+        self.calls = 0
+
+    def __call__(self, fd: int) -> None:
+        self.calls += 1
+        self.entered.set()
+        self.opened.wait(self.HOLD_SECONDS)
+
+    def open(self) -> None:
+        self.opened.set()
+
+
+class Killed(BaseException):
+    """What nothing in the writer is allowed to catch: it ends the thread."""
+
+
+class TestTheWriterThread(LogTestCase):
+    """#41: the disk is touched on one thread, never on the caller's."""
+
+    def log(self, **options):
+        return ann.AnnotationLog(self.path, clock=self.clock, **options)
+
+    def test_a_slow_sync_does_not_hold_up_the_caller(self):
+        gate = Gate()
+        with self.log(sync=gate) as log:
+            self.addCleanup(gate.open)
+            log.record("note")
+            self.assertTrue(gate.entered.wait(Gate.HOLD_SECONDS))
+            # The thread is stuck in a sync, and these still return at once.
+            entries = [log.record("note") for _ in range(5)]
+            self.assertEqual([entry.seq for entry in entries], [2, 3, 4, 5, 6])
+            gate.open()
+        self.assertEqual(len(list(ann.read_entries(self.path))), 6)
+
+    def test_one_sync_covers_every_line_queued_behind_it(self):
+        gate = Gate()
+        with self.log(sync=gate) as log:
+            self.addCleanup(gate.open)
+            log.record("note")
+            self.assertTrue(gate.entered.wait(Gate.HOLD_SECONDS))
+            for _ in range(9):
+                log.record("note")
+            gate.open()
+            log.flush()
+        self.assertEqual(gate.calls, 2)
+
+    def test_entries_land_in_the_order_they_were_accepted(self):
+        with self.log() as log:
+            accepted = [log.record("note").seq for _ in range(50)]
+        self.assertEqual([entry.seq for entry in ann.read_entries(self.path)], accepted)
+
+    def test_the_mirror_is_written_only_after_the_log_is_synced(self):
+        # So the queue never gets ahead of the log.
+        happened = []
+
+        class Mirror:
+            def write(self, entry):
+                happened.append(("mirror", entry.seq))
+
+            def sync(self):
+                pass
+
+        def sync(fd):
+            happened.append(("log synced", None))
+
+        with self.log(sync=sync, mirror=Mirror()) as log:
+            log.record("note")
+            log.flush()
+            log.record("note")
+        self.assertEqual(happened, [("log synced", None), ("mirror", 1), ("log synced", None), ("mirror", 2)])
+
+    def test_the_writer_survives_an_unexpected_exception(self):
+        calls = []
+
+        def sync(fd):
+            calls.append(fd)
+            if len(calls) == 1:
+                raise RuntimeError("not an OSError")
+
+        with self.log(sync=sync) as log:
+            log.record("note", data={"text": "unlucky"})
+            log.flush()
+            self.assertFalse(log.health.healthy)
+            self.assertIn("RuntimeError", log.health.error)
+            log.record("note", data={"text": "saved"})
+            self.assertTrue(log.flush())
+            self.assertTrue(log.health.healthy)
+            self.assertEqual(log.health.failures, 1)
+        self.assertIn("saved", [entry.data["text"] for entry in ann.read_entries(self.path)])
+
+    def test_a_failing_wake_up_does_not_stop_the_writer(self):
+        def wake():
+            raise RuntimeError("listener is broken")
+
+        with self.log() as log:
+            log.when_written(wake)
+            log.record("note")
+            log.flush()
+            log.record("note")
+            self.assertTrue(log.flush())
+            self.assertTrue(log.health.healthy)
+
+    def test_a_dead_writer_is_reported_and_refuses_further_entries(self):
+        def sync(fd):
+            raise Killed
+
+        woken = threading.Event()
+        # The thread's death is the point; its traceback is not.
+        with mock.patch.object(threading, "excepthook", lambda _: None), self.log(sync=sync) as log:
+            log.when_written(woken.set)
+            log.record("note")
+            self.assertFalse(log.flush())
+            self.assertTrue(woken.is_set())
+            self.assertEqual(log.health.error, ann.WRITER_STOPPED)
+            # The entry it died holding, and nothing for the stop itself.
+            self.assertEqual(log.health.failures, 1)
             with self.assertRaises(ann.WriteError):
                 log.record("note")
-        self.assertEqual(written, [])
+            self.assertEqual(log.health.failures, 2)
+
+    def test_a_writer_stopped_by_closing_is_not_reported_dead(self):
+        log = self.log().open()
+        log.record("note")
+        log.close()
+        self.assertTrue(log.health.healthy)
 
 
 class TestPriorAnchorIsNoticed(LogTestCase):

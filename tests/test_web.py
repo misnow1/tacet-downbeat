@@ -46,6 +46,7 @@ class WebTestCase(AioHTTPTestCase):
         return self.tacet
 
     def entries(self):
+        self.log.flush()
         return [e.event for e in ann.read_entries(self.root / "game.jsonl")]
 
 
@@ -123,6 +124,7 @@ class TestAnnotation(WebTestCase):
 
     async def test_a_note_carries_text(self):
         await self.client.post("/api/annotate", json={"key": "note", "data": {"text": "thin"}})
+        self.log.flush()
         entries = list(ann.read_entries(self.root / "game.jsonl"))
         self.assertEqual(entries[-1].data["text"], "thin")
 
@@ -223,17 +225,21 @@ class TestFailures(WebTestCase):
         response = await self.client.post("/api/annotate", json={"key": "up-drums"})
         self.assertEqual(response.status, 200)
         payload = await response.json()
-        self.assertIsNone(payload["entry"])
+        # Accepted, and answered before the disk was tried (#41).
+        self.assertIsNotNone(payload["entry"])
         self.assertEqual(payload["state"]["state"], "open")
-        self.assertFalse(payload["state"]["log"]["healthy"])
+        self.log.flush()
+        state = await (await self.client.get("/api/state")).json()
+        self.assertFalse(state["log"]["healthy"])
 
     async def test_a_span_that_was_not_saved_says_so(self):
         self.disk.full = True
         response = await self.client.post("/api/span/start", json={"key": "q3"})
         self.assertEqual(response.status, 200)
-        payload = await response.json()
-        self.assertIsNone(payload["span_id"])
-        self.assertFalse(payload["state"]["log"]["healthy"])
+        self.log.flush()
+        state = await (await self.client.get("/api/state")).json()
+        self.assertFalse(state["log"]["healthy"])
+        self.assertEqual(state["open_spans"], [])
 
     async def test_a_record_send_that_fails_is_a_refusal_not_a_500(self):
         response = await self.client.post("/api/record")

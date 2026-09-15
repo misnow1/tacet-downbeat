@@ -124,6 +124,12 @@ class App:
         #: recording" at a recorder that has since stopped.
         self._refused_recording = False
         self._listeners: list[Callable[[], None]] = []
+        #: The loop the writer thread wakes when a batch lands (#41). None when
+        #: built outside one, in which case the page learns of a deferred
+        #: write failure from the next snapshot instead - the state tick's, at
+        #: worst.
+        self._loop = _running_loop()
+        log.when_written(self._log_written_elsewhere)
 
     # -- operator actions -------------------------------------------------
 
@@ -378,8 +384,10 @@ class App:
         design.md 9 reconstructs the moves themselves from the post-DCA
         reference channel.
 
-        Returns None when the entry did not reach the disk. The move has still
-        happened, and the snapshot's `log` says why the entry did not.
+        Returns None when the log refused the entry outright - its writer has
+        stopped, say. An entry returned is accepted, not yet saved: it is
+        written on the log's own thread (#41), and a failure there reaches the
+        page through the snapshot's `log`. Either way the move has happened.
 
         The key and the data are checked before anything acts on them: a
         box-only event is refused, and data the log would not hold raises
@@ -403,8 +411,9 @@ class App:
         return entry
 
     async def start_span(self, event_key: str) -> str | None:
-        """The new span's id, or None when its start did not reach the disk -
-        in which case it is not open, and the button still offers to start it."""
+        """The new span's id, or None when the log refused its start. A start
+        accepted and then not saved closes the span again once the writer says
+        so, and the button offers to start it again."""
         ann.operator_event(event_key)
         span_id: str | None
         try:
@@ -415,8 +424,9 @@ class App:
         return span_id
 
     async def end_span(self, span_id: str) -> ann.Entry | None:
-        """None when the end did not reach the disk. The span stays open, so
-        the button still offers to end it and the next tap saves the end."""
+        """None when the log refused the end. An end accepted and then not saved
+        reopens the span once the writer says so, so the button offers to end
+        it again and the next tap saves the end."""
         entry: ann.Entry | None
         try:
             entry = self._log.end_span(span_id, project_seconds=self._playhead())
@@ -432,11 +442,12 @@ class App:
         data: Mapping[str, Any] | None = None,
         project_seconds: float | None = None,
     ) -> ann.Entry | None:
-        """Write one instant, or None if it did not reach the disk.
+        """Write one instant, or None if the log refused it.
 
         Every log write in the box goes through here or the two span methods,
         and none of them lets a `WriteError` out. The failure has already been
         counted on the log's health, which the snapshot carries to the page.
+        A failure on the writer thread is counted there too, later.
         Raised out of a fader route it skipped the push after a move that had
         happened; raised inside a fade it ended the task before FADE_COMPLETE
         and left the machine in RELEASING. The fader, the machine and the page
@@ -525,6 +536,9 @@ class App:
     # -- what the UI renders ----------------------------------------------
 
     def snapshot(self) -> dict[str, Any]:
+        # Whatever the writer has reported, including a stopped writer, is on
+        # this snapshot however it was asked for.
+        self._log.settle()
         transport = self._recorder.state if self._recorder is not None else None
         liveness = transport.liveness(self._monotonic()) if transport is not None else Liveness.UNKNOWN
         # QUIET is silence from a Reaper that told us it had stopped, which is
@@ -589,12 +603,34 @@ class App:
 
     # -- change notification ----------------------------------------------
 
+    def _log_written_elsewhere(self) -> None:
+        """On the log's writer thread. Hands over to the loop and returns."""
+        loop = self._loop
+        if loop is None:
+            return
+        # A loop already closed at shutdown has nobody left to tell.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(self._log_written)
+
+    def _log_written(self) -> None:
+        """A batch landed. Only a write that failed, or recovered, or a span it
+        reopened, is news to the page; a successful write already was."""
+        if self._log.settle():
+            self._notify()
+
     def on_change(self, listener: Callable[[], None]) -> None:
         self._listeners.append(listener)
 
     def _notify(self) -> None:
         for listener in self._listeners:
             listener()
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 def _health(health: ann.WriteHealth) -> dict[str, Any]:

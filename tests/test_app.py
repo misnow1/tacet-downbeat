@@ -1,14 +1,17 @@
 import asyncio
 import contextlib
+import threading
 import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, reaper, state
 from tests.disk import Disk
+from tests.test_annotations import Gate, Killed
 
 
 class FakeSender:
@@ -82,6 +85,10 @@ SUPERSEDED_WAKES = 0.03
 #: finishes - and settles - at once.
 UNDER_WAY = 0.1
 
+#: How long a test waits for the log's writer thread to report through a push.
+#: A healthy thread takes milliseconds; this only bounds a test that is broken.
+WRITER_REPORTS = 5.0
+
 
 class AppTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -99,10 +106,13 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         monotonic=None,
         reaper_sender=None,
         opener=None,
+        sync=None,
         queue=None,
         console_class=dm7.Dm7Client,
     ):
         options = {} if opener is None else {"opener": opener}
+        if sync is not None:
+            options["sync"] = sync
         self.log = ann.AnnotationLog(self.root / "game.jsonl", mirror=queue, **options)
         self.log.open()
         self.addCleanup(self.log.close)
@@ -122,7 +132,30 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             monotonic=clock,
         )
 
+    def expect_push(self, app, condition):
+        """A future for the first push to satisfy `condition`.
+
+        Watching starts here, so ask before the tap: the writer thread can
+        report - and the page be pushed - before the tap's own await returns.
+        Nothing flushes, so the push is the writer's own doing.
+        """
+        pushed = asyncio.get_running_loop().create_future()
+
+        def listener():
+            if not pushed.done():
+                snapshot = app.snapshot()
+                if condition(snapshot):
+                    pushed.set_result(snapshot)
+
+        app.on_change(listener)
+        return pushed
+
+    async def pushed(self, push):
+        return await asyncio.wait_for(push, WRITER_REPORTS)
+
     def entries(self):
+        # Written on the log's own thread (#41), so wait for it first.
+        self.log.flush()
         return list(ann.read_entries(self.root / "game.jsonl"))
 
     def keys(self):
@@ -169,6 +202,9 @@ class TestAFailingDisk(AppTestCase):
     console at unity. Inside a fade it was worse - the exception ended the fade
     task before FADE_COMPLETE, and the machine sat in RELEASING. Nothing a log
     write does may stop the fader, the machine or the page.
+
+    Since #41 the write fails on the log's own thread, after the tap has been
+    answered, and has to find its own way to the page.
     """
 
     def setUp(self):
@@ -183,19 +219,18 @@ class TestAFailingDisk(AppTestCase):
         app.on_change(lambda: pushed.append(app.snapshot()))
         return pushed
 
-    async def test_a_failing_log_is_shown_and_still_notifies(self):
+    async def test_a_failed_deferred_write_reaches_the_page(self):
         app = self.build()
         await app.arm()
-        pushed = self.watch(app)
         self.disk.full = True
+        push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"])
         entry = await app.annotate("up-drums")
-        self.assertIsNone(entry)
+        # Accepted: the tap was answered before the disk was tried.
+        self.assertIsNotNone(entry)
         self.assertEqual(app.machine.state, state.State.OPEN)
         self.assertEqual(self.console.commanded_level, dm7.UNITY)
-        self.assertTrue(pushed)
-        log = pushed[-1]["log"]
-        self.assertFalse(log["healthy"])
-        self.assertIn("No space left on device", log["error"])
+        pushed = await self.pushed(push)
+        self.assertIn("No space left on device", pushed["log"]["error"])
 
     async def test_a_failing_log_does_not_strand_a_fade(self):
         app = self.build()
@@ -215,20 +250,25 @@ class TestAFailingDisk(AppTestCase):
 
     async def test_a_span_that_was_not_saved_says_so_and_is_not_open(self):
         app = self.build()
-        pushed = self.watch(app)
         self.disk.full = True
-        self.assertIsNone(await app.start_span("q3"))
-        self.assertEqual(len(app.snapshot()["open_spans"]), 0)
-        self.assertFalse(pushed[-1]["log"]["healthy"])
+        push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"])
+        self.assertIsNotNone(await app.start_span("q3"))
+        pushed = await self.pushed(push)
+        self.assertEqual(pushed["open_spans"], [])
 
-    async def test_an_end_that_was_not_saved_leaves_the_span_open_to_retap(self):
+    async def test_an_end_that_was_not_saved_reopens_the_span_to_retap(self):
         app = self.build()
         span = await app.start_span("q3")
+        self.log.flush()
         self.disk.full = True
-        self.assertIsNone(await app.end_span(span))
-        self.assertEqual(len(app.snapshot()["open_spans"]), 1)
+        push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"] and snapshot["open_spans"])
+        self.assertIsNotNone(await app.end_span(span))
+        pushed = await self.pushed(push)
+        self.assertEqual(pushed["open_spans"][0]["span_id"], span)
+        self.log.flush()
         self.disk.full = False
         self.assertIsNotNone(await app.end_span(span))
+        self.log.flush()
         self.assertEqual(len(app.snapshot()["open_spans"]), 0)
 
     async def test_the_page_says_when_saving_resumes_and_what_it_cost(self):
@@ -236,8 +276,10 @@ class TestAFailingDisk(AppTestCase):
         self.disk.full = True
         await app.annotate("note", data={"text": "lost"})
         await app.annotate("note", data={"text": "also lost"})
+        self.log.flush()
         self.disk.full = False
         await app.annotate("note", data={"text": "saved"})
+        self.log.flush()
         log = app.snapshot()["log"]
         self.assertEqual((log["healthy"], log["error"], log["failures"]), (True, None, 2))
 
@@ -254,11 +296,56 @@ class TestAFailingDisk(AppTestCase):
         queue_disk.full = True
         entry = await app.annotate("note", data={"text": "kept"})
         self.assertIsNotNone(entry)
-        self.assertIn("note", self.keys())
+        self.assertIn("note", self.keys())  # flushes
         snapshot = app.snapshot()
         self.assertTrue(snapshot["log"]["healthy"])
         self.assertFalse(snapshot["mirror"]["healthy"])
         self.assertIn("No space left on device", snapshot["mirror"]["error"])
+
+
+class TestTheLogWriterCannotHoldUpTheFader(AppTestCase):
+    """#41: a FADE tap wrote two entries, each fsyncing the log and the queue,
+    on the event loop, before the fade started. On Linux an fsync is 2-20 ms
+    with 100 ms outliers, and one on a NAS that stalls freezes every command."""
+
+    async def test_a_slow_fsync_does_not_delay_the_fader(self):
+        gate = Gate()
+        app = self.build(sync=gate)
+        # Registered after the log's own close, so it runs first: the log waits
+        # for its writer on close, and the writer is waiting on this gate.
+        self.addCleanup(gate.open)
+        await app.arm()
+        self.assertTrue(gate.entered.wait(Gate.HOLD_SECONDS))
+
+        await app.annotate("up-drums")
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        await app.annotate("out")
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        await app.annotate("up-whistle")
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+
+        # Every move made while the first sync was still stuck.
+        self.assertFalse(gate.opened.is_set())
+        gate.open()
+        self.assertIn("up-whistle", self.keys())
+
+    async def test_a_dead_writer_is_shown_on_the_page(self):
+        def sync(fd):
+            raise Killed
+
+        patcher = mock.patch.object(threading, "excepthook", lambda _: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        app = self.build(sync=sync)
+        push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"])
+        await app.arm()
+        pushed = await self.pushed(push)
+        self.assertEqual(pushed["log"]["error"], ann.WRITER_STOPPED)
+        # The fader still answers, and the page keeps saying so.
+        await app.annotate("up-drums")
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertEqual(app.snapshot()["log"]["error"], ann.WRITER_STOPPED)
 
 
 class TestARecordSendThatFails(AppTestCase):
