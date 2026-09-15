@@ -585,6 +585,51 @@ class TestDeliveryIsRecordedWhenTheMoveEnds(AppTestCase):
         self.assertIn(tacet_app.MOVE_FAILED, self.keys())
         self.assertEqual(self.landed(), [])
 
+    def assert_timed(self, entry):
+        # #40: a stall shows as lateness on the move it delayed. Real clocks
+        # here, so only the shape is pinned; the numbers are tested in test_dm7.
+        self.assertIsInstance(entry.data["worst_lateness"], float)
+        self.assertGreaterEqual(entry.data["worst_lateness"], 0.0)
+        self.assertIsInstance(entry.data["skipped_steps"], int)
+
+    def assert_untimed(self, entry):
+        self.assertIsNone(entry.data["worst_lateness"])
+        self.assertIsNone(entry.data["skipped_steps"])
+
+    async def test_a_snap_open_is_timed_when_it_is_logged(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        self.assert_timed(self.commanded()[-1])
+
+    async def test_a_fade_is_timed_when_it_lands_and_not_before(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        self.assert_untimed(self.commanded()[-1])
+        await app.wait_for_fade()
+        self.assert_timed(self.landed()[-1])
+
+    async def test_a_ride_in_is_timed_when_it_lands_and_not_before(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-slow")
+        self.assert_untimed(self.commanded()[-1])
+        await app.wait_for_fade()
+        self.assert_timed(self.landed()[-1])
+
+    async def test_a_failed_fade_is_timed_as_far_as_it_got(self):
+        sender = FlakySender()
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.trigger()
+        sender.fail_after = len(sender.packets) + 2
+        await app.release()
+        await app.wait_for_fade()
+        failed = [e for e in self.entries() if e.event == tacet_app.MOVE_FAILED]
+        self.assert_timed(failed[-1])
+
     async def test_a_superseded_fade_never_lands(self):
         app = self.build(fade=1.0)
         await app.arm()

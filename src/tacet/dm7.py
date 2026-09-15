@@ -17,8 +17,9 @@ operator; see CLAUDE.md on not moving the fader autonomously before Phase 2.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 from . import osc
@@ -166,6 +167,32 @@ def quantize(level: int) -> int:
     return min(TABLE_1, key=lambda candidate: abs(candidate - level))
 
 
+def latest_due(offsets: Sequence[float], first: int, elapsed: float) -> int:
+    """The index of the newest step due by `elapsed`, never one before `first`.
+
+    Pure. `first` is the next step not yet sent and must already be due. Every
+    step between the two is stale: the console only ever needs to hear where
+    the fader should be now, not the levels it was meant to pass through while
+    the loop was stalled (#40).
+    """
+    return max(first, bisect.bisect_right(offsets, elapsed, lo=first) - 1)
+
+
+@dataclass(frozen=True)
+class MoveTiming:
+    """How far a move fell behind its schedule.
+
+    `worst_lateness` is in seconds, measured from when the oldest unsent step
+    fell due to when a step was actually sent - so a stall reads as the whole of
+    its length, however many steps it skipped. A drive that keeps up still
+    shows the loop's own wake-up jitter, a millisecond or so. `skipped` counts
+    steps passed over because a later one was already due.
+    """
+
+    worst_lateness: float = 0.0
+    skipped: int = 0
+
+
 def fader_address(dca: int) -> str:
     return f"{OSC_REQUEST_PREFIX}/{ACTION_SET}/{PARAM_DCA_FADER_LEVEL}/{dca}"
 
@@ -254,6 +281,7 @@ class Dm7Client:
         quantized: bool = False,
         sender: Sender | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.dca = dca
         self.tick_hz = tick_hz
@@ -261,10 +289,12 @@ class Dm7Client:
         self.quantized = quantized
         self._sender = sender if sender is not None else UdpSender(host, port)
         self._monotonic = monotonic
+        self._sleep = sleep
         self._address = fader_address(dca)
 
         self._commanded = clamp(initial_level)
         self._ramp: asyncio.Task[None] | None = None
+        self._timing = MoveTiming()
         self.last_error: str | None = None
         self.sent_count = 0
 
@@ -281,6 +311,11 @@ class Dm7Client:
     @property
     def is_ramping(self) -> bool:
         return self._ramp is not None and not self._ramp.done()
+
+    @property
+    def timing(self) -> MoveTiming:
+        """The current move's timing, or the last one's once it has ended."""
+        return self._timing
 
     @property
     def healthy(self) -> bool:
@@ -337,6 +372,7 @@ class Dm7Client:
                 taper=taper,
             )
         )
+        self._timing = MoveTiming()
         ramp = asyncio.ensure_future(self._drive(steps))
         self._ramp = ramp
         try:
@@ -350,13 +386,33 @@ class Dm7Client:
             if caller is not None and caller.cancelling():
                 raise
 
-    async def _drive(self, steps: Iterable[tuple[float, int]]) -> None:
+    async def _drive(self, steps: Sequence[tuple[float, int]]) -> None:
+        """Send each step when it falls due, or only the newest once behind.
+
+        Catching up step by step after the loop stalled sent the console a
+        burst of stale levels, and the fade jumped anyway (#40).
+        """
+        offsets = [offset for offset, _ in steps]
         started = self._monotonic()
-        for offset, level in steps:
-            remaining = offset - (self._monotonic() - started)
+        this = asyncio.current_task()
+        worst, skipped = 0.0, 0
+        pending = 0
+        while pending < len(steps):
+            elapsed = self._monotonic() - started
+            remaining = offsets[pending] - elapsed
             if remaining > 0:
-                await asyncio.sleep(remaining)
-            self.send_level(level)
+                await self._sleep(remaining)
+                continue
+            newest = latest_due(offsets, pending, elapsed)
+            worst = max(worst, -remaining)
+            # Steps sharing the sent step's instant were never meant to be
+            # heard apart from it - a close's floor and its -inf - so passing
+            # them over is not falling behind.
+            skipped += bisect.bisect_left(offsets, offsets[newest], lo=pending) - pending
+            if self._ramp is this:
+                self._timing = MoveTiming(worst_lateness=worst, skipped=skipped)
+            self.send_level(steps[newest][1])
+            pending = newest + 1
 
     def cancel_ramp(self) -> None:
         ramp = self._ramp

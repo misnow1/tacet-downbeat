@@ -218,6 +218,10 @@ class App:
                 "detail": detail,
                 "state": self.machine.state.value,
                 "delivered": None if background and not failed else self._console.healthy,
+                # Null for the same reason as `delivered`: a move still running
+                # has not been late yet, and `move-landed` or `move-failed`
+                # carries its timing when it ends.
+                **_timing(None if background and not failed else self._console.timing),
             },
             project_seconds=self._playhead(),
         )
@@ -260,6 +264,7 @@ class App:
             "target": target,
             "target_db": _finite(dm7.to_db(target)),
             "state": self.machine.state.value,
+            **_timing(self._console.timing),
         }
 
     # -- the fade ---------------------------------------------------------
@@ -635,6 +640,15 @@ def _running_loop() -> asyncio.AbstractEventLoop | None:
 
 def _health(health: ann.WriteHealth) -> dict[str, Any]:
     return {"healthy": health.healthy, "error": health.error, "failures": health.failures}
+
+
+def _timing(timing: dm7.MoveTiming | None) -> dict[str, Any]:
+    """How far a move fell behind, for the log (#40). A stall on the event loop
+    shows here, so Phase 1 logs can tell it from console behaviour."""
+    return {
+        "worst_lateness": None if timing is None else timing.worst_lateness,
+        "skipped_steps": None if timing is None else timing.skipped,
+    }
 
 
 def _finite(value: float) -> float | None:
