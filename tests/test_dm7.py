@@ -443,18 +443,22 @@ class TestMoves(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(sender.levels()[-1], sender.levels()[1])
         self.assertNotIn(dm7.MINUS_INF, sender.levels()[1:])
 
+    # The exact sequence is only guaranteed by a loop that is never late: on the
+    # real clock a wake-up past one tick skips a step, as it should (#40, #85).
     async def test_a_ride_in_sends_the_tapered_curve(self):
-        c, sender = client()
+        clock = FakeLoopClock()
+        c = stalled_client(clock)
         await c.ride_in(seconds=0.2)
-        expected = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=100.0, taper=dm7.RIDE_IN_TAPER)
-        self.assertEqual(sender.levels(), [level for _, level in expected])
+        expected = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=dm7.DEFAULT_TICK_HZ, taper=dm7.RIDE_IN_TAPER)
+        self.assertEqual([level for _, level in clock.sends], [level for _, level in expected])
         self.assertEqual(c.commanded_level, dm7.UNITY)
 
     async def test_an_open_over_the_same_time_is_not_tapered(self):
-        c, sender = client()
+        clock = FakeLoopClock()
+        c = stalled_client(clock)
         await c.open(seconds=0.2)
-        expected = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=100.0)
-        self.assertEqual(sender.levels(), [level for _, level in expected])
+        expected = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=dm7.DEFAULT_TICK_HZ)
+        self.assertEqual([level for _, level in clock.sends], [level for _, level in expected])
 
     async def test_every_packet_of_a_full_cycle_is_a_fader_level_write(self):
         # The hard constraint, asserted directly: faders only, never mutes.

@@ -1422,8 +1422,16 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.arm()
         await app.annotate("up-slow")
         await app.wait_for_fade()
-        tapered = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=200.0, taper=dm7.RIDE_IN_TAPER)
-        self.assertEqual(self.console_sender.levels(), [level for _, level in tapered])
+        steps = dm7.ramp_steps(dm7.MINUS_INF, dm7.UNITY, 0.2, tick_hz=200.0, taper=dm7.RIDE_IN_TAPER)
+        tapered = [level for _, level in steps]
+        sent = self.console_sender.levels()
+        # Only levels on the taper, in order, all the way up. Not necessarily
+        # every one: on the real clock a late wake-up skips a step (#40, #85),
+        # and test_dm7 pins the exact curve on a clock that is never late.
+        remaining = iter(tapered)
+        self.assertTrue(all(level in remaining for level in sent), sent)
+        self.assertEqual(sent[-1], dm7.UNITY)
+        self.assertGreater(len(sent), 1, "a ride-in, not a snap")
 
     async def test_up_slow_gets_all_the_way_there(self):
         app = self.build()
