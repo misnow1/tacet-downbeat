@@ -279,7 +279,7 @@ class App:
     async def _run_slow_open(self, seconds: float) -> None:
         this = asyncio.current_task()
         try:
-            await self._console.open(self._open_level, seconds=seconds)
+            await self._console.ride_in(self._open_level, seconds=seconds)
         except TransportError:
             if self._move_task is this:
                 self._move_failed(self._open_level)

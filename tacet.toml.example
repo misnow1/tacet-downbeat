@@ -53,7 +53,8 @@ queue = "~/Library/Application Support/REAPER/tacet/queue.tsv"
 fade_seconds = 2.0          # --fade
 # The ride-in for the "up slow" button, used when the first phrase was
 # missed and a snap open would be audible under a phrase already going.
-# The other two open buttons are unaffected and still snap.
+# Tapered: fast through the bottom, slow through the top. This sets the
+# length; the shape is fixed. The other two open buttons still snap.
 slow_open_seconds = 1.5     # --slow-open
 
 # The operator page.
