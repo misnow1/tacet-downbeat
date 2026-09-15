@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, config, serve
+from tacet import annotations, config, disk, serve
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -121,6 +121,21 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         )
         argv = ["--console-host", "10.0.0.5", "--dca", "3", "--log", "/games/g.jsonl"]
         return serve.startup_lines(serve.parser().parse_args(argv), None, open_spans=[span])
+
+    def test_the_runbook_quotes_every_disk_refusal(self) -> None:
+        # Quoted up to the first value filled in, or the first colon.
+        for message in (
+            disk.NOT_SET,
+            disk.CHANNELS_REQUIRED,
+            disk.NOT_MOUNTED,
+            disk.SHORT,
+            disk.LOG_SHORT,
+            disk.BAD_CHANNELS,
+            disk.BAD_HOURS,
+        ):
+            with self.subTest(message[:40]):
+                quoted = message.split(":")[0].split("{")[0].strip()
+                self.assertIn(quoted, self.troubleshooting)
 
     def test_the_runbook_quotes_the_stopped_writer(self) -> None:
         # Quoted up to the semicolon; the page puts "Log not saving: " before it.

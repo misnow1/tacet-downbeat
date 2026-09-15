@@ -35,6 +35,10 @@ prints the same banner, or the same refusal, and exits: zero if the box would
 have started. Nothing binds, nothing is sent, and the log and queue are only
 read. `--check` is a flag and never a config key, since a file that set it
 would stop the box from ever starting.
+
+The box refuses to start without room for a whole game's recording (#53): set
+`capture.audio_path` and `capture.channels`, or pass `--no-disk-check`. See
+`tacet.disk`.
 """
 
 from __future__ import annotations
@@ -48,7 +52,7 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, dm7, mirror, reaper, web
+from . import config, disk, dm7, mirror, reaper, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -364,6 +368,7 @@ def startup_lines(
     torn_queue: TornTail | None = None,
     clock_reset: AnnotationEntry | None = None,
     open_spans: list[AnnotationEntry] | None = None,
+    space: disk.Verdict | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -403,6 +408,9 @@ def startup_lines(
     else:
         lines.append(_row("queue", "not set"))
         lines.append(_note("annotations are logged, but no markers reach Reaper"))
+    if space is not None:
+        lines.append(_row("disk", space.summary))
+        lines.extend(_note(note) for note in space.notes)
 
     lines.extend(_page_lines(args.listen, args.http_port))
     if prior_anchor is not None:
@@ -432,6 +440,9 @@ CONFIG_MAPPING = {
     "reaper_port": "reaper.send_port",
     "reaper_feedback_port": "reaper.receive_port",
     "queue": "capture.queue",
+    "audio_path": "capture.audio_path",
+    "channels": "capture.channels",
+    "game_hours": "capture.game_hours",
     "fade": "fader.fade_seconds",
     "slow_open": "fader.slow_open_seconds",
     "listen": "ui.listen",
@@ -460,6 +471,17 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--dca", type=int, help="the band DCA number")
     p.add_argument("--log", type=Path, help="annotation log (JSONL); required, and never taken from the config")
     p.add_argument("--queue", type=Path, help="mirror queue for the Reaper script")
+    p.add_argument("--audio-path", type=Path, help="where Reaper records; checked for room for a whole game")
+    p.add_argument("--channels", type=int, help="tracks this game records, for the disk check")
+    p.add_argument("--game-hours", type=float, default=disk.DEFAULT_GAME_HOURS, help="game length to leave room for")
+    # Flag only, like --check: a file that turned a safety check off would be
+    # wrong every game after it was written.
+    p.add_argument(
+        disk.OVERRIDE_FLAG,
+        dest="no_disk_check",
+        action="store_true",
+        help="start even without room for a whole game, or with nowhere to check",
+    )
     p.add_argument("--reaper-host", help="omit to run without transport control")
     p.add_argument("--reaper-port", type=config.port, default=reaper.DEFAULT_SEND_PORT)
     p.add_argument("--reaper-feedback-port", type=config.port, default=reaper.DEFAULT_RECEIVE_PORT)
@@ -492,6 +514,17 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _disk_plan(args: argparse.Namespace) -> disk.Plan:
+    return disk.Plan(
+        audio_path=args.audio_path,
+        channels=args.channels,
+        hours=args.game_hours,
+        log_path=args.log,
+        queue_path=args.queue,
+        override=args.no_disk_check,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     p = parser()
     args, config_path = config.resolve_or_exit(p, CONFIG_MAPPING, argv)
@@ -509,17 +542,25 @@ def main(argv: list[str] | None = None) -> int:
     # the command-line error it is - the fix is a different --log - rather than
     # as a traceback from somewhere inside the startup.
     try:
-        banner = startup_lines(
-            args,
-            config_path,
-            find_prior_anchor(args.log),
-            torn_log=find_torn_tail(args.log),
-            torn_queue=find_torn_tail(args.queue) if args.queue else None,
-            clock_reset=find_clock_reset(args.log, now=time.monotonic()),
-            open_spans=find_open_spans(args.log),
-        )
+        prior_anchor = find_prior_anchor(args.log)
+        clock_reset = find_clock_reset(args.log, now=time.monotonic())
+        open_spans = find_open_spans(args.log)
     except CorruptLogError as exc:
         p.error(f"--log {args.log} cannot be read: {exc}. Nothing in it was changed.")
+    # Refused like any other command-line error, before the banner (#53).
+    space = disk.check(_disk_plan(args))
+    if space.refusal is not None:
+        p.error(space.refusal)
+    banner = startup_lines(
+        args,
+        config_path,
+        prior_anchor,
+        torn_log=find_torn_tail(args.log),
+        torn_queue=find_torn_tail(args.queue) if args.queue else None,
+        clock_reset=clock_reset,
+        open_spans=open_spans,
+        space=space,
+    )
     for line in banner:
         print(line)
     # Everything above only reads, which is what makes this the whole of

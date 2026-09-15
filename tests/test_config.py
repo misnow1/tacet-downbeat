@@ -297,6 +297,15 @@ class TestFlagsTheConfigMustNotReach(_TempConfig):
         with self.assertRaises(config.ConfigError):
             config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[path])
 
+    def test_the_disk_check_override_is_not_a_config_key(self):
+        # A file that turned the check off would be wrong every game after (#53).
+        self.assertNotIn("no_disk_check", serve.CONFIG_MAPPING)
+        names = {option.key for option in config.SCHEMA}
+        self.assertFalse({"no_disk_check", "disk_check", "allow_low_disk"} & names)
+        path = self.write("[capture]\nno_disk_check = true\n")
+        with self.assertRaises(config.ConfigError):
+            config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[path])
+
     def test_verify_reaper_listen_is_a_duration_and_keeps_its_default(self):
         # ui.listen is a bind address; verify_reaper's --listen is seconds.
         path = self.write(SAMPLE)

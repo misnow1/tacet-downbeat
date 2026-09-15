@@ -40,6 +40,29 @@ in the `config` row of its banner, the two `verify_` tools on a line of their
 own. If that reads `none (flags only)` and you expected a file, you are in the
 wrong directory.
 
+### Room for the game
+
+The box refuses to start without room for a whole game's recording on the volume
+Reaper records to. It cannot ask Reaper where that is, so tell it, with how many
+tracks this game records:
+
+```
+[capture]
+audio_path = "/Volumes/band"
+channels = 22
+game_hours = 5.0
+```
+
+The size is `channels x 144 kB/s x game_hours`, plus 10%: 22 channels over 5
+hours needs about 63 GB. The banner's `disk` row shows free space against that.
+It also refuses if `audio_path` is not there (an unmounted share), or not set,
+or if the disk holding the log and queue is nearly full. Each refusal names
+`--no-disk-check`, a flag only, which starts the box anyway and says so in the
+banner. Update `channels` when the patch list changes.
+
+On Linux, an empty mountpoint directory passes as "there" and reports the local
+disk underneath. Check the share is mounted before trusting the number.
+
 ---
 
 ## The console
