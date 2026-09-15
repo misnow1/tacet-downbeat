@@ -255,6 +255,8 @@ push to `main` directly.
 
 ## Working notes
 
+- `docs/priorities.md` is the current build order: what to pick up next, and
+  why. Check it before choosing work, and update it in the PR that changes it.
 - `docs/gameday.md` is the operating runbook: startup order, what the page
   should read before kickoff, and which button to tap when. It stays short and
   links out for detail: `docs/reaper.md` (Reaper setup, the tracks to record,
