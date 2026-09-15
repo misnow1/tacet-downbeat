@@ -50,7 +50,7 @@ function element(id) {
   };
 }
 
-function browser() {
+function browser(options = {}) {
   const nodes = new Map();
   const created = [];
   const sockets = [];
@@ -81,6 +81,8 @@ function browser() {
     // and the page is served over plain HTTP.
     navigator: {},
     setTimeout() {},
+    clearTimeout() {},
+    AbortController,
     // The banner is repainted on a tick so a silence is noticed without a
     // message arriving to notice it. Never fired here; paintLink is called
     // directly instead.
@@ -88,14 +90,18 @@ function browser() {
     // The page boots on load. Neither of these may resolve, or the tests would
     // be racing the page's own first render. What was asked for is kept, so a
     // tap can be checked by what it sent.
-    fetch: (path, options = {}) => {
-      posted.push({ path, body: options.body ? JSON.parse(options.body) : undefined });
-      return new Promise(() => {});
+    fetch: (path, init = {}) => {
+      posted.push({ path, body: init.body ? JSON.parse(init.body) : undefined });
+      return options.fetch ? options.fetch(path, init) : new Promise(() => {});
     },
     WebSocket: class {
       constructor(url) {
         this.url = url;
+        this.sent = [];
         sockets.push(this);
+      }
+      send(text) {
+        this.sent.push(JSON.parse(text));
       }
       close() {
         if (this.onclose) this.onclose();
@@ -496,10 +502,15 @@ function prefixed(openSpans) {
   context.render(snapshot({}, {}, PREFIXED, openSpans));
   const found = new Map();
   for (const node of created.filter((n) => n.tag === "button")) found.set(node.dataset.key, node);
+  // What was posted, less the tap stamp every request carries: that has tests
+  // of its own below, and its clock reading differs every run.
   const tap = (key) => {
     posted.length = 0;
     found.get(key).onclick();
-    return posted;
+    return posted.map(({ path, body }) => {
+      const { tap: _, ...rest } = body;
+      return { path, body: rest };
+    });
   };
   return { found, tap };
 }
@@ -802,6 +813,9 @@ check("past the threshold both say so",
 // Driven through the socket callbacks the page actually installs, so the
 // plumbing is covered as well as the decision above.
 const keepaliveFrame = { data: JSON.stringify({ keepalive: true, stale_after: STALE_AFTER }) };
+function keepaliveFrameFor(staleAfter) {
+  return { data: JSON.stringify({ keepalive: true, stale_after: staleAfter }) };
+}
 const snapshotFrame = { data: JSON.stringify(snapshot()) };
 
 {
@@ -863,6 +877,194 @@ const snapshotFrame = { data: JSON.stringify(snapshot()) };
   sockets[0].onopen();
   sockets[0].onmessage(snapshotFrame);
   check("a snapshot starts the counter as well", nodes.get("pulse").textContent, "0s");
+}
+
+// -- the clock estimate -----------------------------------------------------
+
+// #11: one round trip, the NTP way, and the tightest of the last few.
+{
+  const { context } = browser();
+  const { clockSample, clockEstimate } = context;
+  // Page clock 1000 s ahead; 40 ms out and 60 ms back, box read at 5000.
+  const sample = clockSample(6000.0, 5000.04, 6000.1);
+  check("the offset is the trip's midpoint less the box's reading",
+        Math.round(sample.offset * 1000) / 1000, 1000.01);
+  check("and it is out by at most half the trip", Math.round(sample.uncertainty * 1000) / 1000, 0.05);
+  check("no samples, no estimate", clockEstimate([]), null);
+  check("the tightest sample wins",
+        clockEstimate([{ offset: 1, uncertainty: 0.3 }, { offset: 2, uncertainty: 0.01 },
+                       { offset: 3, uncertainty: 0.2 }]),
+        { offset: 2, uncertainty: 0.01 });
+}
+
+// Wired up: a keepalive asks, a pong answers, and the next tap carries it.
+// Taps only, not the page's own first fetch of the state.
+const tapsIn = (posted) => posted.filter(({ path }) => path !== "/api/state");
+
+{
+  const { context, nodes, sockets, posted: all } = browser();
+  const posted = () => tapsIn(all);
+  const socket = sockets[0];
+  context.post("/api/arm");
+  check("before any round trip a tap says it has no estimate",
+        [posted()[0].body.tap.offset, posted()[0].body.tap.uncertainty], [null, null]);
+  check("and still says when it happened", typeof posted()[0].body.tap.at, "number");
+
+  socket.onmessage(keepaliveFrameFor(STALE_AFTER));
+  check("a keepalive is the cue to time the link", socket.sent.length, 1);
+  check("with the page's clock", typeof socket.sent[0].ping, "number");
+
+  const sentAt = socket.sent[0].ping;
+  socket.onmessage({ data: JSON.stringify({ pong: sentAt, box: 12.0 }) });
+  // The stub makes an element the first time the page asks for it, and only
+  // render asks for this one.
+  check("a pong renders nothing", nodes.has("state"), false);
+  context.post("/api/arm");
+  const tap = posted()[1].body.tap;
+  check("the next tap carries the estimate", tap.offset !== null && tap.uncertainty >= 0, true);
+  check("measured against the box's clock", Math.abs(tap.offset - (sentAt - 12.0)) < 1, true);
+
+  socket.close();
+  context.post("/api/arm");
+  check("a closed socket forgets the clock it was measured over", posted()[2].body.tap.offset, null);
+}
+
+// A trip that ended before it began is a clock that stepped, not a sample.
+{
+  const { context, sockets, posted } = browser();
+  sockets[0].onmessage({ data: JSON.stringify({ pong: 1e12, box: 1.0 }) });
+  context.post("/api/arm");
+  check("a backwards round trip is not used", tapsIn(posted)[0].body.tap.offset, null);
+}
+
+// -- sending, and failing to --------------------------------------------------
+
+// A fetch the test resolves or rejects when it chooses.
+function controlled() {
+  const pending = [];
+  // The page's own first fetch of the state is left hanging, as the default
+  // stub leaves it, so `pending` holds taps and nothing else.
+  const fetch = (path) =>
+    path === "/api/state"
+      ? new Promise(() => {})
+      : new Promise((resolve, reject) => {
+          pending.push({ resolve, reject });
+        });
+  const answer = (snap, ok = true) => ({ ok, statusText: ok ? "OK" : "Bad Request", json: async () => snap });
+  return { fetch, pending, answer };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+{
+  const { fetch, pending, answer } = controlled();
+  const { nodes } = browser({ fetch });
+  const button = nodes.get("btn-trigger");
+  button.onclick();
+  check("#11: a tap shows as sending before the box answers", button.classList.contains("sending"), true);
+  pending[0].resolve(answer(snapshot()));
+  await settle();
+  check("and stops when it does", button.classList.contains("sending"), false);
+}
+
+{
+  const { fetch, pending, answer } = controlled();
+  const { nodes } = browser({ fetch });
+  const button = nodes.get("btn-release");
+  button.onclick();
+  button.onclick();
+  pending[0].resolve(answer(snapshot()));
+  await settle();
+  check("a second tap on the same button is still sending after the first lands",
+        button.classList.contains("sending"), true);
+  pending[1].resolve(answer(snapshot()));
+  await settle();
+  check("until it lands too", button.classList.contains("sending"), false);
+}
+
+{
+  const { fetch, pending } = controlled();
+  const { context, nodes } = browser({ fetch });
+  const button = nodes.get("btn-trigger");
+  let threw = false;
+  const tapped = context.post("/api/trigger", undefined, button).catch(() => { threw = true; });
+  pending[0].reject(new TypeError("Load failed"));
+  await tapped;
+  await settle();
+  check("#11: a rejected fetch does not throw out of the tap", threw, false);
+  check("clears the sending state", button.classList.contains("sending"), false);
+  check("and says the tap did not reach the box", nodes.get("tap").className, "failed");
+  check("naming why", nodes.get("tap").textContent.includes("Load failed"), true);
+
+  context.render(snapshot());
+  check("a snapshot does not wipe it: the box never knew", nodes.get("tap").className, "failed");
+}
+
+{
+  const { fetch, pending, answer } = controlled();
+  const { context, nodes, sockets } = browser({ fetch });
+  // Timed, so the success leaves nothing behind.
+  sockets[0].onmessage({ data: JSON.stringify({ pong: Date.now() / 1000, box: 1.0 }) });
+  context.post("/api/arm");
+  pending[0].reject(new TypeError("Load failed"));
+  await settle();
+  context.post("/api/arm");
+  pending[1].resolve(answer(snapshot()));
+  await settle();
+  check("a later tap that lands clears the failure", nodes.get("tap").textContent, "");
+}
+
+{
+  const { fetch, pending, answer } = controlled();
+  const { context, nodes } = browser({ fetch });
+  context.post("/api/arm");
+  pending[0].resolve(answer({ error: "tap at must be a finite number" }, false));
+  await settle();
+  check("a refusal is shown as a refusal", nodes.get("refusal").textContent, "tap at must be a finite number");
+  check("and says the tap was untimed, which it was", nodes.get("tap").className, "untimed");
+}
+
+{
+  const { fetch, pending } = controlled();
+  const { context, nodes } = browser({ fetch });
+  context.post("/api/arm");
+  const aborted = new Error("The operation was aborted.");
+  aborted.name = "AbortError";
+  pending[0].reject(aborted);
+  await settle();
+  check("a tap that timed out says it got no answer",
+        nodes.get("tap").textContent.includes("no answer in 10s"), true);
+}
+
+// A command answers with the snapshot itself; the annotation routes wrap it.
+{
+  const { fetch, pending, answer } = controlled();
+  const { context, nodes } = browser({ fetch });
+  context.post("/api/arm");
+  pending[0].resolve(answer({ ...snapshot(), state: "idle" }));
+  await settle();
+  check("a command's answer renders, bare", nodes.get("state").textContent, "IDLE");
+  check("without being taken for a failed tap", nodes.get("tap").className === "failed", false);
+  context.post("/api/annotate", { key: "note" });
+  pending[1].resolve(answer({ entry: null, state: { ...snapshot(), state: "open" } }));
+  await settle();
+  check("an annotation's answer renders, wrapped", nodes.get("state").textContent, "OPEN");
+}
+
+// -- snapshots out of order -----------------------------------------------
+
+{
+  const { context, nodes, sockets } = browser();
+  const at = (state, when) => ({ ...snapshot(), state, at: when });
+  context.render(at("open", 20.0));
+  context.render(at("idle", 10.0));
+  check("#11: an older snapshot does not paint over a newer one", nodes.get("state").textContent, "OPEN");
+  context.render(at("releasing", 20.0));
+  check("one taken at the same moment still renders", nodes.get("state").textContent, "RELEASING");
+  sockets[0].close();
+  context.render(at("standing-down", 1.0));
+  check("after the socket drops, a rebooted box's low clock is believed",
+        nodes.get("state").textContent, "STANDING DOWN");
 }
 
 // -- the wake advice --------------------------------------------------------

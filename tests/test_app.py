@@ -9,7 +9,7 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, osc, reaper, state
+from tacet import dm7, mirror, osc, reaper, state, taps
 from tests.disk import Disk
 from tests.test_annotations import Gate, Killed
 
@@ -1654,3 +1654,96 @@ class TestASupersededMove(AppTestCase):
         self.assertEqual(app.machine.state, state.State.IDLE)
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
         self.assertIsNone(app.snapshot()["fader"]["target"])
+
+
+class TestEveryEntryATapProducesCarriesItsTiming(AppTestCase):
+    """#11: the box logged receipt, so a tap that arrived seconds late looked
+    exactly like a prompt one. Each entry a tap produces now carries when it was
+    tapped as well as when it arrived - including the ones a fade writes after
+    the request has been answered."""
+
+    TAP = taps.TapTiming(received=100.0, tapped=97.5, delay=2.5, uncertainty=0.04)
+
+    def taps_by_event(self):
+        return {entry.event: entry.data.get("tap") for entry in self.entries()}
+
+    async def test_an_annotation(self):
+        app = self.build()
+        await app.annotate("note", data={"text": "thin"}, tap=self.TAP)
+        entry = self.entries()[-1]
+        self.assertEqual(entry.data["tap"], self.TAP.as_data())
+        self.assertEqual(entry.data["text"], "thin")
+
+    async def test_a_fader_button_and_the_move_it_makes(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-drums", tap=self.TAP)
+        stamped = self.taps_by_event()
+        self.assertEqual(stamped["up-drums"], self.TAP.as_data())
+        self.assertEqual(stamped[tacet_app.COMMANDED], self.TAP.as_data())
+
+    async def test_a_fade_that_lands_after_the_request_was_answered(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.release(tap=self.TAP)
+        await app.wait_for_fade()
+        landed = [e for e in self.entries() if e.event == tacet_app.MOVE_LANDED]
+        self.assertEqual(landed[-1].data["tap"], self.TAP.as_data())
+
+    async def test_a_stand_down_and_where_it_lands(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.stand_down(tap=self.TAP)
+        await app.wait_for_fade()
+        stamped = self.taps_by_event()
+        self.assertEqual(stamped[tacet_app.STAND_DOWN_REQUESTED], self.TAP.as_data())
+        self.assertEqual(stamped[tacet_app.STOOD_DOWN], self.TAP.as_data())
+
+    async def test_spans_and_arming_and_recording(self):
+        app = self.build()
+        await app.arm(tap=self.TAP)
+        span = await app.start_span("q1", tap=self.TAP)
+        assert span is not None
+        await app.end_span(span, tap=self.TAP)
+        await app.start_recording(tap=self.TAP)
+        for entry in self.entries():
+            with self.subTest(entry.event, phase=entry.phase):
+                self.assertEqual(entry.data["tap"], self.TAP.as_data())
+
+    async def test_an_untapped_entry_carries_no_timing(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("note", data={"text": "no stamp"})
+        for entry in self.entries():
+            self.assertNotIn(taps.TAP_FIELD, entry.data)
+
+    async def test_one_tap_does_not_stamp_the_next(self):
+        app = self.build()
+        await app.annotate("note", data={"text": "first"}, tap=self.TAP)
+        await app.annotate("note", data={"text": "second"})
+        self.assertNotIn(taps.TAP_FIELD, self.entries()[-1].data)
+
+    async def test_operator_data_cannot_claim_the_tap_key(self):
+        app = self.build()
+        with self.assertRaises(ann.DataError):
+            await app.annotate("note", data={"tap": {"delay": 0}})
+        self.assertEqual(self.entries(), [])
+
+
+class TestSnapshotsSayWhenTheyWereTaken(AppTestCase):
+    """#11: a delayed POST response rendered an older snapshot over newer pushes.
+    The page compares this and keeps the newer one."""
+
+    async def test_a_snapshot_carries_the_box_clock(self):
+        clock = [50.0]
+        app = self.build(monotonic=lambda: clock[0])
+        first = app.snapshot()["at"]
+        clock[0] = 51.0
+        self.assertEqual((first, app.snapshot()["at"]), (50.0, 51.0))
+
+    async def test_the_box_clock_is_what_taps_are_measured_on(self):
+        clock = [42.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.assertEqual(app.now(), 42.0)

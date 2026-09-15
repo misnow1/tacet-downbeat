@@ -29,6 +29,7 @@ from .annotations import (
     marker_name,
     project_seconds,
 )
+from .taps import delay_of
 
 CSV_FIELDS = ("name", "start", "end")
 
@@ -89,10 +90,15 @@ def position_of(entry: Entry, anchor: Entry) -> float:
 
     A `project_seconds` recorded at the time wins: it came from Reaper's own
     playhead and beats arithmetic on our clock.
+
+    Either one says where the entry *arrived*. When the tap that made it logged
+    how late it was (#11), the entry goes back by that much, to where the
+    operator tapped. A negative delay is the clock estimate's error, and a tap
+    cannot follow its own arrival, so it moves nothing.
     """
-    if entry.project_seconds is not None:
-        return entry.project_seconds
-    return project_seconds(entry, anchor)
+    arrived = entry.project_seconds if entry.project_seconds is not None else project_seconds(entry, anchor)
+    delay = delay_of(entry.data)
+    return arrived if delay is None else arrived - max(0.0, delay)
 
 
 def derive(

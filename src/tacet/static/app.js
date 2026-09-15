@@ -1,15 +1,91 @@
 const $ = id => document.getElementById(id);
 let snapshot = null;
 
-async function post(path, body) {
-  const options = {method: "POST"};
-  if (body) { options.headers = {"Content-Type": "application/json"};
-              options.body = JSON.stringify(body); }
-  const response = await fetch(path, options);
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) { showRefusal((payload && payload.error) || response.statusText); return null; }
-  render(payload.state || payload);
-  return payload;
+// -- taps -------------------------------------------------------------------
+
+// How long a tap waits for the box before the page says it did not get there.
+// A request can still arrive after this; the page cannot unsend it.
+const TAP_TIMEOUT_MS = 10000;
+
+// Page-side, so they survive every snapshot render: the box never hears about a
+// tap that did not reach it, and so can never say so itself (#11).
+const TAP_FAILED = "Tap did not reach the box";
+const TAP_FAILED_ADVICE = ". Check the fader, and tap again if it did not happen.";
+const TAP_UNTIMED = "Sent before the page had timed its link to the box, "
+  + "so how late that tap arrived is not known.";
+
+// Every tap says when it happened by the page's clock, and how that clock
+// relates to the box's, so the box can log when it was tapped and not only when
+// it arrived. On stadium wifi those are seconds apart (#11).
+function tapStamp() {
+  const estimate = clockEstimate(clockSamples);
+  return {
+    at: now(),
+    offset: estimate ? estimate.offset : null,
+    uncertainty: estimate ? estimate.uncertainty : null,
+  };
+}
+
+// Shown on the tapped button from the tap until the box answers or the request
+// fails, so a tap is visibly received and nobody taps again to find out. A
+// count, not a flag: a second tap on the same button must not clear the first.
+function sending(node, on) {
+  if (!node) return;
+  const count = Math.max(0, Number(node.dataset.sending || 0) + (on ? 1 : -1));
+  node.dataset.sending = String(count);
+  node.classList.toggle("sending", count > 0);
+}
+
+function showTapNote(kind, text) {
+  const node = $("tap");
+  node.className = text ? kind : "";
+  node.textContent = text || "";
+}
+
+function tapFailure(error) {
+  const why = error && error.name === "AbortError"
+    ? "no answer in " + TAP_TIMEOUT_MS / 1000 + "s"
+    : (error && error.message) || "the request failed";
+  return TAP_FAILED + " (" + why + ")" + TAP_FAILED_ADVICE;
+}
+
+async function post(path, body, node) {
+  const payload = {...(body || {}), tap: tapStamp()};
+  const options = {method: "POST", headers: {"Content-Type": "application/json"},
+                   body: JSON.stringify(payload)};
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  if (controller) options.signal = controller.signal;
+  const timer = controller ? setTimeout(() => controller.abort(), TAP_TIMEOUT_MS) : null;
+  sending(node, true);
+  let response;
+  let result;
+  try {
+    response = await fetch(path, options);
+    result = await response.json().catch(() => null);
+  } catch (error) {
+    // A wifi drop, a box that has gone, a timeout. Never swallowed: the tap
+    // would look like it did nothing, and the next snapshot would not say
+    // otherwise, because the box never knew.
+    showTapNote("failed", tapFailure(error));
+    return null;
+  } finally {
+    clearTimeout(timer);
+    sending(node, false);
+  }
+  // It reached the box, which clears a failure however the box answered.
+  showTapNote("untimed", payload.tap.offset === null ? TAP_UNTIMED : "");
+  if (!response.ok) { showRefusal((result && result.error) || response.statusText); return null; }
+  render(snapshotIn(result));
+  return result;
+}
+
+// The snapshot in a response. The command routes answer with the snapshot
+// itself and the others wrap it as `state` - and a snapshot has a `state` of
+// its own, a string, which `result.state || result` used to hand to `render`,
+// which threw. Nobody saw: the rejection went nowhere and a push repainted.
+function snapshotIn(result) {
+  if (!result) return null;
+  return result.state !== null && typeof result.state === "object" ? result.state : result;
 }
 
 function showRefusal(text) {
@@ -86,12 +162,12 @@ function activate(item, node) {
     const data = item.key === "note"
       ? {text: prompt("Note") || ""} : undefined;
     if (item.key === "note" && !data.text) return;
-    post("/api/annotate", {key: item.key, data});
+    post("/api/annotate", {key: item.key, data}, node);
     return;
   }
   const open = openSpan(snapshot, item.key);
-  if (open) post("/api/span/end", {span_id: open.span_id});
-  else post("/api/span/start", {key: item.key});
+  if (open) post("/api/span/end", {span_id: open.span_id}, node);
+  else post("/api/span/start", {key: item.key}, node);
 }
 
 // Reaper's /time is a float of seconds and says nothing about how Reaper is
@@ -155,8 +231,19 @@ function savingBanner(log, mirror) {
   return null;
 }
 
+// When the snapshot on screen was taken, by the box's clock. A POST response
+// held up on the wifi used to paint an older state over pushes that had
+// overtaken it, and nothing corrected it until something else changed (#11).
+let renderedAt = null;
+
+function isOlder(next, at) {
+  return at !== null && typeof next.at === "number" && next.at < at;
+}
+
 function render(next) {
   if (!next) return;
+  if (isOlder(next, renderedAt)) return;
+  if (typeof next.at === "number") renderedAt = next.at;
   snapshot = next;
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
@@ -209,11 +296,53 @@ function render(next) {
   }
 }
 
-$("btn-trigger").onclick = () => post("/api/trigger");
-$("btn-release").onclick = () => post("/api/release");
-$("btn-arm").onclick = () => post("/api/arm");
-$("btn-stand-down").onclick = () => post("/api/stand-down");
-$("btn-record").onclick = () => post("/api/record");
+for (const [id, path] of [["btn-trigger", "/api/trigger"], ["btn-release", "/api/release"],
+                          ["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stand-down"],
+                          ["btn-record", "/api/record"]]) {
+  const node = $(id);
+  node.onclick = () => post(path, undefined, node);
+}
+
+// -- the page's clock against the box's -------------------------------------
+
+// How many round trips the estimate is chosen from. One a keepalive, so about
+// two minutes of them: long enough to have caught a quiet moment on the wifi,
+// short enough that a clock the device has since corrected ages out.
+const CLOCK_SAMPLES_KEPT = 8;
+
+// One round trip, the NTP way. The page sent its clock, the box answered with
+// its own, the page noted when the answer landed. Whatever the split between
+// the two directions, the box read its clock somewhere inside that trip, so
+// the midpoint is the best guess and half the trip is how far out it can be.
+function clockSample(sentAt, boxAt, receivedAt) {
+  return {offset: (sentAt + receivedAt) / 2 - boxAt, uncertainty: (receivedAt - sentAt) / 2};
+}
+
+// The tightest of the samples kept, or null before there is one.
+function clockEstimate(samples) {
+  let best = null;
+  for (const sample of samples) {
+    if (best === null || sample.uncertainty < best.uncertainty) best = sample;
+  }
+  return best;
+}
+
+let clockSamples = [];
+
+function askTheClock(socket) {
+  try {
+    socket.send(JSON.stringify({ping: now()}));
+  } catch {
+    // A socket that cannot send is about to close, and the link banner says so.
+  }
+}
+
+function receivePong(message) {
+  const sample = clockSample(message.pong, message.box, now());
+  // A trip that ended before it began is the device's clock stepping mid-way.
+  if (!(sample.uncertainty >= 0)) return;
+  clockSamples = [...clockSamples, sample].slice(-CLOCK_SAMPLES_KEPT);
+}
 
 // -- the link to the box ----------------------------------------------------
 
@@ -312,13 +441,20 @@ function connect() {
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
     noteFrame(message);
-    // A keepalive carries no state. Rendering it would blank the page.
-    if (!message.keepalive) render(message);
+    // Neither a keepalive nor a pong carries state. Rendering one would blank
+    // the page. Each keepalive is the cue to time the link again.
+    if (message.pong !== undefined) receivePong(message);
+    else if (message.keepalive) askTheClock(socket);
+    else render(message);
   };
   socket.onclose = () => {
     // Everything the old socket established is gone with it, the threshold
-    // included: the next one has to prove itself from scratch.
+    // included: the next one has to prove itself from scratch. So is the
+    // clock: a box that rebooted counts from zero again, and its snapshots
+    // would all look older than the last one shown.
     link = {open: false, staleAfter: null, seen: null};
+    clockSamples = [];
+    renderedAt = null;
     paintLink();
     setTimeout(connect, RECONNECT_MS);
   };

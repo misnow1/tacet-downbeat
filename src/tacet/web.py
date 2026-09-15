@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import time
 import traceback
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -25,6 +26,7 @@ from typing import Any
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import annotations as ann
+from . import taps
 from .app import App
 
 #: How often a snapshot that differs only in playhead position is pushed out.
@@ -76,9 +78,36 @@ WS_PING_INTERVAL = 10.0
 KEEPALIVE_FRAME = json.dumps({"keepalive": True, "stale_after": STALE_AFTER})
 
 
+#: Fields of a snapshot that change without anything having happened: when it
+#: was taken, which is different every time it is asked for.
+_UNREMARKABLE = ("at",)
+
+
+def _remarkable(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in snapshot.items() if k not in _UNREMARKABLE}
+
+
 def _without_position(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     recording = {k: v for k, v in snapshot["recording"].items() if k != "position"}
-    return {**snapshot, "recording": recording}
+    return {**_remarkable(snapshot), "recording": recording}
+
+
+def pong_for(text: str, now: float) -> str | None:
+    """The answer to a page asking the box's clock, or None if `text` is not a
+    well-formed ask. Pure.
+
+    The page sends `{"ping": <its clock>}` each time a keepalive arrives, and
+    estimates its offset from the round trip (#11). The ping is echoed so the
+    page needs no bookkeeping to pair them up.
+    """
+    try:
+        message = json.loads(text)
+    except ValueError:
+        return None
+    ping = message.get("ping") if isinstance(message, dict) else None
+    if isinstance(ping, bool) or not isinstance(ping, int | float) or not math.isfinite(ping):
+        return None
+    return json.dumps({"pong": ping, "box": now})
 
 
 def should_broadcast(
@@ -101,7 +130,7 @@ def should_broadcast(
     """
     if previous is None:
         return True
-    if previous == current:
+    if _remarkable(previous) == _remarkable(current):
         return False
     if _without_position(previous) != _without_position(current):
         return True
@@ -172,7 +201,9 @@ async def _state(request: web.Request) -> web.Response:
 def _command_route(name: str) -> Any:
     async def handler(request: web.Request) -> web.Response:
         app = request.app[_HUB].app
-        await getattr(app, name)()
+        received = app.now()
+        tap = _tap(await _optional_body(request), received)
+        await getattr(app, name)(tap=tap)
         return web.json_response(app.snapshot())
 
     return handler
@@ -180,8 +211,27 @@ def _command_route(name: str) -> Any:
 
 async def _record(request: web.Request) -> web.Response:
     app = request.app[_HUB].app
-    await app.start_recording()
+    received = app.now()
+    tap = _tap(await _optional_body(request), received)
+    await app.start_recording(tap=tap)
     return web.json_response(app.snapshot())
+
+
+def _tap(payload: Mapping[str, Any], received: float) -> taps.TapTiming:
+    """The request's tap on the box's clock. `received` is read before the body,
+    so the time spent reading it is not counted as the page's."""
+    try:
+        return taps.timing(taps.read_tap(payload), received)
+    except taps.TapError as exc:
+        raise _bad_request(str(exc)) from exc
+
+
+async def _optional_body(request: web.Request) -> dict[str, Any]:
+    """A command's body, which may be absent: they carry nothing but a tap
+    stamp, and curl, or a page cached from before #11, sends none."""
+    if not request.can_read_body:
+        return {}
+    return await _body(request)
 
 
 async def _body(request: web.Request) -> dict[str, Any]:
@@ -206,12 +256,14 @@ def _bad_request(message: str) -> web.HTTPBadRequest:
 
 async def _annotate(request: web.Request) -> web.Response:
     app = request.app[_HUB].app
+    received = app.now()
     payload = await _body(request)
     key = payload.get("key")
     if not isinstance(key, str):
         raise _bad_request("'key' is required")
+    tap = _tap(payload, received)
     try:
-        entry = await app.annotate(key, data=payload.get("data"))
+        entry = await app.annotate(key, data=payload.get("data"), tap=tap)
     except ann.AnnotationError as exc:
         raise _bad_request(str(exc)) from exc
     # A null entry is one the log refused. Not an error status: the tap was
@@ -223,12 +275,14 @@ async def _annotate(request: web.Request) -> web.Response:
 
 async def _span_start(request: web.Request) -> web.Response:
     app = request.app[_HUB].app
+    received = app.now()
     payload = await _body(request)
     key = payload.get("key")
     if not isinstance(key, str):
         raise _bad_request("'key' is required")
+    tap = _tap(payload, received)
     try:
-        span_id = await app.start_span(key)
+        span_id = await app.start_span(key, tap=tap)
     except ann.AnnotationError as exc:
         raise _bad_request(str(exc)) from exc
     return web.json_response({"span_id": span_id, "state": app.snapshot()})
@@ -236,12 +290,14 @@ async def _span_start(request: web.Request) -> web.Response:
 
 async def _span_end(request: web.Request) -> web.Response:
     app = request.app[_HUB].app
+    received = app.now()
     payload = await _body(request)
     span_id = payload.get("span_id")
     if not isinstance(span_id, str):
         raise _bad_request("'span_id' is required")
+    tap = _tap(payload, received)
     try:
-        await app.end_span(span_id)
+        await app.end_span(span_id, tap=tap)
     except ann.AnnotationError as exc:
         raise _bad_request(str(exc)) from exc
     return web.json_response({"state": app.snapshot()})
@@ -293,6 +349,12 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
         async for message in socket:
             if message.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                 break
+            if message.type is WSMsgType.TEXT:
+                # Answered at once, before anything else gets a turn: the time
+                # this waits is counted against the estimate's uncertainty.
+                pong = pong_for(message.data, hub.app.now())
+                if pong is not None:
+                    await _send(socket, pong)
     finally:
         keeper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -389,6 +451,11 @@ background:var(--line);margin-right:6px}
 #pulse.stale::before{background:var(--warn)}
 #why{color:var(--dim);margin-top:4px}
 #refusal{color:#ffb4a9;margin-top:6px;display:none}
+/* The page's own word on its last tap. The box cannot say a tap did not reach
+   it, so this is not wiped by a snapshot the way the refusal line is. */
+#tap{margin-top:6px;display:none}
+#tap.failed{display:block;color:#fff;background:var(--warn);border-radius:8px;padding:6px 10px}
+#tap.untimed{display:block;color:#ffca7a;font-size:13px}
 main{padding:16px;display:grid;gap:16px;max-width:900px;margin:0 auto}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 button{font:inherit;font-weight:600;color:var(--text);background:var(--panel);
@@ -401,6 +468,9 @@ button.big{font-size:20px;padding:26px 12px}
 button.open{background:var(--open);border-color:var(--open)}
 button.fade{background:var(--fade);border-color:var(--fade)}
 button.on{outline:2px solid var(--text)}
+/* Between the tap and the box's answer. An inset ring rather than a label, so
+   nothing moves under a thumb about to tap again. */
+button.sending{box-shadow:inset 0 0 0 3px #ffca7a}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
 .label{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
 .value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -447,7 +517,7 @@ margin:4px 0 0}
 <div id="saving"></div>
 <header>
   <div class="headline"><div id="state">&hellip;</div><div id="pulse">--</div></div>
-  <div id="why"></div><div id="refusal"></div>
+  <div id="why"></div><div id="refusal"></div><div id="tap"></div>
 </header>
 <main>
   <div class="row">
