@@ -123,7 +123,7 @@ class TestStartupBannerFlagsWhatIsMissing(unittest.TestCase):
         self.assertIn("no markers reach Reaper", text)
 
     def test_loopback_says_the_ipad_cannot_reach_it(self):
-        # Reads as a firewall problem and is not one (docs/gameday.md).
+        # Reads as a firewall problem and is not one (docs/box.md).
         self.assertIn("the iPad cannot reach it", banner("--listen", "127.0.0.1"))
 
     def test_the_wildcard_address_is_not_offered_as_a_link(self):

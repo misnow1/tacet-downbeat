@@ -37,7 +37,11 @@ slapback and drags the band's tempo.
 
 ```
 docs/design.md      the design document — read this first
-docs/gameday.md     the game-day runbook — what to start, in what order
+docs/gameday.md     the game-day runbook — what to start, in what order, which
+                    button when; links to the three below
+docs/reaper.md      Reaper setup, the tracks to record, the mirror script
+docs/box.md         installing and configuring the box, its banner and flags
+docs/troubleshooting.md  what every message means, and what to do
 docs/vendors/       vendor specs (Yamaha DM7 OSC, plus a text extraction)
 src/tacet/          the box: OSC codec, console and Reaper clients, state
                     machine, annotation log, web UI

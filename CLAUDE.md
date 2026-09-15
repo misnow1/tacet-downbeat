@@ -256,10 +256,13 @@ push to `main` directly.
 ## Working notes
 
 - `docs/gameday.md` is the operating runbook: startup order, what the page
-  should read before kickoff, and what each failure message means. Anything
-  learned by running the system on a Saturday belongs there, not in a commit
-  message. It carries the site values (console IP, DCA number, NAS path) that
-  are deliberately not anywhere else in the repo.
+  should read before kickoff, and which button to tap when. It stays short and
+  links out for detail: `docs/reaper.md` (Reaper setup, the tracks to record,
+  the mirror script), `docs/box.md` (install, config, banner, flags) and
+  `docs/troubleshooting.md` (what each failure message means). Anything learned
+  by running the system on a Saturday belongs in one of those, not in a commit
+  message. gameday.md carries the site values (console IP, DCA number, NAS
+  path) that are deliberately not anywhere else in the repo.
 - Vendor PDFs are encrypted and need decrypting before they can be read at all.
   See `docs/vendors/README.md` before wrestling with one.
 - `reaper/tacet_mirror.lua` runs inside Reaper. Its logic **is** tested here,

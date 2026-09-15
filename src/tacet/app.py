@@ -66,7 +66,7 @@ MOVE_FAILED = "move-failed"
 #: have to agree or the warning goes quiet.
 RECORDING_STARTED = ann.ANCHOR_EVENT
 
-#: Shown when `/record` could not be sent. Quoted in docs/gameday.md.
+#: Shown when `/record` could not be sent. Quoted in docs/troubleshooting.md.
 RECORD_SEND_FAILED = "Could not send the start to Reaper ({error}). Nothing started; tap again, or start it in Reaper."
 
 
