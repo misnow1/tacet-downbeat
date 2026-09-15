@@ -344,6 +344,81 @@ class TestRequire(_TempConfig):
         config.require(p, args, serve.CONFIG_MAPPING, *serve.REQUIRED)  # must not raise
 
 
+#: Every port the tools take, as (module, argparse dest). Discovered from the
+#: mappings so a new port key is covered without being listed here.
+PORT_DESTS = tuple(
+    (module, dest)
+    for module in (serve, verify_dm7, verify_reaper)
+    for dest, name in module.CONFIG_MAPPING.items()
+    if name.endswith("port")
+)
+
+#: Just outside the range on each side, and a typo'd 49900.
+OUT_OF_RANGE_PORTS = (0, -1, 65536, 499000)
+IN_RANGE_PORTS = (1, 65535)
+
+
+class TestPortsAreInRange(_TempConfig):
+    """#72: an out-of-range port got past every send-failure handler.
+
+    `sendto` raises `OverflowError` for it, which is not an `OSError`, so the
+    open failed with a server error while the page showed a healthy fader.
+    Refusing at load means the box never starts with one.
+    """
+
+    def test_the_range_is_the_sixteen_bit_port_field_less_zero(self):
+        self.assertEqual((config.PORT_MIN, config.PORT_MAX), (1, 65535))
+
+    def test_every_key_named_port_is_checked_as_a_port(self):
+        ports = [option for option in config.SCHEMA if option.key.endswith("port")]
+        self.assertEqual(len(ports), 4)
+        for option in ports:
+            self.assertEqual(option.kind, "port", option.name)
+
+    def test_every_tool_reads_at_least_one_port(self):
+        self.assertEqual({module for module, _ in PORT_DESTS}, {serve, verify_dm7, verify_reaper})
+
+    def test_an_out_of_range_port_in_the_config_refuses_naming_the_key(self):
+        for option in (o for o in config.SCHEMA if o.kind == "port"):
+            for port in OUT_OF_RANGE_PORTS:
+                with self.subTest(key=option.name, port=port), self.assertRaises(config.ConfigError) as caught:
+                    config.values_from_mapping({option.section: {option.key: port}})
+                self.assertIn(option.name, str(caught.exception))
+                self.assertIn("1 to 65535", str(caught.exception))
+
+    def test_an_in_range_port_in_the_config_loads(self):
+        for port in IN_RANGE_PORTS:
+            with self.subTest(port=port):
+                self.assertEqual(config.values_from_mapping({"console": {"port": port}}), {"console.port": port})
+
+    def test_a_port_is_still_a_whole_number_first(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"console": {"port": "49900"}})
+        self.assertIn("whole number", str(caught.exception))
+
+    def test_an_out_of_range_port_flag_refuses_naming_the_flag(self):
+        for module, dest in PORT_DESTS:
+            flag = "--" + dest.replace("_", "-")
+            for port in OUT_OF_RANGE_PORTS:
+                stderr = io.StringIO()
+                with self.subTest(flag=flag, port=port), self.assertRaises(SystemExit), redirect_stderr(stderr):
+                    module.parser().parse_args([f"{flag}={port}"])
+                self.assertIn(flag, stderr.getvalue())
+                self.assertIn("1 to 65535", stderr.getvalue())
+
+    def test_an_in_range_port_flag_is_accepted(self):
+        for module, dest in PORT_DESTS:
+            flag = "--" + dest.replace("_", "-")
+            for port in IN_RANGE_PORTS:
+                with self.subTest(flag=flag, port=port):
+                    self.assertEqual(getattr(module.parser().parse_args([f"{flag}={port}"]), dest), port)
+
+    def test_every_default_port_is_in_range(self):
+        for module, dest in PORT_DESTS:
+            with self.subTest(module=module.__name__, dest=dest):
+                self.assertIn(module.parser().get_default(dest), range(config.PORT_MIN, config.PORT_MAX + 1))
+
+
 class TestTheExampleFile(unittest.TestCase):
     """The shipped example is the documentation, so it has to still be true."""
 

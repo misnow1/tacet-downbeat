@@ -40,9 +40,12 @@ class UdpSender:
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def send(self, packet: bytes) -> None:
+        # Every failure, not just OSError. An out-of-range port raises
+        # OverflowError, and anything that is not a TransportError escapes the
+        # handlers that turn a failed send into a visible fault (#72).
         try:
             self._socket.sendto(packet, (self.host, self.port))
-        except OSError as exc:
+        except Exception as exc:
             raise TransportError(f"could not send to {self.host}:{self.port}: {exc}") from exc
 
     def close(self) -> None:

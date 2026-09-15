@@ -88,7 +88,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     config.add_config_argument(p)
     p.add_argument("--host", help="the console's For Mixer Control IP")
-    p.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p.add_argument("--port", type=config.port, default=DEFAULT_PORT)
     p.add_argument("--dca", type=int)
     p.add_argument("--granularity", action="store_true", help="the -1550 probe")
     p.add_argument("--fade", type=float, metavar="SECONDS")

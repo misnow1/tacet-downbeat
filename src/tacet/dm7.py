@@ -248,11 +248,17 @@ class Dm7Client:
         """Command one level immediately. Returns the clamped value sent."""
         level = clamp(level)
         packet = osc.encode_message(self._address, level, tags=osc.TypeTag.INT32)
+        # Any sender, any error. The fade and ride-in tasks catch only
+        # TransportError, so a sender that breaks its contract would otherwise
+        # end a move silently, with the fader still reading healthy (#72).
         try:
             self._sender.send(packet)
         except TransportError as exc:
             self.last_error = str(exc)
             raise
+        except Exception as exc:
+            self.last_error = str(exc)
+            raise TransportError(str(exc)) from exc
         self.last_error = None
         self.sent_count += 1
         self._commanded = level
