@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import math
 import threading
 import time
 import unittest
@@ -75,6 +76,31 @@ class NotAnOsErrorSender(FlakySender):
         FakeSender.send(self, packet)
 
 
+class LoopClock:
+    """A console clock that is never late (#92).
+
+    Since #40 a drive that wakes late skips to the newest due step, so on a slow
+    runner a short fade on the real clock can send fewer packets than a test
+    set its failure for, finish cleanly, and never fail. Sleeping here advances
+    this clock by exactly what was asked and yields to the loop, so every step
+    is sent however slowly the machine runs.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        # Never less than the next representable time. A drive can be left a
+        # remainder far below this clock's resolution once it reads a few
+        # seconds, and adding that would leave the clock where it was: a sleep
+        # that never ends.
+        self.now = max(self.now + seconds, math.nextafter(self.now, math.inf))
+        await asyncio.sleep(0)
+
+
 #: Long enough for a cancelled move's task to wake and run its cleanup - it
 #: needs a loop iteration or two, not wall time - and short next to every ramp
 #: the tests below use, so the newer move is still running when it is checked.
@@ -110,18 +136,27 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         queue=None,
         console_class=dm7.Dm7Client,
         stale_tap_seconds=taps.DEFAULT_STALE_TAP_SECONDS,
+        steady=False,
     ):
+        """`steady` puts the console on a `LoopClock`, for any test that makes
+        the console fail after a number of packets: on the real clock that
+        number depends on how fast the runner is (#92)."""
         options = {} if opener is None else {"opener": opener}
         if sync is not None:
             options["sync"] = sync
         self.log = ann.AnnotationLog(self.root / "game.jsonl", mirror=queue, **options)
         self.log.open()
         self.addCleanup(self.log.close)
+        timing = {}
+        if steady:
+            loop_clock = LoopClock()
+            timing = {"monotonic": loop_clock.monotonic, "sleep": loop_clock.sleep}
         self.console = console_class(
             "192.0.2.1",
             dca=3,
             sender=console_sender or self.console_sender,
             tick_hz=200.0,
+            **timing,
         )
         clock = monotonic if monotonic is not None else time.monotonic
         self.reaper = reaper.ReaperClient(sender=reaper_sender or self.reaper_sender, monotonic=clock)
@@ -493,7 +528,7 @@ class TestAStandDownIsLoggedWhenItLands(AppTestCase):
 
     async def test_a_stand_down_whose_fade_fails_is_never_logged_as_stood_down(self):
         sender = FlakySender()
-        app = self.build(console_sender=sender)
+        app = self.build(console_sender=sender, steady=True)
         await app.arm()
         await app.trigger()
         sender.fail_after = len(sender.packets) + 2
@@ -577,7 +612,7 @@ class TestDeliveryIsRecordedWhenTheMoveEnds(AppTestCase):
 
     async def test_a_failed_fade_is_failed_and_never_landed(self):
         sender = FlakySender()
-        app = self.build(console_sender=sender)
+        app = self.build(console_sender=sender, steady=True)
         await app.arm()
         await app.trigger()
         sender.fail_after = len(sender.packets) + 2
@@ -623,7 +658,7 @@ class TestDeliveryIsRecordedWhenTheMoveEnds(AppTestCase):
 
     async def test_a_failed_fade_is_timed_as_far_as_it_got(self):
         sender = FlakySender()
-        app = self.build(console_sender=sender)
+        app = self.build(console_sender=sender, steady=True)
         await app.arm()
         await app.trigger()
         sender.fail_after = len(sender.packets) + 2
@@ -764,7 +799,7 @@ class TestASenderErrorOfAnyKindIsAFailedMove(AppTestCase):
 
     async def test_a_fade(self):
         sender = NotAnOsErrorSender()
-        app = self.build(console_sender=sender)
+        app = self.build(console_sender=sender, steady=True)
         await app.arm()
         await app.trigger()
         sender.fail_after = len(sender.packets) + 1
@@ -773,7 +808,7 @@ class TestASenderErrorOfAnyKindIsAFailedMove(AppTestCase):
         self.assert_failed_visibly(app, dm7.MINUS_INF)
 
     async def test_a_ride_in(self):
-        app = self.build(console_sender=NotAnOsErrorSender(fail_after=1))
+        app = self.build(console_sender=NotAnOsErrorSender(fail_after=1), steady=True)
         await app.arm()
         await app.annotate("up-slow")
         await app.wait_for_fade()
@@ -789,7 +824,7 @@ class TestAFailedMoveCanBeRetried(AppTestCase):
     """
 
     async def fail_a_fade_partway(self, sender):
-        app = self.build(console_sender=sender)
+        app = self.build(console_sender=sender, steady=True)
         await app.arm()
         await app.trigger()
         # The open is itself a short ramp; count what it sent rather than
@@ -833,7 +868,7 @@ class TestAFailedMoveCanBeRetried(AppTestCase):
 
     async def test_a_failed_ride_in_can_be_retried(self):
         sender = FlakySender(fail_after=2)
-        app = self.build(console_sender=sender)
+        app = self.build(console_sender=sender, steady=True)
         await app.arm()
         await app.annotate("up-slow")
         await app.wait_for_fade()
