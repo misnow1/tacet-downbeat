@@ -60,6 +60,13 @@ config and log problems and it says so on the terminal rather than the page:
 | `--console-host is required or console.host in the config file` | Neither the flag nor the file supplied it | Give it either way |
 | `--log is required on the command line, a fresh one each game` | No `--log`. It is never read from the config file, so a complete `tacet.toml` does not supply it | Add `--log ~/games/<YYYY-MM-DD>.jsonl` with today's date |
 | `capture.log is no longer a config key` | A `tacet.toml` written before the log became command-line only | Delete the `log = ...` line from `[capture]` and pass `--log` instead |
+| `capture.audio_path is not set, so there is no telling whether the recording fits` | The box does not know where Reaper records, so it cannot check there is room for the game. It refuses rather than start unchecked (#53) | Set `audio_path` and `channels` under `[capture]` in `tacet.toml`. For a test run that records nothing, add `--no-disk-check` |
+| `capture.channels is required with capture.audio_path` | The recording path is set, but not how many tracks this game records, which is what the size is worked out from | Set `channels` to the number of armed tracks on [the patch list](reaper.md#tracks-to-record) |
+| `capture.audio_path ... does not exist or is not a directory - is the NAS mounted?` | The recording path is not there. Usually the NAS share is not mounted, and measuring whatever is underneath would report the local disk as the NAS | Mount the share (Finder > Go > Connect to Server), confirm the path in Finder, and start again. `--no-disk-check` only if you are deliberately recording somewhere else |
+| `only ... free on ..., and a full game needs ~...` | Not enough room on the recording volume for the channels and hours in the message. Running out mid-game loses the recording | Free space on that volume, or record somewhere with room. If the game is short or the count is wrong, fix `channels` / `game_hours`. `--no-disk-check` starts anyway, and the banner says it did |
+| `only ... free on ..., where the log or queue is written` | The disk holding `--log` or `--queue` is nearly full. The files are small, but a full disk tears them | Free space there (`df -H`) and start again |
+| `capture.channels must be at least 1, not ...` / `capture.game_hours must be more than 0, not ...` | A count or a length that cannot be right | Fix the value |
+| `disk        not checked (--no-disk-check)` in the banner | The box was started with the override and had no recording path to measure | Nothing, if that was deliberate. Otherwise stop, set `capture.audio_path`, and start without the flag |
 
 ---
 

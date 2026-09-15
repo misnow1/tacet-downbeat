@@ -31,6 +31,7 @@ An empty row below now means nobody wrote it down, not that nobody knows.
 | Console IP | `__________` | DM7: Setup > Network > For Mixer Control |
 | Band DCA number | `__________` | The console's DCA layout |
 | Recording path | `__________` | NAS share; never the repo (`audio/` is gitignored) |
+| Channels recorded | `__________` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
 | Box address on the VLAN | `__________` | `ipconfig getifaddr en0` |
 
 Put them in `tacet.toml` on the box too, so the startup command below is one

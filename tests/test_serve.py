@@ -2,9 +2,10 @@ import io
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import mock
 
-from tacet import annotations, dm7, serve
+from tacet import annotations, disk, dm7, serve
 
 
 class TestStopConfirmation(unittest.TestCase):
@@ -413,6 +414,15 @@ class TestAnUnreadableLogStopsTheBoxInWords(_RunMain):
         self.assertIn("cannot be read", stderr)
 
 
+#: Room on a fake disk for any game the tests describe.
+PLENTY = 10**15
+
+
+def _usage(free):
+    """What `shutil.disk_usage` returns, as far as `tacet.disk` reads it."""
+    return SimpleNamespace(total=free, used=0, free=free)
+
+
 class TestCheckAnswersWithoutStarting(unittest.TestCase):
     """#79: `--check` is a real start that stops after the banner.
 
@@ -431,6 +441,7 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         self.config.write_text("", encoding="utf-8")
         self.log = self.root / "game.jsonl"
         self.queue = self.root / "queue.tsv"
+        self.free = PLENTY
 
     def start(self, argv, *, config=True):
         """(exit code, stdout, stderr) for `serve.main`, which never binds:
@@ -442,6 +453,9 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
             mock.patch("sys.stderr", stderr),
             # Closed, not run: a real start's coroutine is made and never awaited.
             mock.patch("tacet.serve.asyncio.run", side_effect=lambda coroutine: coroutine.close()) as run,
+            # Fixed, so a start and a check of the same command print the same
+            # banner however the real disk moves between them.
+            mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(self.free)),
         ):
             code: int | str | None
             try:
@@ -452,7 +466,10 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     def good(self):
-        return [*self.CONSOLE, "--log", str(self.log), "--queue", str(self.queue)]
+        return [*self.CONSOLE, "--log", str(self.log), "--queue", str(self.queue), *self.recording()]
+
+    def recording(self):
+        return ["--audio-path", str(self.root), "--channels", "22"]
 
     def test_a_good_config_prints_the_banner_a_start_prints_and_exits_zero(self):
         _, started, _ = self.start(self.good())
@@ -513,3 +530,57 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         self.assertEqual(self.queue.read_bytes(), torn_queue)
         self.assertFalse(annotations.set_aside_path(self.log).exists())
         self.assertFalse(annotations.set_aside_path(self.queue).exists())
+
+
+class TestTheBoxRefusesWithoutRoomForTheGame(TestCheckAnswersWithoutStarting):
+    """#53: running out of disk mid-game loses the recording. Checked before
+    the banner, so `--check` the night before refuses exactly as the day would."""
+
+    def test_the_banner_says_how_much_room_there_is(self):
+        code, stdout, _ = self.start(self.good())
+        self.assertEqual(code, 0)
+        self.assertTrue(self.ran)
+        self.assertIn(f"free on {self.root}, need ~", stdout)
+        self.assertIn("22 ch x 5.0 h", stdout)
+
+    def test_insufficient_space_refuses_and_names_the_override(self):
+        self.free = disk.required_bytes(22, disk.DEFAULT_GAME_HOURS) - 1
+        for argv in (self.good(), [*self.good(), "--check"]):
+            with self.subTest(argv[-1]):
+                code, stdout, stderr = self.start(argv)
+                self.assertEqual(code, 2)
+                self.assertFalse(self.ran)
+                self.assertIn(disk.OVERRIDE_FLAG, stderr)
+                self.assertEqual(stdout, "")
+
+    def test_an_unset_audio_path_refuses(self):
+        code, _, stderr = self.start([*self.CONSOLE, "--log", str(self.log)])
+        self.assertEqual(code, 2)
+        self.assertIn(disk.NOT_SET, stderr)
+
+    def test_an_unmounted_audio_path_is_refused(self):
+        absent = self.root / "not-mounted"
+        code, _, stderr = self.start(
+            [*self.CONSOLE, "--log", str(self.log), "--audio-path", str(absent), "--channels", "22"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn(str(absent), stderr)
+        self.assertFalse(absent.exists())
+
+    def test_the_config_file_supplies_the_recording(self):
+        self.config.write_text(f"[capture]\naudio_path = '{self.root}'\nchannels = 16\n", encoding="utf-8")
+        code, stdout, _ = self.start([*self.CONSOLE, "--log", str(self.log)])
+        self.assertEqual(code, 0)
+        self.assertIn("16 ch x 5.0 h", stdout)
+
+    def test_the_override_flag_starts_anyway_and_says_so(self):
+        self.free = 1
+        code, stdout, _ = self.start([*self.good(), disk.OVERRIDE_FLAG])
+        self.assertEqual(code, 0)
+        self.assertTrue(self.ran)
+        self.assertIn(f"not enforced: {disk.OVERRIDE_FLAG}", stdout)
+
+    def test_the_override_with_no_audio_path_says_nothing_was_checked(self):
+        code, stdout, _ = self.start([*self.CONSOLE, "--log", str(self.log), disk.OVERRIDE_FLAG])
+        self.assertEqual(code, 0)
+        self.assertIn(f"not checked ({disk.OVERRIDE_FLAG})", stdout)
