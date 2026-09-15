@@ -62,6 +62,16 @@ class FlakySender(FakeSender):
         self.fail_after = None
 
 
+class NotAnOsErrorSender(FlakySender):
+    """Fails the way `sendto` does for an out-of-range port (#72): with an
+    `OverflowError`, which is neither an `OSError` nor a `TransportError`."""
+
+    def send(self, packet: bytes) -> None:
+        if self.fail_after is not None and len(self.packets) >= self.fail_after:
+            raise OverflowError("sendto(): port must be 0-65535.")
+        FakeSender.send(self, packet)
+
+
 #: Long enough for a cancelled move's task to wake and run its cleanup - it
 #: needs a loop iteration or two, not wall time - and short next to every ramp
 #: the tests below use, so the newer move is still running when it is checked.
@@ -387,6 +397,46 @@ class TestFailures(AppTestCase):
         await app.trigger()
         await app.stand_down()
         self.assertIn("stood-down", self.keys())
+
+
+class TestASenderErrorOfAnyKindIsAFailedMove(AppTestCase):
+    """#72: an `OverflowError` escaped every `except TransportError`.
+
+    The open raised out of the app while the page showed a healthy fader, and a
+    fade or ride-in task died with nothing logged and nothing shown. Each move
+    must end unhealthy, with `move-failed` in the log.
+    """
+
+    def assert_failed_visibly(self, app, target):
+        snapshot = app.snapshot()
+        self.assertFalse(snapshot["fader"]["healthy"])
+        self.assertIn("port must be 0-65535", snapshot["fader"]["error"])
+        failed = [e for e in self.entries() if e.event == tacet_app.MOVE_FAILED]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].data["target"], target)
+
+    async def test_an_open(self):
+        app = self.build(console_sender=NotAnOsErrorSender(fail_after=0))
+        await app.arm()
+        await app.trigger()
+        self.assert_failed_visibly(app, dm7.UNITY)
+
+    async def test_a_fade(self):
+        sender = NotAnOsErrorSender()
+        app = self.build(console_sender=sender)
+        await app.arm()
+        await app.trigger()
+        sender.fail_after = len(sender.packets) + 1
+        await app.release()
+        await app.wait_for_fade()
+        self.assert_failed_visibly(app, dm7.MINUS_INF)
+
+    async def test_a_ride_in(self):
+        app = self.build(console_sender=NotAnOsErrorSender(fail_after=1))
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assert_failed_visibly(app, dm7.UNITY)
 
 
 class TestAFailedMoveCanBeRetried(AppTestCase):

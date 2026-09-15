@@ -58,6 +58,18 @@ USER_CONFIG_DIR = Path(".config") / "tacet"
 CONFIG_FLAG = "--config"
 CONFIG_DEST = "config"
 
+#: A UDP or TCP port is a 16-bit field. Zero is excluded: to `sendto` it is
+#: not a destination, and to a bind it means "any free port", which no tool
+#: here wants. Both ends are checked at load, for the config and the flags
+#: alike, because `sendto` rejects a port past the top with `OverflowError`,
+#: which no send-failure handler was written to expect (#72).
+PORT_BITS = 16
+PORT_MIN = 1
+PORT_MAX = (1 << PORT_BITS) - 1
+
+#: The one wording for a port refusal, shared by the file and the flags.
+PORT_RANGE = f"must be a port from {PORT_MIN} to {PORT_MAX}"
+
 
 class ConfigError(Exception):
     """A config file that exists but cannot be trusted.
@@ -69,8 +81,8 @@ class ConfigError(Exception):
 
 #: The value kinds a config key may take. `path` is `str` in the file and a
 #: `Path` afterwards, with `~` expanded, because every path here is typed by a
-#: human who will write `~/games`.
-Kind = Literal["str", "int", "float", "bool", "path"]
+#: human who will write `~/games`. `port` is an `int` in `PORT_MIN..PORT_MAX`.
+Kind = Literal["str", "int", "float", "bool", "path", "port"]
 
 
 @dataclass(frozen=True)
@@ -97,17 +109,17 @@ class Option:
 #: every run fire a fade at a console, or sit listening, without being asked.
 SCHEMA: tuple[Option, ...] = (
     Option("console", "host", "str", "the DM7's For Mixer Control IP"),
-    Option("console", "port", "int", "OSC port on the console"),
+    Option("console", "port", "port", "OSC port on the console"),
     Option("console", "dca", "int", "the band DCA number"),
     Option("console", "quantized", "bool", "snap fader values to Table 1"),
     Option("reaper", "host", "str", "host running Reaper"),
-    Option("reaper", "send_port", "int", "Reaper's local listen port"),
-    Option("reaper", "receive_port", "int", "the port Reaper sends feedback to"),
+    Option("reaper", "send_port", "port", "Reaper's local listen port"),
+    Option("reaper", "receive_port", "port", "the port Reaper sends feedback to"),
     Option("capture", "queue", "path", "mirror queue the ReaScript watches"),
     Option("fader", "fade_seconds", "float", "close fade length"),
     Option("fader", "slow_open_seconds", "float", "ride-in for up-slow, when the start was missed"),
     Option("ui", "listen", "str", "address the web UI binds to"),
-    Option("ui", "port", "int", "port the web UI binds to"),
+    Option("ui", "port", "port", "port the web UI binds to"),
 )
 
 #: Keys that used to exist, each with what to do instead. Refused like any
@@ -143,9 +155,11 @@ def _coerce(option: Option, value: object, *, where: str) -> object:
         return value
     if isinstance(value, bool):
         raise ConfigError(f"{where}: {option.name} must be {option.kind}, got {value!r}")
-    if option.kind == "int":
+    if option.kind in ("int", "port"):
         if not isinstance(value, int):
             raise ConfigError(f"{where}: {option.name} must be a whole number, got {value!r}")
+        if option.kind == "port" and not _in_port_range(value):
+            raise ConfigError(f"{where}: {option.name} {PORT_RANGE}, got {value!r}")
         return value
     if option.kind == "float":
         if not isinstance(value, int | float):
@@ -155,6 +169,22 @@ def _coerce(option: Option, value: object, *, where: str) -> object:
         raise ConfigError(f"{where}: {option.name} must be a string, got {value!r}")
     if option.kind == "path":
         return Path(value).expanduser()
+    return value
+
+
+def _in_port_range(value: int) -> bool:
+    return PORT_MIN <= value <= PORT_MAX
+
+
+def port(text: str) -> int:
+    """The argparse `type` for every port flag, so a flag is held to the same
+    range as the key it overrides. argparse names the flag in the error."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{PORT_RANGE}, got {text!r}") from None
+    if not _in_port_range(value):
+        raise argparse.ArgumentTypeError(f"{PORT_RANGE}, got {text!r}")
     return value
 
 

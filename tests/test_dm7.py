@@ -29,6 +29,13 @@ class FailingSender:
         raise TransportError("network unreachable")
 
 
+class NotAnOsErrorSender:
+    """Fails the way `sendto` does for an out-of-range port."""
+
+    def send(self, packet: bytes) -> None:
+        raise OverflowError("sendto(): port must be 0-65535.")
+
+
 def client(**kwargs: Any) -> tuple[dm7.Dm7Client, FakeSender]:
     sender: FakeSender = kwargs.setdefault("sender", FakeSender())
     kwargs.setdefault("tick_hz", 100.0)
@@ -161,6 +168,19 @@ class TestSending(unittest.TestCase):
         self.assertFalse(c.healthy)
         assert c.last_error is not None
         self.assertIn("network unreachable", c.last_error)
+
+    def test_any_sender_error_is_raised_as_a_transport_error(self):
+        # The Sender contract says TransportError, but a fade runs in a task
+        # that catches only that. Anything else would kill it silently (#72).
+        c = dm7.Dm7Client(UNREACHABLE_HOST, sender=NotAnOsErrorSender())
+        with self.assertRaises(TransportError) as caught:
+            c.send_level(0)
+        self.assertIsInstance(caught.exception.__cause__, OverflowError)
+        self.assertFalse(c.healthy)
+        assert c.last_error is not None
+        self.assertIn("port must be 0-65535", c.last_error)
+        self.assertEqual(c.sent_count, 0)
+        self.assertEqual(c.commanded_level, dm7.MINUS_INF)
 
     def test_recovery_clears_the_fault(self):
         c, _ = client()

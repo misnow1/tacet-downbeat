@@ -122,6 +122,12 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         self.assertIn(stale, str(caught.exception))
         self.assertIn(stale, self.runbook)
 
+    def test_the_runbook_quotes_the_port_range_refusal(self) -> None:
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"console": {"port": 499000}})
+        self.assertIn(config.PORT_RANGE, str(caught.exception))
+        self.assertIn(config.PORT_RANGE, self.runbook)
+
     def test_the_runbook_reproduces_the_checklist_steps(self) -> None:
         for phrase in ("before kickoff", "tacet_mirror.lua running in Reaper", "arm when the band is in the stands"):
             with self.subTest(phrase=phrase):
