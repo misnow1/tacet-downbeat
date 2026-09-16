@@ -485,6 +485,9 @@ font-size:13px}
 #tap.untimed{display:block;color:#ffca7a}
 /* #19's prompt slot: fixed height, blank until RTD-driven prompts exist. */
 #prompt{min-height:88px;padding:0 16px;display:flex;align-items:center}
+/* Recording is a status check worth glancing at regardless of which tab is
+   open, and it used to crowd MORE's last row of buttons when it lived there. */
+#recording-status{margin:0 16px 12px}
 .tabs{display:flex;gap:8px;padding:0 16px}
 .tab-btn{flex:1;padding:10px;border-radius:10px 10px 0 0;background:var(--panel);
 border:1px solid var(--line);border-bottom:none;color:var(--dim);font-weight:700}
@@ -589,6 +592,9 @@ justify-content:center;gap:6px}
   <div id="tap"></div>
 </div>
 <div id="prompt"></div>
+<div class="panel" id="recording-status"><div class="label">Recording</div>
+  <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
+  <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
 <div class="tabs">
   <button id="tab-btn-main" class="tab-btn on">Main</button>
   <button id="tab-btn-more" class="tab-btn">More</button>
@@ -602,9 +608,6 @@ justify-content:center;gap:6px}
     <button id="btn-stand-down">Stand down</button>
     <button id="btn-record">Start recording</button>
   </div>
-  <div class="panel"><div class="label">Recording</div>
-    <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
-    <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
 </div>
 <div id="wake"></div>
 </div>
