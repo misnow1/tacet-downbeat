@@ -157,9 +157,28 @@ afterwards, but nothing reconstructs why.
 - A quiet section is not a stop. Under the PAT after a touchdown the band drops
   quiet and comes back; leave it open.
 
+**When something good happens for the home team** - a touchdown, a field goal, a
+first down, a stop on third down - the band will almost always play. Move the
+fader first and say why afterwards:
+
+| Order | Tap |
+|---|---|
+| 1 | The fader: ride it up, then **Up on whistle** / **Up on drums** when the band starts, or **Faded out** if the play is called back or goes under review |
+| 2 | The reason, when there is a moment: **Touchdown**, **Field goal**, **First down** or **Defensive stop** |
+| 3 | **Cannon**, only if there is time. It is loud on every mic and easy to find afterwards near a logged score |
+
+The reason buttons record only. Never hunt for one before moving the fader: the
+log joins them up by time, and a missed downbeat cannot be recovered.
+
+**Touchdown means the score**, tapped when the referee signals it, home team
+only. It is not the band's song starting - the fader tap already records that.
+Game 2's logs use an older `touchdown-sequence` key for the song, which is why
+this one is a different key.
+
 **Everything else** records only and moves nothing. Tap it as it happens. Buttons
 marked `(start)` are spans: tap once to open the region, again to close it. They
-read `(end)` while open.
+read `(end)` while open. A span left open by an earlier run whose button has
+since gone appears under **OPEN FROM AN EARLIER RUN**, with one button to end it.
 
 **The fader line is what the box commanded, never what the console reports.**
 The DM7 cannot answer, and a move made in StageMix will not appear. Glance at
