@@ -104,6 +104,9 @@ Full detail in design.md §5.
 ## State machine
 
 ```
+                  operator open: arms, then opens
+       ┌─────────────────────────────────────────────────┐
+       │                                                 v
 STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
                                      ^                   |
                                      |            loss of consensus
@@ -114,6 +117,10 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 ```
 
 - **STANDING DOWN** is the boot state. Pregame, halftime, band not in stands.
+- **It never blocks the operator** (#89). An operator open there arms the box
+  and opens, and says so; a fade there just fades. What it gates is the
+  detector, which is refused in this state whatever `allow_detector` says. A
+  forgotten arm must not cost a downbeat.
 - Triggers that open: drumline **unison onset**, conductor **whistle**, or a
   broad simultaneous ensemble entrance.
 - Whistle is not the primary trigger. When the whole band starts together the

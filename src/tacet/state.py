@@ -1,14 +1,20 @@
 """The operating state machine.
 
-    STANDING DOWN --(arm)--> IDLE --(trigger)--> OPEN
-        |                                          ^
-        +----(operator trigger: arms, then opens)--+
-                              ^                   |
-                              |          loss of consensus
-                              |                   v
-                              +------------- RELEASING (2 s fade)
-                                                  |
-                                    any trigger snaps back to OPEN
+                     operator trigger: arms, then opens
+         +---------------------------------------------------+
+         |                                                   v
+    STANDING DOWN <--(stand down)--- IDLE ---(trigger)---> OPEN
+         |  ^                         ^  ^                   |
+         |  |                         |  |          loss of consensus
+         |  +-----------(arm)---------+  |                   v
+         |                               +----------- RELEASING (2 s fade)
+         |     operator release:            (fade lands)      |
+         +---- fades, and the state                 any trigger snaps
+               does not change                      back to OPEN
+
+    A fade that lands while a stand-down is pending goes to STANDING DOWN
+    instead of IDLE. A detector-sourced event is refused in every state until
+    `allow_detector` is set, and refused in STANDING DOWN whatever it says.
 
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
