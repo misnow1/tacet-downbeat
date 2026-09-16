@@ -94,25 +94,66 @@ function showRefusal(text, loud = false) {
   node.textContent = text || "";
   node.style.display = text ? "block" : "none";
   node.className = text && loud ? "loud" : "";
+  // Repeated in the fader column's readout gap (#5): the header carrying
+  // #refusal is on the far side of the screen from the thumb that needs to
+  // read it.
+  const col = $("col-refusal");
+  col.textContent = text || "";
+  col.style.display = text ? "block" : "none";
 }
 
-// A category is reached in a hurry if tapping something in it moves the fader.
-function actsOnTheFader(items) {
-  return items.some((item) => item.action) ? 1 : 0;
+// -- layout: the pinned fader column, and MAIN/MORE beside it (#5) ----------
+//
+// Held in landscape, right thumb. Both lists below are explicit and ordered
+// rather than derived from category or vocabulary order: a button's position
+// is a reviewed, hallway-tested fact, not something that should shift because
+// a new key happened to be declared before it in annotations.py. A future
+// fader reason is data on an existing button, not a new button - the column
+// holds exactly these six, and a seventh will not fit.
+//
+// Split around the readout gap, which is its own fixed slot in the HTML
+// (level, target, and the refusal duplicate) rather than a seventh entry here.
+const FADER_COLUMN_TOP = ["up-whistle", "up-drums", "up-slow", "up-ready"];
+const FADER_COLUMN_BOTTOM = ["score-reversed", "out"];
+const FADER_COLUMN = [...FADER_COLUMN_TOP, ...FADER_COLUMN_BOTTOM];
+
+// MAIN: the whole GAME category, split into the three groups the hallway test
+// was run against.
+const MAIN_GROUPS = [
+  ["Game", ["q1", "q2", "q3", "q4", "halftime", "halftime-exodus", "last-two-minutes"]],
+  ["Scoring", ["touchdown", "field-goal", "first-down", "defensive-stop"]],
+  ["Timeouts", ["timeout-home", "timeout-away", "timeout-media", "timeout-official", "timeout-injury", "timeout"]],
+];
+
+// What the fader column and MAIN together account for, so MORE is "whatever
+// is left" rather than a third list that can drift out of step with the other
+// two - see the completeness check in tests/test_app_js.mjs.
+const PLACED_ELSEWHERE = new Set([...FADER_COLUMN, ...MAIN_GROUPS.flatMap(([, keys]) => keys)]);
+
+function buildButtonNode(item) {
+  const node = document.createElement("button");
+  node.textContent = buttonLabel(item.label, item.kind, false);
+  node.dataset.key = item.key;
+  node.dataset.kind = item.kind;
+  node.dataset.label = item.label;
+  if (item.action) node.dataset.action = item.action;
+  node.onclick = () => activate(item, node);
+  return node;
 }
 
-// What the grid currently on screen was built from. Comparing this rather than
-// setting a flag is what keeps the rebuild honest: the vocabulary is not fixed
-// for the life of a page, because a box that restarts mid-game can serve a
-// different ann.BUTTONS and the page reconnects to it without reloading.
-let renderedButtons = null;
+function buildGrid(items) {
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  for (const item of items) grid.appendChild(buildButtonNode(item));
+  return grid;
+}
 
-// Only the parts a rebuild would change. Deliberately not the whole snapshot -
-// this has to survive a playhead moving a thousand times an hour without
-// noticing.
-function buttonSignature(buttons) {
-  return JSON.stringify(
-    buttons.map(item => [item.key, item.label, item.category, item.kind, item.action || ""]));
+function appendHeadedGrid(host, heading, items) {
+  if (!items.length) return;
+  const h = document.createElement("h2");
+  h.textContent = heading;
+  host.appendChild(h);
+  host.appendChild(buildGrid(items));
 }
 
 // Spans an older log left open whose event is no longer a button (#14). The
@@ -124,35 +165,48 @@ function orphanSpans(snap) {
   return (((snap && snap.open_spans) || [])).filter(span => !offered.has(span.event));
 }
 
-function renderButtons(buttons, orphans) {
-  const byCategory = {};
-  for (const button of buttons) (byCategory[button.category] ||= []).push(button);
-  const host = $("buttons");
+function renderFaderHalf(hostId, keys, byKey) {
+  const host = $(hostId);
   host.innerHTML = "";
-  // Categories that move the fader come first, nearest the big buttons. The
-  // sort is stable, so everything else keeps the vocabulary's own order.
-  const categories = Object.entries(byCategory);
-  categories.sort((a, b) => actsOnTheFader(b[1]) - actsOnTheFader(a[1]));
-  for (const [category, items] of categories) {
-    const heading = document.createElement("h2");
-    heading.textContent = category;
-    const grid = document.createElement("div");
-    grid.className = "grid";
-    for (const item of items) {
-      const node = document.createElement("button");
-      node.textContent = buttonLabel(item.label, item.kind, false);
-      node.dataset.key = item.key;
-      node.dataset.kind = item.kind;
-      node.dataset.label = item.label;
-      if (item.action) node.dataset.action = item.action;
-      node.onclick = () => activate(item, node);
-      grid.appendChild(node);
-    }
-    host.appendChild(heading); host.appendChild(grid);
+  for (const key of keys) {
+    const item = byKey.get(key);
+    // A box running older code might not offer every key yet; skip rather
+    // than throw, so the rest of the column still works.
+    if (item) host.appendChild(buildButtonNode(item));
+  }
+}
+
+function renderFaderColumn(buttons) {
+  const byKey = new Map(buttons.map((item) => [item.key, item]));
+  renderFaderHalf("fader-top", FADER_COLUMN_TOP, byKey);
+  renderFaderHalf("fader-bottom", FADER_COLUMN_BOTTOM, byKey);
+}
+
+function renderMainTab(buttons) {
+  const byKey = new Map(buttons.map((item) => [item.key, item]));
+  const host = $("tab-main");
+  host.innerHTML = "";
+  for (const [heading, keys] of MAIN_GROUPS) {
+    appendHeadedGrid(host, heading, keys.map((key) => byKey.get(key)).filter(Boolean));
+  }
+}
+
+function renderMoreTab(buttons, orphans) {
+  const rest = buttons.filter((item) => !PLACED_ELSEWHERE.has(item.key));
+  const byCategory = {};
+  for (const item of rest) (byCategory[item.category] ||= []).push(item);
+  const host = $("tab-more-vocabulary");
+  host.innerHTML = "";
+  // Vocabulary order, the same way the fader column and MAIN's own groups are
+  // reviewed rather than sorted - MORE is reached less often and never mid-play,
+  // so it does not need MAIN's hand-picked order, only a stable one.
+  for (const [category, items] of Object.entries(byCategory)) {
+    appendHeadedGrid(host, category, items);
   }
   if (!orphans.length) return;
   const heading = document.createElement("h2");
   heading.textContent = "OPEN FROM AN EARLIER RUN";
+  host.appendChild(heading);
   const grid = document.createElement("div");
   grid.className = "grid";
   for (const span of orphans) {
@@ -164,8 +218,57 @@ function renderButtons(buttons, orphans) {
     node.onclick = () => post("/api/span/end", {span_id: span.span_id}, node);
     grid.appendChild(node);
   }
-  host.appendChild(heading); host.appendChild(grid);
+  host.appendChild(grid);
 }
+
+// What the three lists currently on screen were built from. Comparing this
+// rather than setting a flag is what keeps the rebuild honest: the vocabulary
+// is not fixed for the life of a page, because a box that restarts mid-game
+// can serve a different ann.BUTTONS and the page reconnects to it without
+// reloading. One signature for all three: they are built together from the
+// same list, and switching MAIN/MORE never touches any of them (see
+// `paintTabs`), so nothing here needs to know which tab is showing.
+let renderedButtons = null;
+
+// Only the parts a rebuild would change. Deliberately not the whole snapshot -
+// this has to survive a playhead moving a thousand times an hour without
+// noticing.
+function buttonSignature(buttons) {
+  return JSON.stringify(
+    buttons.map(item => [item.key, item.label, item.category, item.kind, item.action || ""]));
+}
+
+function renderButtons(buttons, orphans) {
+  renderFaderColumn(buttons);
+  renderMainTab(buttons);
+  renderMoreTab(buttons, orphans);
+}
+
+// -- MAIN / MORE ---------------------------------------------------------
+//
+// The fader column and the status strip are visible in both; only the two
+// vocabulary panels swap. A tap in MORE returns to MAIN once it is answered
+// for - navigation, not a mode change, so nothing here is announced or logged.
+// Note (and, once #9 lands, a typed target level) stays open until finished.
+let activeTab = "main";
+
+function paintTabs() {
+  $("tab-main").style.display = activeTab === "main" ? "" : "none";
+  $("tab-more").style.display = activeTab === "more" ? "" : "none";
+  $("tab-btn-main").classList.toggle("on", activeTab === "main");
+  $("tab-btn-more").classList.toggle("on", activeTab === "more");
+  // #5: the left panel is tinted while MORE is showing, so which tab is
+  // active reads at a glance without having to read either tab button.
+  $("left").classList.toggle("more", activeTab === "more");
+}
+
+function returnToMain() {
+  activeTab = "main";
+  paintTabs();
+}
+
+$("tab-btn-main").onclick = () => { activeTab = "main"; paintTabs(); };
+$("tab-btn-more").onclick = () => { activeTab = "more"; paintTabs(); };
 
 // Span buttons toggle: the first tap opens the region, the second closes it.
 // Instants fire once. The highlight alone cannot carry that difference - it
@@ -189,11 +292,14 @@ function activate(item, node) {
       ? {text: prompt("Note") || ""} : undefined;
     if (item.key === "note" && !data.text) return;
     post("/api/annotate", {key: item.key, data}, node);
-    return;
+  } else {
+    const open = openSpan(snapshot, item.key);
+    if (open) post("/api/span/end", {span_id: open.span_id}, node);
+    else post("/api/span/start", {key: item.key}, node);
   }
-  const open = openSpan(snapshot, item.key);
-  if (open) post("/api/span/end", {span_id: open.span_id}, node);
-  else post("/api/span/start", {key: item.key}, node);
+  // Navigation, not a mode change: Note is the one exception, since its
+  // prompt() is still open when this runs.
+  if (item.key !== "note") returnToMain();
 }
 
 // Reaper's /time is a float of seconds and says nothing about how Reaper is
@@ -319,7 +425,9 @@ function render(next) {
     renderButtons(next.buttons, orphans);
     renderedButtons = signature;
   }
-  for (const node of document.querySelectorAll("#buttons button")) {
+  for (const node of document.querySelectorAll(
+    "#fader-top button, #fader-bottom button, #tab-main button, #tab-more-vocabulary button"
+  )) {
     // An orphan's label says what it does and never changes.
     if (node.dataset.orphan) continue;
     const open = openSpan(next, node.dataset.key) !== undefined;
@@ -328,11 +436,31 @@ function render(next) {
   }
 }
 
-for (const [id, path] of [["btn-trigger", "/api/trigger"], ["btn-release", "/api/release"],
-                          ["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stand-down"],
+// The bare OPEN / FADE OUT pair came off the page (#5): the reason buttons in
+// the fader column do the same move and also say why. The routes stay, for
+// anything that wants to drive the box without the vocabulary - verify_dm7,
+// say, or the detector once Phase 2 is declared.
+//
+// Arm, Stand down and Start recording live in MORE's Control group, so a tap
+// on any of them is navigation too, same as a vocabulary button.
+for (const [id, path] of [["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stand-down"],
                           ["btn-record", "/api/record"]]) {
   const node = $(id);
-  node.onclick = () => post(path, undefined, node);
+  node.onclick = () => { post(path, undefined, node); returnToMain(); };
+}
+
+// -- expand: a tap reveals a status chip's full sentence without growing the
+// strip it lives in (#5) -----------------------------------------------------
+//
+// The strip is a fixed 44px so nothing under it moves. A dataset flag rather
+// than a class: the functional colour classes above (loud, failed, fault...)
+// are overwritten wholesale on every render, and a class toggled here would be
+// wiped the next time one of those runs.
+for (const id of ["link", "refusal", "tap", "saving"]) {
+  $(id).onclick = () => {
+    const node = $(id);
+    node.dataset.expanded = node.dataset.expanded ? "" : "1";
+  };
 }
 
 // -- the page's clock against the box's -------------------------------------
@@ -536,6 +664,7 @@ document.addEventListener("visibilitychange", () => {
 
 fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
+paintTabs();
 setInterval(paintLink, LINK_TICK_MS);
 connect();
 holdWake();

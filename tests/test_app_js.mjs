@@ -68,8 +68,9 @@ function browser(options = {}) {
         created.push(node);
         return node;
       },
-      // The page only ever asks for "#buttons button". The stub ignores the
-      // selector and answers with every button it has been asked to make.
+      // The page only ever asks for buttons across the fader column and the
+      // two tabs (#5). The stub ignores the selector itself and answers with
+      // every button it has been asked to make.
       querySelectorAll: () => created.filter((node) => node.tag === "button"),
       // The page re-takes its wake lock when the tab comes back. Nothing here
       // ever fires it; what is tested is the branch it calls into.
@@ -80,6 +81,10 @@ function browser(options = {}) {
     // No wake lock, which is the deployed case: the API needs a secure context
     // and the page is served over plain HTTP.
     navigator: {},
+    // The note button's only way to ask for text. Defaults to answering
+    // nothing, which is also what a real dialog gives back if it is
+    // cancelled; a test that wants text passes its own.
+    prompt: (text) => (options.prompt ? options.prompt(text) : null),
     setTimeout() {},
     clearTimeout() {},
     AbortController,
@@ -556,10 +561,9 @@ function prefixed(openSpans) {
 
 // -- fader buttons --------------------------------------------------------
 
-// These both move the fader and say why. They sit in the same grid as the
-// annotation buttons, which is tapped without looking, so they have to be
-// marked for the styling that tells them apart - and put where they are
-// reached in a hurry.
+// These both move the fader and say why. They render outside any grid, in the
+// pinned column (#5), which is tapped without looking exactly as the
+// annotation grids are, so they still carry the styling that tells them apart.
 const MIXED = [
   { key: "band-enters-stands", label: "Band enters stands", category: "BAND", kind: "instant" },
   { key: "q1", label: "Q1", category: "GAME", kind: "span" },
@@ -594,8 +598,14 @@ check(
   byKey.get("q1").dataset.action,
   undefined,
 );
-check("the fader category comes first", headings()[0], "FDR");
-check("the rest keep the vocabulary order", headings().slice(1), ["BAND", "GAME"]);
+// #5: the fader buttons move to their own pinned column, which carries no
+// heading of its own - there is nothing to sort against any more. q1 lands in
+// MAIN's "Game" group (Scoring and Timeouts have nothing to show and get no
+// heading of their own); band-enters-stands lands in MORE under its category.
+check("the fader column carries no heading", headings().includes("FDR"), false);
+check("q1 lands in MAIN's Game group", headings()[0], "Game");
+check("band-enters-stands lands in MORE under its category", headings()[1], "BAND");
+check("only the groups with something to show get a heading", headings().length, 2);
 check(
   "an acting button is still an instant, not a toggle",
   byKey.get("up-whistle").textContent,
@@ -959,7 +969,10 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 {
   const { fetch, pending, answer } = controlled();
   const { nodes } = browser({ fetch });
-  const button = nodes.get("btn-trigger");
+  // Arm and Stand down stand in for any static, always-wired button (#5 moved
+  // the bare OPEN / FADE OUT pair off the page); what is under test here is
+  // the generic sending/tap machinery, not what either one does.
+  const button = nodes.get("btn-arm");
   button.onclick();
   check("#11: a tap shows as sending before the box answers", button.classList.contains("sending"), true);
   pending[0].resolve(answer(snapshot()));
@@ -970,7 +983,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 {
   const { fetch, pending, answer } = controlled();
   const { nodes } = browser({ fetch });
-  const button = nodes.get("btn-release");
+  const button = nodes.get("btn-stand-down");
   button.onclick();
   button.onclick();
   pending[0].resolve(answer(snapshot()));
@@ -985,9 +998,9 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 {
   const { fetch, pending } = controlled();
   const { context, nodes } = browser({ fetch });
-  const button = nodes.get("btn-trigger");
+  const button = nodes.get("btn-arm");
   let threw = false;
-  const tapped = context.post("/api/trigger", undefined, button).catch(() => { threw = true; });
+  const tapped = context.post("/api/arm", undefined, button).catch(() => { threw = true; });
   pending[0].reject(new TypeError("Load failed"));
   await tapped;
   await settle();
@@ -1077,7 +1090,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
   context.render(snap);
   check("a later snapshot does not relabel it", ender.textContent, "End: Band in stands");
   check("the heading says where it came from",
-        nodes.has("buttons") && created.some((node) => node.textContent === "OPEN FROM AN EARLIER RUN"),
+        nodes.has("tab-more-vocabulary") && created.some((node) => node.textContent === "OPEN FROM AN EARLIER RUN"),
         true);
 }
 
@@ -1118,6 +1131,98 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
   context.render(at("standing-down", 1.0));
   check("after the socket drops, a rebooted box's low clock is believed",
         nodes.get("state").textContent, "STANDING DOWN");
+}
+
+// -- every fader and MAIN button lands exactly once (#5) ---------------------
+//
+// FADER_COLUMN and MAIN_GROUPS are explicit, reviewed lists rather than
+// derived from category or vocabulary order. A key left out of both would
+// simply not render, in the fader column or anywhere else; a key spelled
+// wrong in one of them would drop out of its intended home and reappear,
+// unstyled, in MORE. Both failures are silent without this: nothing throws,
+// the page just quietly offers one fewer button, or the wrong one.
+{
+  const real = SNAPSHOTS["standing-down"].buttons;
+  const { context, created } = browser();
+  context.render(SNAPSHOTS["standing-down"]);
+  const buttonKeys = created.filter((node) => node.tag === "button" && node.dataset.key)
+    .map((node) => node.dataset.key);
+  for (const button of real) {
+    const count = buttonKeys.filter((key) => key === button.key).length;
+    check(`${button.key} renders exactly once`, count, 1);
+  }
+}
+
+// -- MAIN / MORE (#5) ---------------------------------------------------------
+
+{
+  const { context, nodes } = browser();
+  context.render(SNAPSHOTS["standing-down"]);
+  check("MAIN is shown to start", nodes.get("tab-main").style.display, "");
+  check("MORE is hidden to start", nodes.get("tab-more").style.display, "none");
+  check("MAIN's tab button is marked on", nodes.get("tab-btn-main").classList.contains("on"), true);
+
+  nodes.get("tab-btn-more").onclick();
+  check("tapping MORE shows it", nodes.get("tab-more").style.display, "");
+  check("and hides MAIN", nodes.get("tab-main").style.display, "none");
+  check("MORE's tab button is marked on instead", nodes.get("tab-btn-more").classList.contains("on"), true);
+  check("the left panel is tinted while MORE is showing", nodes.get("left").classList.contains("more"), true);
+  nodes.get("tab-btn-main").onclick();
+  check("and untinted back on MAIN", nodes.get("left").classList.contains("more"), false);
+}
+
+{
+  // A tap in MORE is navigation, not a mode change: it returns to MAIN once
+  // answered for, without switching tabs having rebuilt anything under it.
+  const { context, nodes, created } = browser();
+  context.render(SNAPSHOTS["standing-down"]);
+  nodes.get("tab-btn-more").onclick();
+  const before = created.filter((node) => node.tag === "button").length;
+  const falseOpen = created.find((node) => node.dataset.key === "false-open");
+  falseOpen.onclick();
+  check("MORE returns to MAIN once its tap is answered for", nodes.get("tab-main").style.display, "");
+  check("nothing was rebuilt to do it", created.filter((node) => node.tag === "button").length, before);
+}
+
+{
+  // Note is the one exception: its prompt() is still open when this runs, so
+  // switching tabs out from under it would close a dialog the operator has
+  // not finished with.
+  const { context, nodes, created } = browser({ prompt: () => "left tackle is limping" });
+  context.render(SNAPSHOTS["standing-down"]);
+  nodes.get("tab-btn-more").onclick();
+  const note = created.find((node) => node.dataset.key === "note");
+  note.onclick();
+  check("note does not return to MAIN", nodes.get("tab-more").style.display, "");
+}
+
+// -- the fader column is split around the readout gap, in order (#5) --------
+
+{
+  const { context, created } = browser();
+  context.render(SNAPSHOTS["standing-down"]);
+  const keys = created.filter((node) => node.tag === "button")
+    .map((node) => node.dataset.key)
+    .filter((key) => ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"].includes(key));
+  check(
+    "the column keeps the reviewed order, split around the gap",
+    keys,
+    ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"],
+  );
+}
+
+// -- a tap expands a status chip to its full sentence, without growing the
+// strip it lives in (#5) -----------------------------------------------------
+
+{
+  const { context, nodes } = browser();
+  context.render(SNAPSHOTS["standing-down"]);
+  const refusal = nodes.get("refusal");
+  check("a chip starts collapsed", refusal.dataset.expanded, undefined);
+  refusal.onclick();
+  check("a tap expands it", refusal.dataset.expanded, "1");
+  refusal.onclick();
+  check("a second tap collapses it again", refusal.dataset.expanded, "");
 }
 
 // -- the wake advice --------------------------------------------------------
