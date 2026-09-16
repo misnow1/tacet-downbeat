@@ -28,18 +28,69 @@ class TestBoot(unittest.TestCase):
         # design.md 6.3: pregame, halftime, band not in the stands.
         self.assertEqual(st.Machine().state, st.State.STANDING_DOWN)
 
-    def test_nothing_opens_the_fader_before_arming(self):
-        # The safety property: an unarmed box cannot move the fader, whatever
-        # it is told.
+    def test_nothing_the_detector_says_moves_the_fader_before_arming(self):
+        # The safety property, which is about the detector and not about the
+        # operator (#89): a box that is standing down is not on duty, and the
+        # detector cannot put it on duty.
         for command in st.Command:
-            for source in st.Source:
-                outcome = send(machine(allow_detector=True), command, source)
-                self.assertIsNone(outcome.fader, f"{command}/{source} moved the fader while standing down")
+            outcome = send(machine(allow_detector=True), command, st.Source.DETECTOR)
+            self.assertIsNone(outcome.fader, f"{command} let the detector move the fader while standing down")
+            self.assertIsNotNone(outcome.refusal, f"{command} was not refused")
 
-    def test_a_trigger_while_standing_down_is_refused(self):
+
+class TestTheOperatorDrivesWhileStandingDown(unittest.TestCase):
+    """#89: standing down used to refuse every operator command but ARM, so a
+    forgotten Arm was a missed downbeat. Principle 5: the operator is a
+    supervisor, not a fallback, and keeps override authority permanently."""
+
+    def test_an_open_arms_and_opens(self):
         outcome = send(machine(), st.Command.TRIGGER)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+        self.assertIsNone(outcome.refusal)
+
+    def test_the_why_line_says_the_open_armed_it(self):
+        outcome = send(machine(), st.Command.TRIGGER)
+        self.assertTrue(outcome.machine.armed_by_open)
+        self.assertIn("armed", st.describe(outcome.machine).lower())
+
+    def test_a_ride_in_arms_and_opens_too(self):
+        outcome = st.step(machine(), st.Event(st.Command.TRIGGER, gradual=True))
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertTrue(outcome.machine.riding_in)
+
+    def test_an_ordinary_open_is_not_marked_as_arming_anything(self):
+        outcome = send(armed(), st.Command.TRIGGER)
+        self.assertFalse(outcome.machine.armed_by_open)
+        self.assertNotIn("armed by", st.describe(outcome.machine).lower())
+
+    def test_the_mark_is_gone_once_the_fader_leaves(self):
+        opened_by_tap = send(machine(), st.Command.TRIGGER).machine
+        self.assertFalse(send(opened_by_tap, st.Command.RELEASE).machine.armed_by_open)
+
+    def test_a_close_moves_the_fader_and_changes_nothing(self):
+        # A close says nothing about whether the band is in the stands, so the
+        # box neither arms nor re-stands-down around the fade.
+        outcome = send(machine(), st.Command.RELEASE)
+        self.assertEqual(outcome.fader, st.FaderCommand.FADE)
+        self.assertEqual(outcome.machine, machine())
+
+    def test_a_detector_trigger_is_still_refused(self):
+        outcome = send(machine(allow_detector=True), st.Command.TRIGGER, st.Source.DETECTOR)
         self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
-        self.assertIsNotNone(outcome.refusal)
+        self.assertIsNone(outcome.fader)
+        self.assertIn("standing down", outcome.refusal)
+
+    def test_arming_and_standing_down_still_work(self):
+        self.assertEqual(send(machine(), st.Command.ARM).machine.state, st.State.IDLE)
+        self.assertFalse(send(machine(), st.Command.STAND_DOWN).changed)
+
+    def test_the_bookkeeping_commands_change_nothing(self):
+        for command in (st.Command.FADE_COMPLETE, st.Command.RIDE_IN_COMPLETE):
+            with self.subTest(command):
+                outcome = send(machine(), command)
+                self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
+                self.assertIsNone(outcome.fader)
 
 
 class TestArming(unittest.TestCase):

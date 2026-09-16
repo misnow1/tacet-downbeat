@@ -5,6 +5,7 @@ decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
 **Last updated 2026-09-15**, after the UX review of the operator page issues.
+#89 is done; the rest stand.
 Its decisions are recorded as comments on #5, #9, #12, #14 and #19, and in #89.
 
 ## Game 3 (2026-10-02)
@@ -13,7 +14,7 @@ In build order. Each step says why it comes where it does.
 
 | # | Issue | Why here |
 |---|---|---|
-| 1 | [#89](https://github.com/misnow1/tacet-downbeat/issues/89) Let the operator drive the fader while STANDING DOWN | Small, and it changes the hazard #19 is designed around: a forgotten Arm stops being a missed downbeat |
+| ~~1~~ | ~~[#89](https://github.com/misnow1/tacet-downbeat/issues/89) Let the operator drive the fader while STANDING DOWN~~ | Done. A forgotten Arm is no longer a missed downbeat, which is the hazard #19 was designed around |
 | 2 | [#14](https://github.com/misnow1/tacet-downbeat/issues/14) Vocabulary: field goal, cannon, up-for-score | Small, and it fixes the set of buttons #5 lays out. Takes #6's `up-for-score` key with it |
 | 3 | [#5](https://github.com/misnow1/tacet-downbeat/issues/5) Button layout for thumbs | Game 2's biggest page failure was scrolling and a grid that moved under the thumb. The fixed status strip and prompt slot are where #12 and #19 put things |
 | 4 | [#12](https://github.com/misnow1/tacet-downbeat/issues/12) StageMix handoff and take-back | Removes the only known path to a full-level blast: a ramp from a level the box only believes in |

@@ -1084,21 +1084,34 @@ class TestFaderButtons(AppTestCase):
         self.assertEqual(app.snapshot()["fader"]["commanded"], before)
         self.assertEqual(app.machine.state, state.State.IDLE)
 
-    async def test_a_refused_move_still_records_the_reason(self):
-        """Standing down, a trigger is refused. The operator still heard the
-        whistle, and a log that kept only the accepted taps would misrepresent
-        the night."""
+    async def test_a_fader_button_while_standing_down_arms_and_opens(self):
+        """#89: it used to be refused, so a forgotten Arm was a missed
+        downbeat. The operator heard the whistle; the band is playing."""
         app = self.build()
         self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
         await app.annotate("up-whistle")
-        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
         self.assertIn("up-whistle", self.keys())
-        self.assertTrue(app.snapshot()["refusal"])
+        self.assertIsNone(app.snapshot()["refusal"])
 
-    async def test_a_refused_move_does_not_move_the_fader(self):
+    async def test_the_arming_that_open_did_is_logged_and_said(self):
         app = self.build()
         await app.annotate("up-whistle")
-        self.assertEqual(app.snapshot()["fader"]["commanded"], dm7.MINUS_INF)
+        keys = self.keys()
+        self.assertIn(tacet_app.ARMED, keys)
+        self.assertLess(keys.index(tacet_app.ARMED), keys.index("up-whistle"))
+        self.assertIn("Armed by that open", app.snapshot()["why"])
+
+    async def test_a_fade_button_while_standing_down_closes_and_arms_nothing(self):
+        app = self.build()
+        await app.annotate("up-whistle")
+        await app.stand_down()
+        await app.annotate("out")
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(self.keys().count(tacet_app.ARMED), 1)
 
     async def test_the_snapshot_tells_the_page_which_buttons_act(self):
         app = self.build()

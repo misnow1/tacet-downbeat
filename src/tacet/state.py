@@ -1,12 +1,20 @@
 """The operating state machine.
 
-    STANDING DOWN --(arm)--> IDLE --(trigger)--> OPEN
-                              ^                   |
-                              |          loss of consensus
-                              |                   v
-                              +------------- RELEASING (2 s fade)
-                                                  |
-                                    any trigger snaps back to OPEN
+                     operator trigger: arms, then opens
+         +---------------------------------------------------+
+         |                                                   v
+    STANDING DOWN <--(stand down)--- IDLE ---(trigger)---> OPEN
+         |  ^                         ^  ^                   |
+         |  |                         |  |          loss of consensus
+         |  +-----------(arm)---------+  |                   v
+         |                               +----------- RELEASING (2 s fade)
+         |     operator release:            (fade lands)      |
+         +---- fades, and the state                 any trigger snaps
+               does not change                      back to OPEN
+
+    A fade that lands while a stand-down is pending goes to STANDING DOWN
+    instead of IDLE. A detector-sourced event is refused in every state until
+    `allow_detector` is set, and refused in STANDING DOWN whatever it says.
 
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
@@ -15,9 +23,16 @@ move the fader - in a single place that can be read at a glance.
 
 **The fader does not move autonomously before Phase 2.** Events carry their
 source, and a detector-sourced event is refused unless `allow_detector` has been
-set. Phase 0's buttons are operator-initiated and are not the same thing; see
-CLAUDE.md. The gate is here rather than in a comment because a comment does not
-fail a test.
+set, and always while standing down: a box that is not on duty is not put on
+duty by a detector. Phase 0's buttons are operator-initiated and are not the
+same thing; see CLAUDE.md. The gate is here rather than in a comment because a
+comment does not fail a test.
+
+**The operator drives in every state** (#89, principle 5). STANDING DOWN says
+the band is not in the stands, which is what Phase 1's duty labels are made of
+and what gates the detector. It is not a lock on the operator: refusing their
+open there made a forgotten Arm into a missed downbeat, and a missed downbeat
+is unrecoverable.
 
 The machine emits `OPEN` and `FADE` and there is no third option. Faders only,
 never mutes: the band mics feed other mixes pre-fader and post-mute, so there is
@@ -93,6 +108,10 @@ class Machine:
     #: Never set by a healthy move, so a panic tap on a fade that is still
     #: running does not restart it.
     stalled: bool = False
+    #: The operator opened the fader while the box was standing down, which
+    #: armed it (#89). Says so on the why line for as long as that open lasts:
+    #: the tap did two things, and only one of them was asked for in words.
+    armed_by_open: bool = False
     #: A ride-in is on its way up. While set, a fast trigger snaps the rest of
     #: the way: the whistle or the drums say the band is coming in now, and the
     #: downbeat wins over the gesture (#45). A slow trigger does not restart it.
@@ -126,23 +145,48 @@ def step(machine: Machine, event: Event) -> Outcome:
 
 
 def _standing_down(machine: Machine, event: Event) -> Outcome:
+    if event.source is Source.DETECTOR:
+        # Before anything else, and whatever `allow_detector` says elsewhere.
+        # Standing down is what says the band is not in the stands, so there is
+        # nothing to detect - and the detector does not get to change the mode.
+        return _unchanged(machine, "standing down; the detector cannot arm the box")
     if event.command is Command.ARM:
         # Deliberately no fader move. A mode change is not a fader move:
         # announce, do not surprise.
         return Outcome(machine=replace(machine, state=State.IDLE))
     if event.command is Command.STAND_DOWN:
         return _unchanged(machine)
-    return _unchanged(machine, "not armed; the band is not in the stands")
+    if event.command is Command.TRIGGER:
+        # The operator has opened the fader, so the band is evidently playing
+        # and the box is on duty. Announced: the state changes, the why line
+        # says the open armed it, and `app.session_entries` logs the arming.
+        return _opening(machine, event, armed_by_open=True)
+    if event.command is Command.RELEASE:
+        # Moves the fader and changes nothing: a close says nothing about
+        # whether the band is in the stands. Deliberately not RELEASING, which
+        # would have the box arm itself on the way into the fade and stand
+        # itself down again as it lands, in the log and on the page.
+        return Outcome(machine=machine, fader=FaderCommand.FADE)
+    # FADE_COMPLETE and RIDE_IN_COMPLETE are already true of a closed fader,
+    # and MOVE_FAILED has no move here to have failed.
+    return _unchanged(machine)
 
 
 def _move_failed(machine: Machine) -> Outcome:
     return Outcome(machine=replace(machine, stalled=True, riding_in=False))
 
 
-def _opening(machine: Machine, event: Event) -> Outcome:
+def _opening(machine: Machine, event: Event, *, armed_by_open: bool = False) -> Outcome:
     """Every open the machine emits, fast or gradual, and nothing pending."""
     return Outcome(
-        machine=replace(machine, state=State.OPEN, pending_stand_down=False, stalled=False, riding_in=event.gradual),
+        machine=replace(
+            machine,
+            state=State.OPEN,
+            pending_stand_down=False,
+            stalled=False,
+            riding_in=event.gradual,
+            armed_by_open=armed_by_open,
+        ),
         fader=FaderCommand.OPEN,
     )
 
@@ -150,7 +194,12 @@ def _opening(machine: Machine, event: Event) -> Outcome:
 def _closing(machine: Machine, *, pending_stand_down: bool) -> Outcome:
     return Outcome(
         machine=replace(
-            machine, state=State.RELEASING, pending_stand_down=pending_stand_down, stalled=False, riding_in=False
+            machine,
+            state=State.RELEASING,
+            pending_stand_down=pending_stand_down,
+            stalled=False,
+            riding_in=False,
+            armed_by_open=False,
         ),
         fader=FaderCommand.FADE,
     )
@@ -215,7 +264,7 @@ _HANDLERS = {
 
 
 _DESCRIPTIONS = {
-    State.STANDING_DOWN: "Standing down. The fader will not move until you arm it.",
+    State.STANDING_DOWN: "Standing down. You can still drive the fader; an open arms the box.",
     State.IDLE: "Armed and closed, waiting for the band.",
     State.OPEN: "Open at unity.",
     State.RELEASING: "Fading out. Any trigger brings it straight back up.",
@@ -225,6 +274,8 @@ _DESCRIPTIONS = {
 def describe(machine: Machine) -> str:
     """The plain-language why line for the UI (design.md 5.5)."""
     text = _DESCRIPTIONS[machine.state]
+    if machine.armed_by_open:
+        text += " Armed by that open: the box was standing down."
     if machine.stalled:
         text += " The last fader move did not finish; tap it again to retry."
     if machine.pending_stand_down:

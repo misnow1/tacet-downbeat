@@ -129,9 +129,15 @@ second press.
 
 | When | Tap |
 |---|---|
-| The band is in the stands | **Arm**. The state goes to `IDLE` and the fader buttons go live |
+| The band is in the stands | **Arm**. The state goes to `IDLE` |
 | The band leaves the stands - halftime exodus, end of the game | **Stand down**. If the fader is up it fades first, then stands down |
 | The band is back in the stands after halftime | **Arm** again |
+
+**Standing down never blocks you.** The fader buttons work in every state: if
+the band strikes up before you have armed, tap the open you wanted and the box
+arms itself and opens. The why line says it did. A fade while standing down
+just fades. What standing down changes is the duty labels in the log, and it is
+what will keep the detector out when there is one.
 
 **The fader buttons** (coloured, top of the grid) move the fader *and* record
 why, in one tap. Prefer them to OPEN / FADE OUT: the move can be reconstructed
