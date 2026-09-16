@@ -550,11 +550,13 @@ class TestEveryFaderActionIsColoured(unittest.TestCase):
 
     def test_every_opener_shares_the_colour_that_means_up(self):
         # Direction, not gesture: open, open-slow and ready all send the fader
-        # up, and the button says in words which gesture it is.
+        # up, and the button says in words which gesture it is. Not scoped to
+        # .grid (#5): the fader column's buttons live outside any grid and
+        # must read the same way.
         self.assertIn(
-            '.grid button[data-action="open"],\n'
-            '.grid button[data-action="open-slow"],\n'
-            '.grid button[data-action="ready"]{border-color:var(--open)',
+            'button[data-action="open"],\n'
+            'button[data-action="open-slow"],\n'
+            'button[data-action="ready"]{border-color:var(--open)',
             web.PAGE,
         )
 

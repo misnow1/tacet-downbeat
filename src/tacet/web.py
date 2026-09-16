@@ -431,12 +431,26 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>tacet-downbeat</title>
 <style>
+/* #5: black text on a bright amber (about 11:1) rather than white on the old,
+   darker amber (about 3.9:1) - the close direction has to read at a glance in
+   noon sun, and colour alone must not be the only thing saying which way a
+   button goes (see the arrows below). */
 :root{--bg:#14161a;--panel:#1e2128;--line:#2c313b;--text:#e8eaed;--dim:#9aa3b0;
---open:#2e7d32;--fade:#b26a00;--warn:#c62828;--ok:#2e7d32}
+--open:#2e7d32;--fade:#ffb300;--fade-text:#1a1400;--warn:#c62828;--ok:#2e7d32}
 *{box-sizing:border-box}
+html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);
 font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
--webkit-text-size-adjust:100%;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+-webkit-text-size-adjust:100%}
+/* Landscape, right thumb (#5): the fader column is a fixed-width flex sibling
+   of everything else, so nothing that grows on the left - the why line, an
+   expanded status chip, MAIN's content - can ever move a fader button. */
+.app{display:flex;min-height:100vh;min-height:100dvh}
+.left{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;overflow-y:auto;
+padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+/* MORE is reached less often and never mid-play; the tint says at a glance
+   which tab is showing without having to read either tab button. */
+.left.more{background:#1a1d24}
 header{padding:14px 16px;border-bottom:1px solid var(--line)}
 #state{font-size:26px;font-weight:700;letter-spacing:.02em}
 /* The state and the link counter share a line: the counter is the one element
@@ -450,28 +464,43 @@ background:var(--line);margin-right:6px}
 #pulse.live::before{background:var(--ok)}
 #pulse.stale::before{background:var(--warn)}
 #why{color:var(--dim);margin-top:4px}
-#refusal{color:#ffb4a9;margin-top:6px;display:none}
-#refusal.loud{color:#fff;background:var(--warn);border-radius:8px;padding:8px 10px;font-weight:700}
+/* The status strip: a fixed 44px so nothing below it - the prompt slot, the
+   tabs, the fader column across the flex row - ever moves under a thumb about
+   to tap again. Each chip is short by default (ellipsised) rather than by
+   rewritten text, so `showRefusal` and friends still say things in the box's
+   own words; a tap expands one to its full sentence, in flow, which only ever
+   pushes other things inside .left - never the fader column, a flex sibling
+   of the whole panel. */
+#strip{min-height:44px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 16px}
+#strip > div{flex:0 1 auto;max-width:100%;padding:4px 10px;border-radius:8px;font-size:12px;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+#strip > div[data-expanded="1"]{white-space:normal;overflow:visible;text-overflow:clip;
+font-size:13px}
+#refusal{color:#ffb4a9;display:none}
+#refusal.loud{color:#fff;background:var(--warn);font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach
    it, so this is not wiped by a snapshot the way the refusal line is. */
-#tap{margin-top:6px;display:none}
-#tap.failed{display:block;color:#fff;background:var(--warn);border-radius:8px;padding:6px 10px}
-#tap.untimed{display:block;color:#ffca7a;font-size:13px}
-main{padding:16px;display:grid;gap:16px;max-width:900px;margin:0 auto}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+#tap{display:none}
+#tap.failed{display:block;color:#fff;background:var(--warn)}
+#tap.untimed{display:block;color:#ffca7a}
+/* #19's prompt slot: fixed height, blank until RTD-driven prompts exist. */
+#prompt{min-height:88px;padding:0 16px;display:flex;align-items:center}
+.tabs{display:flex;gap:8px;padding:0 16px}
+.tab-btn{flex:1;padding:10px;border-radius:10px 10px 0 0;background:var(--panel);
+border:1px solid var(--line);border-bottom:none;color:var(--dim);font-weight:700}
+.tab-btn.on{color:var(--text)}
+.tabpanel{padding:12px 16px}
 button{font:inherit;font-weight:600;color:var(--text);background:var(--panel);
 border:1px solid var(--line);border-radius:12px;padding:18px 12px;cursor:pointer;
 touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 button:active{transform:translateY(1px)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button:disabled:active{transform:none}
-button.big{font-size:20px;padding:26px 12px}
-button.open{background:var(--open);border-color:var(--open)}
-button.fade{background:var(--fade);border-color:var(--fade)}
 button.on{outline:2px solid var(--text)}
-/* Between the tap and the box's answer. An inset ring rather than a label, so
-   nothing moves under a thumb about to tap again. */
-button.sending{box-shadow:inset 0 0 0 3px #ffca7a}
+/* #5: a 4px dashed white ring rather than the amber inset used everywhere
+   else - amber on an amber button is invisible, and this is the one ring that
+   has to show on every button colour, including the fader column's own. */
+button.sending{outline:4px dashed #fff;outline-offset:-4px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
 .label{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
 .value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -485,65 +514,110 @@ margin:4px 0 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .grid button{padding:14px 10px;font-size:14px;font-weight:500}
 /* Spans are a different kind of control from instants and must not look like
-   them: one tap of these opens a region and the next one closes it. */
-.grid button[data-kind="span"]{border-style:dashed}
+   them: one tap of these opens a region and the next one closes it. Not
+   scoped to .grid: the fader column's buttons carry the same data attributes
+   outside any grid, and must read the same way. */
+button[data-kind="span"]{border-style:dashed}
 /* These move the fader as well as recording why, so they must not read as more
-   annotation buttons: the grid is tapped without looking. */
-.grid button[data-action]{border-width:2px;font-weight:700}
-/* Green for everything that sends the fader up, including READY's ride to the
-   hold level short of target: the colour says which way it goes, and `open-slow`
-   riding in rather than snapping, or `ready` stopping short of target, are
-   differences in the gesture, not the direction, that the button already says
-   in words. Listed rather than matched on a prefix so a new action has to be
-   given a colour deliberately instead of inheriting one. A visual difference
-   for READY specifically, if the layout wants one, is #5's job. */
-.grid button[data-action="open"],
-.grid button[data-action="open-slow"],
-.grid button[data-action="ready"]{border-color:var(--open);color:var(--open)}
-.grid button[data-action="release"]{border-color:var(--fade);color:var(--fade)}
+   annotation buttons: the grid, and the fader column, are tapped without
+   looking. */
+button[data-action]{border-width:2px;font-weight:700}
+/* Direction is never colour alone (#5): a CSS arrow says which way the fader
+   is going, black-on-amber or white-on-green either way. Green for everything
+   that sends it up, including READY's ride to the hold level short of target -
+   `open-slow` riding in rather than snapping, or `ready` stopping short of
+   target, are differences in the gesture, not the direction, that the label
+   already says in words. Listed rather than matched on a prefix so a new
+   action has to be given a colour and an arrow deliberately, not inherit one. */
+button[data-action="open"],
+button[data-action="open-slow"],
+button[data-action="ready"]{border-color:var(--open);color:var(--open)}
+button[data-action="open"]::before,
+button[data-action="open-slow"]::before,
+button[data-action="ready"]::before{content:"\\2191\\a0"}
+button[data-action="release"]{border-color:var(--fade);color:var(--fade)}
+button[data-action="release"]::before{content:"\\2193\\a0"}
 /* Three link states, not two. An open socket that has not delivered anything
    is a connection attempt and reads as one; a silence past the box's own
    threshold is the dangerous state, because nothing else on the page looks
    wrong while it is happening. */
-#link{padding:8px 16px;text-align:center;font-size:13px;color:#fff;display:none}
-#link.connecting{display:block;background:var(--fade)}
+#link{color:#fff;display:none}
+#link.connecting{display:block;background:var(--fade);color:var(--fade-text)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
-#saving{padding:8px 16px;text-align:center;font-size:13px;display:none}
+#saving{display:none}
 #saving.fault{display:block;background:var(--warn);color:#fff}
-#saving.warn{display:block;background:var(--fade);color:#fff}
-#saving.note{display:block;color:#ffca7a;border-bottom:1px solid var(--line)}
-#wake{text-align:center;font-size:13px;color:var(--dim);padding:0 4px}
+#saving.warn{display:block;background:var(--fade);color:var(--fade-text)}
+#saving.note{display:block;color:#ffca7a}
+#wake{text-align:center;font-size:13px;color:var(--dim);padding:8px 16px}
 #wake.advice{color:#ffca7a}
+/* The pinned fader column (#5): full height, on the thumb edge, never
+   scrolled and never rebuilt by a tab switch. Heights and order are a
+   reviewed, hallway-tested list (annotations.py's FADER_COLUMN in app.js),
+   not automatic - a seventh fader reason is data on an existing button. */
+#fader-column{flex:0 0 280px;width:280px;display:flex;flex-direction:column;gap:12px;
+padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
+border-left:1px solid var(--line);background:var(--bg)}
+#fader-top,#fader-bottom{display:contents}
+#fader-column button{width:100%;flex:0 0 auto;font-size:16px}
+#fader-column button[data-key="up-whistle"]{height:112px}
+#fader-column button[data-key="up-drums"]{height:112px}
+#fader-column button[data-key="up-slow"]{height:80px}
+#fader-column button[data-key="up-ready"]{height:80px}
+#fader-column button[data-key="score-reversed"]{height:72px}
+#fader-column button[data-key="out"]{height:136px}
+/* The readout gap: at least 96px, nothing tappable, level/target/refusal
+   repeated here because the header carrying #refusal is on the far side of
+   the screen from this thumb. Age of the last command (#12) has no field to
+   show yet; it belongs here once one exists. */
+#readout{flex:1 1 96px;min-height:96px;display:flex;flex-direction:column;
+justify-content:center;gap:6px}
+#readout #fader-error{color:#ff9d94;font-size:13px}
+#col-refusal{color:#ffb4a9;font-size:13px;display:none}
 </style></head><body>
-<div id="link" class="connecting">Connecting to the box</div>
-<div id="saving"></div>
+<div class="app">
+<div class="left" id="left">
 <header>
   <div class="headline"><div id="state">&hellip;</div><div id="pulse">--</div></div>
-  <div id="why"></div><div id="refusal"></div><div id="tap"></div>
+  <div id="why"></div>
 </header>
-<main>
-  <div class="row">
-    <button class="big open" id="btn-trigger">OPEN</button>
-    <button class="big fade" id="btn-release">FADE OUT</button>
-  </div>
-  <div class="row">
-    <div class="panel"><div class="label">Fader</div>
-      <div class="value"><span id="level">&mdash;</span><span class="tag commanded">commanded</span></div>
-      <div id="fader-error" style="color:#ff9d94;font-size:13px;margin-top:4px"></div></div>
-    <div class="panel"><div class="label">Recording</div>
-      <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
-      <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
-  </div>
-  <div class="row">
+<div id="strip">
+  <div id="link" class="connecting">Connecting to the box</div>
+  <div id="saving"></div>
+  <div id="refusal"></div>
+  <div id="tap"></div>
+</div>
+<div id="prompt"></div>
+<div class="tabs">
+  <button id="tab-btn-main" class="tab-btn on">Main</button>
+  <button id="tab-btn-more" class="tab-btn">More</button>
+</div>
+<div id="tab-main" class="tabpanel"></div>
+<div id="tab-more" class="tabpanel" style="display:none">
+  <div id="tab-more-vocabulary"></div>
+  <h2>Control</h2>
+  <div class="grid">
     <button id="btn-arm">Arm</button>
     <button id="btn-stand-down">Stand down</button>
+    <button id="btn-record">Start recording</button>
   </div>
-  <div class="row"><button id="btn-record">Start recording</button><div></div></div>
-  <div id="buttons"></div>
-  <div id="wake"></div>
-</main>
+  <div class="panel"><div class="label">Recording</div>
+    <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
+    <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
+</div>
+<div id="wake"></div>
+</div>
+<div id="fader-column">
+  <div id="fader-top"></div>
+  <div id="readout">
+    <div class="value"><span id="level">&mdash;</span><span class="tag commanded">commanded</span></div>
+    <div id="fader-error"></div>
+    <div id="col-refusal"></div>
+  </div>
+  <div id="fader-bottom"></div>
+</div>
+</div>
 <script>
 __TACET_SCRIPT__
 </script></body></html>

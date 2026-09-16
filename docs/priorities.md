@@ -4,12 +4,11 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-09-16.** #6 is built (the state machine, the `up-ready` and
-`score-reversed` keys, and the config for the hold level and its ride); #89 and
-#14 were already done. #6 now slots ahead of #5, as flagged on 2026-09-15: the
-fader column is laid out once knowing every button that lives in it.
-Decisions on the remaining issues are recorded as comments on #5, #9, #12 and
-#19, and on #6 and #89 themselves.
+**Last updated 2026-09-16.** #5 is built (the pinned fader column, the fixed
+status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
+every button the column needed to know about. #89, #14 and #6 were already
+done. Decisions on the remaining issues are recorded as comments on #9, #12
+and #19, and on #5, #6 and #89 themselves.
 
 ## Game 3 (2026-10-02)
 
@@ -20,7 +19,7 @@ In build order. Each step says why it comes where it does.
 | ~~1~~ | ~~[#89](https://github.com/misnow1/tacet-downbeat/issues/89) Let the operator drive the fader while STANDING DOWN~~ | Done. A forgotten Arm is no longer a missed downbeat, which is the hazard #19 was designed around |
 | ~~2~~ | ~~[#14](https://github.com/misnow1/tacet-downbeat/issues/14) Vocabulary: field goal, cannon, and what the band plays for~~ | Done, except the fader keys: `up-ready` and `score-reversed` belonged with #6, which gives them a state to move to |
 | ~~3~~ | ~~[#6](https://github.com/misnow1/tacet-downbeat/issues/6) READY, then go~~ | Done. A new state between IDLE and OPEN: the operator rides to a hold level short of target and waits to see whether the band starts, before committing with the ordinary up buttons or abandoning with Score reversed |
-| 4 | [#5](https://github.com/misnow1/tacet-downbeat/issues/5) Button layout for thumbs | Game 2's biggest page failure was scrolling and a grid that moved under the thumb. The fixed status strip and prompt slot are where #12 and #19 put things, and #6 is what the fader column's buttons are now all known |
+| ~~4~~ | ~~[#5](https://github.com/misnow1/tacet-downbeat/issues/5) Button layout for thumbs~~ | Done. Game 2's biggest page failure was scrolling and a grid that moved under the thumb; the fixed status strip and prompt slot are where #12 and #19 now put things |
 | 5 | [#12](https://github.com/misnow1/tacet-downbeat/issues/12) StageMix handoff and take-back | Removes the only known path to a full-level blast: a ramp from a level the box only believes in |
 | 6 | [#19](https://github.com/misnow1/tacet-downbeat/issues/19) Prompt arm / stand down from band annotations | Small once #5's prompt slot exists, and it keeps Phase 1's duty labels right from game 3 on |
 

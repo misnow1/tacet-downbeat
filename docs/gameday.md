@@ -133,15 +133,16 @@ second press.
 | The band leaves the stands - halftime exodus, end of the game | **Stand down**. If the fader is up it fades first, then stands down |
 | The band is back in the stands after halftime | **Arm** again |
 
-**Standing down never blocks you.** The fader buttons work in every state: if
+**Standing down never blocks you.** The fader column works in every state: if
 the band strikes up before you have armed, tap the open you wanted and the box
-arms itself and opens. The why line says it did. A fade while standing down
-just fades. What standing down changes is the duty labels in the log, and it is
-what will keep the detector out when there is one.
+arms itself and opens. Ready does the same. The why line says it did. A fade
+while standing down just fades. What standing down changes is the duty labels
+in the log, and it is what will keep the detector out when there is one.
 
-**The fader buttons** (coloured, top of the grid) move the fader *and* record
-why, in one tap. Prefer them to OPEN / FADE OUT: the move can be reconstructed
-afterwards, but nothing reconstructs why.
+**The fader column**, pinned to the right edge on the thumb, moves the fader
+*and* records why, in one tap. Nothing else does that: the move can be
+reconstructed afterwards from the post-DCA reference channel, but nothing
+reconstructs why.
 
 | When | Tap |
 |---|---|
@@ -158,13 +159,14 @@ afterwards, but nothing reconstructs why.
   quiet and comes back; leave it open.
 
 **When something good happens for the home team** - a touchdown, a field goal, a
-first down, a stop on third down - the band will almost always play. Move the
-fader first and say why afterwards:
+first down, a stop on third down - the band will almost always play, but not
+instantly. Ride up to a hold level short of target and wait to see:
 
 | Order | Tap |
 |---|---|
-| 1 | The fader: ride it up, then **Up on whistle** / **Up on drums** when the band starts, or **Faded out** if the play is called back or goes under review |
-| 2 | The reason, when there is a moment: **Touchdown**, **Field goal**, **First down** or **Defensive stop** |
+| 1 | **Ready (band likely)**. Rides to a hold level below target and waits - the state goes to `READY` |
+| 2 | The band starts: the ordinary up buttons, **Up on whistle** / **Up on drums**, fast, from wherever the ride got to. The play is called back, under review, or the band does not play: **Score reversed** - the same 2 s fade as Faded out, one tap, right next to it |
+| 3 | The reason, when there is a moment: **Touchdown**, **Field goal**, **First down** or **Defensive stop**, in the MAIN tab, not the fader column |
 
 The reason buttons record only. Never hunt for one before moving the fader: the
 log joins them up by time, and a missed downbeat cannot be recovered.
@@ -178,10 +180,15 @@ only. It is not the band's song starting - the fader tap already records that.
 Game 2's logs use an older `touchdown-sequence` key for the song, which is why
 this one is a different key.
 
-**Everything else** records only and moves nothing. Tap it as it happens. Buttons
-marked `(start)` are spans: tap once to open the region, again to close it. They
-read `(end)` while open. A span left open by an earlier run whose button has
-since gone appears under **OPEN FROM AN EARLIER RUN**, with one button to end it.
+**Everything else lives in MAIN and MORE**, beside the fader column, and
+records only, moving nothing. MAIN holds the game clock, scoring and timeouts,
+with no scrolling. MORE holds band movement, the other band, the drumline,
+Note, and Arm / Stand down / Start recording - a tap there returns to MAIN once
+it is answered for, except Note, which stays open until you finish typing.
+Buttons marked `(start)` are spans: tap once to open the region, again to close
+it. They read `(end)` while open. A span left open by an earlier run whose
+button has since gone appears under **OPEN FROM AN EARLIER RUN**, at the bottom
+of MORE, with one button to end it.
 
 **The fader line is what the box commanded, never what the console reports.**
 The DM7 cannot answer, and a move made in StageMix will not appear. Glance at
