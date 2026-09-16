@@ -115,7 +115,16 @@ function buttonSignature(buttons) {
     buttons.map(item => [item.key, item.label, item.category, item.kind, item.action || ""]));
 }
 
-function renderButtons(buttons) {
+// Spans an older log left open whose event is no longer a button (#14). The
+// key is never deleted, so the box can still end them - but without this there
+// is nothing on the page to end them with, and they run to the end of the
+// timeline as regions.
+function orphanSpans(snap) {
+  const offered = new Set(((snap && snap.buttons) || []).map(button => button.key));
+  return (((snap && snap.open_spans) || [])).filter(span => !offered.has(span.event));
+}
+
+function renderButtons(buttons, orphans) {
   const byCategory = {};
   for (const button of buttons) (byCategory[button.category] ||= []).push(button);
   const host = $("buttons");
@@ -141,6 +150,21 @@ function renderButtons(buttons) {
     }
     host.appendChild(heading); host.appendChild(grid);
   }
+  if (!orphans.length) return;
+  const heading = document.createElement("h2");
+  heading.textContent = "OPEN FROM AN EARLIER RUN";
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  for (const span of orphans) {
+    const node = document.createElement("button");
+    node.textContent = "End: " + span.label;
+    node.dataset.kind = "span";
+    // Not keyed by event: this ends one span by id, and its label is fixed.
+    node.dataset.orphan = "1";
+    node.onclick = () => post("/api/span/end", {span_id: span.span_id}, node);
+    grid.appendChild(node);
+  }
+  host.appendChild(heading); host.appendChild(grid);
 }
 
 // Span buttons toggle: the first tap opens the region, the second closes it.
@@ -289,12 +313,15 @@ function render(next) {
   // under the finger is detached between touchstart and touchend, so no click
   // fires. This is the grid tapped without looking by someone watching a field,
   // and it carries the fader buttons, so a dropped tap there is a missed open.
-  const signature = buttonSignature(next.buttons);
+  const orphans = orphanSpans(next);
+  const signature = buttonSignature(next.buttons) + JSON.stringify(orphans.map(span => span.span_id));
   if (signature !== renderedButtons) {
-    renderButtons(next.buttons);
+    renderButtons(next.buttons, orphans);
     renderedButtons = signature;
   }
   for (const node of document.querySelectorAll("#buttons button")) {
+    // An orphan's label says what it does and never changes.
+    if (node.dataset.orphan) continue;
     const open = openSpan(next, node.dataset.key) !== undefined;
     node.classList.toggle("on", open);
     node.textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);

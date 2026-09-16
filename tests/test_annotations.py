@@ -45,11 +45,44 @@ class TestVocabulary(unittest.TestCase):
             "band-exits-stands",
             "drumline-cadence",
             "touchdown-sequence",
+            "touchdown",
+            "field-goal",
             "false-open",
             "missed-entrance",
             "note",
         ):
             self.assertIn(key, ann.EVENTS, f"{key} missing from the vocabulary")
+
+    def test_what_the_band_plays_for_is_in_the_vocabulary(self):
+        # The operator's rule (#6): the band almost always plays when something
+        # good happens for the home team. Each of those is a reason a ride-in
+        # was started, tapped afterwards rather than before the fader moves.
+        for key in ("touchdown", "field-goal", "first-down", "defensive-stop"):
+            with self.subTest(key):
+                self.assertIn(key, ann.EVENTS)
+                self.assertTrue(ann.EVENTS[key].button)
+                self.assertIsNone(ann.EVENTS[key].action, "a reason records; it does not move the fader")
+
+    def test_the_cannon_is_not_a_button(self):
+        # It fires only on a touchdown or a field goal, so it is derivable from
+        # one of those offline, and a button for it would compete for a thumb
+        # in the busiest ten seconds of the night (#14).
+        self.assertNotIn("cannon", ann.EVENTS)
+
+    def test_retired_keys_still_read_but_are_no_longer_offered(self):
+        # A key is never deleted: `end_span` looks up the event of a span an
+        # older log left open, and old logs must go on deriving markers (#14).
+        offered = {event.key for event in ann.BUTTONS}
+        for key in ("touchdown-sequence", "band-returns-to-stands", "band-in-stands"):
+            with self.subTest(key):
+                self.assertIn(key, ann.EVENTS)
+                self.assertNotIn(key, offered)
+                self.assertFalse(ann.EVENTS[key].button)
+
+    def test_the_two_touchdowns_are_different_events(self):
+        # One is the band's song starting (game 2), the other the score itself.
+        self.assertNotEqual(ann.EVENTS["touchdown"].category, ann.EVENTS["touchdown-sequence"].category)
+        self.assertEqual(ann.EVENTS["touchdown"].category, ann.Category.GAME)
 
     def test_spans_exist_for_the_intervals_the_design_calls_regions(self):
         for key in ("q1", "halftime-exodus", "last-two-minutes"):

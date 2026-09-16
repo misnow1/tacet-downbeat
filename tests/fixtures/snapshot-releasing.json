@@ -25,13 +25,6 @@
     {
       "action": null,
       "category": "BAND",
-      "key": "band-returns-to-stands",
-      "kind": "instant",
-      "label": "Band returns to stands"
-    },
-    {
-      "action": null,
-      "category": "BAND",
       "key": "band-exits-stadium",
       "kind": "instant",
       "label": "Band exits stadium"
@@ -59,17 +52,31 @@
     },
     {
       "action": null,
-      "category": "BAND",
-      "key": "touchdown-sequence",
+      "category": "GAME",
+      "key": "touchdown",
       "kind": "instant",
-      "label": "Touchdown sequence started"
+      "label": "Touchdown"
     },
     {
       "action": null,
-      "category": "BAND",
-      "key": "band-in-stands",
-      "kind": "span",
-      "label": "Band in stands"
+      "category": "GAME",
+      "key": "field-goal",
+      "kind": "instant",
+      "label": "Field goal"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "first-down",
+      "kind": "instant",
+      "label": "First down"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "defensive-stop",
+      "kind": "instant",
+      "label": "Defensive stop"
     },
     {
       "action": null,

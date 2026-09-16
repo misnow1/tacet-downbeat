@@ -1051,6 +1051,45 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
   check("an annotation's answer renders, wrapped", nodes.get("state").textContent, "OPEN");
 }
 
+// -- a span whose button is gone --------------------------------------------
+
+// #14: retiring a button keeps the key, so an older log can still leave that
+// span open. Without a control for it, it runs to the end of the timeline.
+{
+  const { context, created, posted, nodes } = browser();
+  const snap = snapshot({}, {}, undefined, [
+    { span_id: "band-in-stands-4", event: "band-in-stands", label: "Band in stands" },
+    { span_id: "q1-9", event: "q1", label: "Q1" },
+  ]);
+  snap.buttons = snap.buttons.filter((button) => button.key !== "band-in-stands");
+  context.render(snap);
+  const labels = created.filter((node) => node.tag === "button").map((node) => node.textContent);
+  check("an open span with no button gets one", labels.includes("End: Band in stands"), true);
+  check("and it is not offered as a way to start anything",
+        labels.includes("Band in stands (start)"), false);
+
+  const ender = created.find((node) => node.textContent === "End: Band in stands");
+  posted.length = 0;
+  ender.onclick();
+  check("tapping it ends that span by id", posted[0].path, "/api/span/end");
+  check("naming the span the old log left open", posted[0].body.span_id, "band-in-stands-4");
+
+  context.render(snap);
+  check("a later snapshot does not relabel it", ender.textContent, "End: Band in stands");
+  check("the heading says where it came from",
+        nodes.has("buttons") && created.some((node) => node.textContent === "OPEN FROM AN EARLIER RUN"),
+        true);
+}
+
+{
+  // A span whose button still exists is handled by that button, as before.
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, undefined, [{ span_id: "q1-9", event: "q1", label: "Q1" }]));
+  const labels = created.filter((node) => node.tag === "button").map((node) => node.textContent);
+  check("no orphan control for a span that has its own button",
+        labels.some((label) => label.startsWith("End: ")), false);
+}
+
 // -- a fader tap that arrived too late ---------------------------------------
 
 {

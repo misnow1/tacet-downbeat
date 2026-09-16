@@ -192,13 +192,37 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("band-enters-stadium", "Band enters stadium", Category.BAND),
     _instant("band-enters-stands", "Band enters stands", Category.BAND),
     _instant("band-exits-stands", "Band exits stands", Category.BAND),
-    _instant("band-returns-to-stands", "Band returns to stands", Category.BAND),
     _instant("band-exits-stadium", "Band exits stadium", Category.BAND),
     _instant("other-band-on-field", "Other band on field", Category.BAND),
     _instant("other-band-off-field", "Other band off field", Category.BAND),
     _instant("drumline-cadence", "Drumline cadence started", Category.BAND),
-    _instant("touchdown-sequence", "Touchdown sequence started", Category.BAND),
-    _span("band-in-stands", "Band in stands", Category.BAND),
+    # Retired as buttons, kept as keys. A key is never deleted: `end_span`
+    # looks up the event of a span an older log left open, and old logs have to
+    # go on reading and deriving markers years later.
+    #
+    # `touchdown-sequence` meant the band's song starting. `touchdown` below
+    # means the score, which is a different moment, so the old key is retired
+    # rather than relabelled: one name cannot mean both, and nothing
+    # downstream could tell game 2's entries from game 3's if it did.
+    _instant("touchdown-sequence", "Touchdown sequence started", Category.BAND, button=False),
+    # Same fact as band-enters-stands; which one it is is evident from the time.
+    _instant("band-returns-to-stands", "Band returns to stands", Category.BAND, button=False),
+    # Duplicates the enters/exits instants.
+    _span("band-in-stands", "Band in stands", Category.BAND, button=False),
+    # Something good just happened for the home team, which is when the band
+    # almost always plays (the operator, 2026-09-15, on #6). Each of these is
+    # why a ride-in was started, tapped when there is a moment rather than
+    # before the fader moves: the reason must never stand between the operator
+    # and the downbeat. RTD can raise the same facts later (#95).
+    _instant("touchdown", "Touchdown", Category.GAME),
+    _instant("field-goal", "Field goal", Category.GAME),
+    _instant("first-down", "First down", Category.GAME),
+    _instant("defensive-stop", "Defensive stop", Category.GAME),
+    # No cannon here, deliberately. It fires only on a touchdown or a field
+    # goal (the operator, 2026-09-15), so its instant is found offline near one
+    # of those rather than tapped in the busiest ten seconds of the night. It
+    # is still a detector hard case - a broadband simultaneous onset on all 14
+    # mics - and #15 says where that gets labelled.
     # Game timing. Stands in for RTD until it exists (design.md 5.4).
     _span("q1", "Q1", Category.GAME),
     _span("q2", "Q2", Category.GAME),

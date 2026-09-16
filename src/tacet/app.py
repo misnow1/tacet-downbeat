@@ -731,7 +731,13 @@ class App:
             ],
             # Each names its event, so the page matches a button to its span
             # without parsing an id (see AnnotationLog.open_spans).
-            "open_spans": [{"span_id": span_id, "event": event} for span_id, event in self._log.open_spans().items()],
+            # The label as well as the key: a span left open by an older log can
+            # belong to an event that is no longer a button (#14), and the page
+            # still has to offer a way to end it.
+            "open_spans": [
+                {"span_id": span_id, "event": event, "label": ann.lookup(event).label}
+                for span_id, event in self._log.open_spans().items()
+            ],
             "log": {"path": str(self._log.path), **_health(self._log.health)},
             # Only the live markers. They can be rebuilt from the log afterwards.
             "mirror": _health(self._log.mirror_health),

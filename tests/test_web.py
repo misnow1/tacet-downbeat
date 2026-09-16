@@ -127,9 +127,9 @@ class TestCommands(WebTestCase):
 
 class TestAnnotation(WebTestCase):
     async def test_annotating(self):
-        response = await self.client.post("/api/annotate", json={"key": "touchdown-sequence"})
+        response = await self.client.post("/api/annotate", json={"key": "touchdown"})
         self.assertEqual(response.status, 200)
-        self.assertIn("touchdown-sequence", self.entries())
+        self.assertIn("touchdown", self.entries())
 
     async def test_a_note_carries_text(self):
         await self.client.post("/api/annotate", json={"key": "note", "data": {"text": "thin"}})
@@ -192,7 +192,7 @@ class TestAnnotation(WebTestCase):
     async def test_spans_open_and_close(self):
         opened = await (await self.client.post("/api/span/start", json={"key": "q1"})).json()
         span_id = opened["span_id"]
-        self.assertIn({"span_id": span_id, "event": "q1"}, opened["state"]["open_spans"])
+        self.assertIn({"span_id": span_id, "event": "q1", "label": "Q1"}, opened["state"]["open_spans"])
         closed = await (await self.client.post("/api/span/end", json={"span_id": span_id})).json()
         self.assertEqual(closed["state"]["open_spans"], [])
 

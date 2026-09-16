@@ -1190,7 +1190,9 @@ class TestSnapshot(AppTestCase):
     async def test_the_snapshot_offers_only_button_events(self):
         app = self.build()
         keys = {b["key"] for b in app.snapshot()["buttons"]}
-        self.assertIn("touchdown-sequence", keys)
+        self.assertIn("touchdown", keys)
+        # Retired as a button, kept as a key (#14).
+        self.assertNotIn("touchdown-sequence", keys)
         self.assertNotIn("commanded", keys)
         self.assertNotIn("armed", keys)
 
@@ -1198,8 +1200,8 @@ class TestSnapshot(AppTestCase):
 class TestAnnotation(AppTestCase):
     async def test_an_annotation_is_logged(self):
         app = self.build()
-        await app.annotate("touchdown-sequence")
-        self.assertIn("touchdown-sequence", self.keys())
+        await app.annotate("touchdown")
+        self.assertIn("touchdown", self.keys())
 
     async def test_a_note_carries_its_text(self):
         app = self.build()
@@ -1215,7 +1217,7 @@ class TestAnnotation(AppTestCase):
     async def test_spans_open_and_close(self):
         app = self.build()
         span = await app.start_span("q1")
-        self.assertIn({"span_id": span, "event": "q1"}, app.snapshot()["open_spans"])
+        self.assertIn({"span_id": span, "event": "q1", "label": "Q1"}, app.snapshot()["open_spans"])
         await app.end_span(span)
         self.assertEqual(app.snapshot()["open_spans"], [])
 
@@ -1228,7 +1230,10 @@ class TestAnnotation(AppTestCase):
         keys = {button["key"] for button in app.snapshot()["buttons"]}
         self.assertEqual(
             app.snapshot()["open_spans"],
-            [{"span_id": home, "event": "timeout-home"}, {"span_id": exodus, "event": "halftime-exodus"}],
+            [
+                {"span_id": home, "event": "timeout-home", "label": "Timeout: home"},
+                {"span_id": exodus, "event": "halftime-exodus", "label": "Halftime exodus"},
+            ],
         )
         for span in app.snapshot()["open_spans"]:
             self.assertIn(span["event"], keys)
@@ -1871,7 +1876,7 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
 
     async def test_an_annotation_is_never_refused_only_stamped(self):
         app = self.build()
-        entry = await app.annotate("touchdown-sequence", tap=self.STALE)
+        entry = await app.annotate("touchdown", tap=self.STALE)
         assert entry is not None
         self.assertNotIn("stale", entry.data)
         self.assertEqual(entry.data["tap"], self.STALE.as_data())

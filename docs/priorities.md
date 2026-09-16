@@ -15,14 +15,14 @@ In build order. Each step says why it comes where it does.
 | # | Issue | Why here |
 |---|---|---|
 | ~~1~~ | ~~[#89](https://github.com/misnow1/tacet-downbeat/issues/89) Let the operator drive the fader while STANDING DOWN~~ | Done. A forgotten Arm is no longer a missed downbeat, which is the hazard #19 was designed around |
-| 2 | [#14](https://github.com/misnow1/tacet-downbeat/issues/14) Vocabulary: field goal, cannon, up-for-score | Small, and it fixes the set of buttons #5 lays out. Takes #6's `up-for-score` key with it |
+| ~~2~~ | ~~[#14](https://github.com/misnow1/tacet-downbeat/issues/14) Vocabulary: field goal, cannon, and what the band plays for~~ | Done, except the fader keys: `up-ready` and `score-reversed` belong with #6, which gives them a state to move to |
 | 3 | [#5](https://github.com/misnow1/tacet-downbeat/issues/5) Button layout for thumbs | Game 2's biggest page failure was scrolling and a grid that moved under the thumb. The fixed status strip and prompt slot are where #12 and #19 put things |
 | 4 | [#12](https://github.com/misnow1/tacet-downbeat/issues/12) StageMix handoff and take-back | Removes the only known path to a full-level blast: a ramp from a level the box only believes in |
 | 5 | [#19](https://github.com/misnow1/tacet-downbeat/issues/19) Prompt arm / stand down from band annotations | Small once #5's prompt slot exists, and it keeps Phase 1's duty labels right from game 3 on |
 
 Alongside, not in the build order above:
 
-- [#6](https://github.com/misnow1/tacet-downbeat/issues/6) Pre-open on a score: the `up-for-score` ride-in. Its key arrives with #14; check how much the ride-in work (#8) already covers before starting.
+- [#6](https://github.com/misnow1/tacet-downbeat/issues/6) **READY, then go.** No longer a ride-in to the open level: the operator rides to a hold level short of the target and waits to see whether the band starts (2026-09-15). That makes it a new state, and it now wants slotting into the order above, before #5, so the column is laid out once knowing both its buttons exist.
 - [#13](https://github.com/misnow1/tacet-downbeat/issues/13) gameday.md: game 3 patch list, network plan, stale sections. Needs site information; must land before game day regardless. Includes setting `capture.audio_path` and `capture.channels` in the box's `tacet.toml` (#53).
 - [#15](https://github.com/misnow1/tacet-downbeat/issues/15) design.md: pre-open and cannon hard cases. Documentation; any time.
 - [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. Research; if the console turns out to report the fader, #12 gets simpler, so worth an early look.
