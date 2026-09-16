@@ -18,7 +18,6 @@ marker	GAME|touchdown
 marker	GAME|field-goal
 marker	GAME|first-down
 marker	GAME|defensive-stop
-marker	GAME|cannon
 region	GAME|q1
 region	GAME|q2
 region	GAME|q3

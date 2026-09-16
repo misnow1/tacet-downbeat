@@ -81,13 +81,6 @@
     {
       "action": null,
       "category": "GAME",
-      "key": "cannon",
-      "kind": "instant",
-      "label": "Cannon"
-    },
-    {
-      "action": null,
-      "category": "GAME",
       "key": "q1",
       "kind": "span",
       "label": "Q1"

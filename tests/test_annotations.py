@@ -47,7 +47,6 @@ class TestVocabulary(unittest.TestCase):
             "touchdown-sequence",
             "touchdown",
             "field-goal",
-            "cannon",
             "false-open",
             "missed-entrance",
             "note",
@@ -63,6 +62,12 @@ class TestVocabulary(unittest.TestCase):
                 self.assertIn(key, ann.EVENTS)
                 self.assertTrue(ann.EVENTS[key].button)
                 self.assertIsNone(ann.EVENTS[key].action, "a reason records; it does not move the fader")
+
+    def test_the_cannon_is_not_a_button(self):
+        # It fires only on a touchdown or a field goal, so it is derivable from
+        # one of those offline, and a button for it would compete for a thumb
+        # in the busiest ten seconds of the night (#14).
+        self.assertNotIn("cannon", ann.EVENTS)
 
     def test_retired_keys_still_read_but_are_no_longer_offered(self):
         # A key is never deleted: `end_span` looks up the event of a span an

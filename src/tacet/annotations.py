@@ -218,9 +218,11 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("field-goal", "Field goal", Category.GAME),
     _instant("first-down", "First down", Category.GAME),
     _instant("defensive-stop", "Defensive stop", Category.GAME),
-    # The stadium cannon. A broadband simultaneous onset on all 14 mics, and a
-    # detector hard case worth having labelled (#15).
-    _instant("cannon", "Cannon", Category.GAME),
+    # No cannon here, deliberately. It fires only on a touchdown or a field
+    # goal (the operator, 2026-09-15), so its instant is found offline near one
+    # of those rather than tapped in the busiest ten seconds of the night. It
+    # is still a detector hard case - a broadband simultaneous onset on all 14
+    # mics - and #15 says where that gets labelled.
     # Game timing. Stands in for RTD until it exists (design.md 5.4).
     _span("q1", "Q1", Category.GAME),
     _span("q2", "Q2", Category.GAME),
