@@ -12,9 +12,21 @@
          +---- fades, and the state                 any trigger snaps
                does not change                      back to OPEN
 
+    READY sits beside IDLE, entered only by the operator ("something good just
+    happened, band likely"), never by the detector:
+
+        IDLE ---(ready)---> READY ---(any trigger, fast)---> OPEN
+                               |
+                 (score reversed, or stand down: the ordinary 2 s fade)
+                               v
+                           RELEASING
+
     A fade that lands while a stand-down is pending goes to STANDING DOWN
-    instead of IDLE. A detector-sourced event is refused in every state until
-    `allow_detector` is set, and refused in STANDING DOWN whatever it says.
+    instead of IDLE. A stand-down from READY gets that same fade rather than a
+    snap-close: the fader is up with no band confirmed, and the box cannot be
+    sure one has not quietly started (#6). A detector-sourced event is refused
+    in every state until `allow_detector` is set, and refused in STANDING DOWN
+    whatever it says.
 
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
@@ -32,11 +44,14 @@ comment does not fail a test.
 the band is not in the stands, which is what Phase 1's duty labels are made of
 and what gates the detector. It is not a lock on the operator: refusing their
 open there made a forgotten Arm into a missed downbeat, and a missed downbeat
-is unrecoverable.
+is unrecoverable. A `READY` while standing down arms the box the same way a
+`TRIGGER` does - a forgotten Arm must not cost a heads-up either.
 
-The machine emits `OPEN` and `FADE` and there is no third option. Faders only,
-never mutes: the band mics feed other mixes pre-fader and post-mute, so there is
-deliberately no mute for anything here to reach for.
+The machine emits `OPEN`, `READY` and `FADE`, and there is no fourth option.
+Faders only, never mutes: the band mics feed other mixes pre-fader and
+post-mute, so there is deliberately no mute for anything here to reach for.
+`READY` is still a fader write, to a hold level short of target - not a mute
+and not silence.
 """
 
 from __future__ import annotations
@@ -50,6 +65,11 @@ class State(StrEnum):
     STANDING_DOWN = "standing-down"
     #: Armed, band in the stands, DCA closed.
     IDLE = "idle"
+    #: The fader is riding, or has ridden, to a hold level short of target -
+    #: something good happened for the home team, the band is not yet playing.
+    #: Any trigger takes it the rest of the way; a score reversed or a
+    #: stand-down fades it like an ordinary close (#6).
+    READY = "ready"
     #: DCA at unity.
     OPEN = "open"
     #: Fading. Any qualifying trigger returns to OPEN.
@@ -66,6 +86,9 @@ class Command(StrEnum):
     STAND_DOWN = "stand-down"
     #: Something says the band is playing: a whistle, a unison onset, a button.
     TRIGGER = "trigger"
+    #: The operator rides up to a hold level short of target: something good
+    #: happened for the home team, the band is not yet playing (#6).
+    READY = "ready"
     #: Loss of consensus, or the operator reaching for the fade.
     RELEASE = "release"
     #: The fade reached the bottom.
@@ -73,12 +96,16 @@ class Command(StrEnum):
     #: A send failed partway through a move, so the fader stopped short of
     #: where the state says it is going. Reported by the shell, never tapped.
     MOVE_FAILED = "move-failed"
-    #: A ride-in reached the top. Reported by the shell, never tapped.
+    #: A ride-in reached the top - the ordinary open's or READY's hold level.
+    #: Reported by the shell, never tapped.
     RIDE_IN_COMPLETE = "ride-in-complete"
 
 
 class FaderCommand(StrEnum):
     OPEN = "open"
+    #: Ride to the READY hold level, short of target. Still a fader write, not
+    #: a mute (#6).
+    READY = "ready"
     FADE = "fade"
 
 
@@ -108,13 +135,18 @@ class Machine:
     #: Never set by a healthy move, so a panic tap on a fade that is still
     #: running does not restart it.
     stalled: bool = False
-    #: The operator opened the fader while the box was standing down, which
-    #: armed it (#89). Says so on the why line for as long as that open lasts:
-    #: the tap did two things, and only one of them was asked for in words.
-    armed_by_open: bool = False
-    #: A ride-in is on its way up. While set, a fast trigger snaps the rest of
-    #: the way: the whistle or the drums say the band is coming in now, and the
-    #: downbeat wins over the gesture (#45). A slow trigger does not restart it.
+    #: The operator opened or readied the fader while the box was standing
+    #: down, which armed it (#89). Says so on the why line for as long as that
+    #: lasts: the tap did two things, and only one of them was asked for in
+    #: words.
+    armed_by_operator: bool = False
+    #: A ride-in is on its way up: the slow-open ramp into OPEN, or READY's own
+    #: ride to the hold level. While set and the state is OPEN, a fast trigger
+    #: snaps the rest of the way: the whistle or the drums say the band is
+    #: coming in now, and the downbeat wins over the gesture (#45). A slow
+    #: trigger does not restart it. In READY any trigger already commits
+    #: regardless of this flag (#6); it is kept there for the why line and so a
+    #: failed ride can be retried.
     riding_in: bool = False
 
 
@@ -134,6 +166,14 @@ def _unchanged(machine: Machine, refusal: str | None = None) -> Outcome:
 
 def step(machine: Machine, event: Event) -> Outcome:
     """Apply one event. Never raises: an illegal event is refused, not fatal."""
+    if event.command is Command.READY and event.source is Source.DETECTOR:
+        # Unconditional, and checked before the phase gate below: READY is
+        # entered on a prediction that something is about to happen, which
+        # only a watching human can judge (design.md 2, CLAUDE.md "never gate
+        # on level alone"). That is not the Phase 1/2 line TRIGGER sits on -
+        # a detector confirming sound is present is exactly its Phase 2 job,
+        # but guessing that sound is about to start never becomes one (#6).
+        return _unchanged(machine, "READY is operator-only; only a person can tell what is about to play")
     if event.source is Source.DETECTOR and not machine.allow_detector:
         return _unchanged(
             machine,
@@ -160,7 +200,12 @@ def _standing_down(machine: Machine, event: Event) -> Outcome:
         # The operator has opened the fader, so the band is evidently playing
         # and the box is on duty. Announced: the state changes, the why line
         # says the open armed it, and `app.session_entries` logs the arming.
-        return _opening(machine, event, armed_by_open=True)
+        return _opening(machine, event, armed_by_operator=True)
+    if event.command is Command.READY:
+        # Same reasoning as TRIGGER above: something good just happened for
+        # the home team, so the box is evidently on duty, whether or not
+        # anyone remembered to arm it first.
+        return _readying(machine, armed_by_operator=True)
     if event.command is Command.RELEASE:
         # Moves the fader and changes nothing: a close says nothing about
         # whether the band is in the stands. Deliberately not RELEASING, which
@@ -176,7 +221,7 @@ def _move_failed(machine: Machine) -> Outcome:
     return Outcome(machine=replace(machine, stalled=True, riding_in=False))
 
 
-def _opening(machine: Machine, event: Event, *, armed_by_open: bool = False) -> Outcome:
+def _opening(machine: Machine, event: Event, *, armed_by_operator: bool = False) -> Outcome:
     """Every open the machine emits, fast or gradual, and nothing pending."""
     return Outcome(
         machine=replace(
@@ -185,9 +230,25 @@ def _opening(machine: Machine, event: Event, *, armed_by_open: bool = False) -> 
             pending_stand_down=False,
             stalled=False,
             riding_in=event.gradual,
-            armed_by_open=armed_by_open,
+            armed_by_operator=armed_by_operator,
         ),
         fader=FaderCommand.OPEN,
+    )
+
+
+def _readying(machine: Machine, *, armed_by_operator: bool = False) -> Outcome:
+    """Ride to the hold level short of target. Always gradual - there is no
+    fast form of READY, only a fast commit out of it (#6)."""
+    return Outcome(
+        machine=replace(
+            machine,
+            state=State.READY,
+            pending_stand_down=False,
+            stalled=False,
+            riding_in=True,
+            armed_by_operator=armed_by_operator,
+        ),
+        fader=FaderCommand.READY,
     )
 
 
@@ -199,7 +260,7 @@ def _closing(machine: Machine, *, pending_stand_down: bool) -> Outcome:
             pending_stand_down=pending_stand_down,
             stalled=False,
             riding_in=False,
-            armed_by_open=False,
+            armed_by_operator=False,
         ),
         fader=FaderCommand.FADE,
     )
@@ -208,11 +269,39 @@ def _closing(machine: Machine, *, pending_stand_down: bool) -> Outcome:
 def _idle(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.TRIGGER:
         return _opening(machine, event)
+    if event.command is Command.READY:
+        return _readying(machine)
     if event.command is Command.STAND_DOWN:
         return Outcome(machine=replace(machine, state=State.STANDING_DOWN))
     if event.command is Command.ARM:
         return _unchanged(machine)
     # RELEASE and FADE_COMPLETE are already true of a closed fader.
+    return _unchanged(machine)
+
+
+def _ready(machine: Machine, event: Event) -> Outcome:
+    if event.command is Command.TRIGGER:
+        # Committing: the ordinary up buttons, from wherever the ride to the
+        # hold level got to - mid-ride or already settled makes no difference,
+        # unlike OPEN's own `riding_in` snap (#6).
+        return _opening(machine, event)
+    if event.command is Command.RELEASE:
+        # Score reversed, or a plain close: the same 2 s fade as any other
+        # close. The band may have quietly started, so this is never a snap.
+        return _closing(machine, pending_stand_down=False)
+    if event.command is Command.STAND_DOWN:
+        # Same caution as a stand-down from OPEN, and for the same reason: the
+        # fader is up and the box cannot be sure the band has not started (#6).
+        return _closing(machine, pending_stand_down=True)
+    if event.command is Command.MOVE_FAILED:
+        return _move_failed(machine)
+    if event.command is Command.READY and machine.stalled:
+        # The ride to the hold level never got there. Send it again.
+        return _readying(machine)
+    if event.command is Command.RIDE_IN_COMPLETE and machine.riding_in:
+        return Outcome(machine=replace(machine, riding_in=False))
+    # A second READY once the ride has landed only confirms what is already
+    # true, same as a TRIGGER while already OPEN.
     return _unchanged(machine)
 
 
@@ -258,6 +347,7 @@ def _releasing(machine: Machine, event: Event) -> Outcome:
 _HANDLERS = {
     State.STANDING_DOWN: _standing_down,
     State.IDLE: _idle,
+    State.READY: _ready,
     State.OPEN: _open,
     State.RELEASING: _releasing,
 }
@@ -266,6 +356,7 @@ _HANDLERS = {
 _DESCRIPTIONS = {
     State.STANDING_DOWN: "Standing down. You can still drive the fader; an open arms the box.",
     State.IDLE: "Armed and closed, waiting for the band.",
+    State.READY: "Riding to the hold level. Any trigger takes it the rest of the way.",
     State.OPEN: "Open at unity.",
     State.RELEASING: "Fading out. Any trigger brings it straight back up.",
 }
@@ -274,8 +365,8 @@ _DESCRIPTIONS = {
 def describe(machine: Machine) -> str:
     """The plain-language why line for the UI (design.md 5.5)."""
     text = _DESCRIPTIONS[machine.state]
-    if machine.armed_by_open:
-        text += " Armed by that open: the box was standing down."
+    if machine.armed_by_operator:
+        text += " Armed by that: the box was standing down."
     if machine.stalled:
         text += " The last fader move did not finish; tap it again to retry."
     if machine.pending_stand_down:

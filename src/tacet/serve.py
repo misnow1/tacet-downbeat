@@ -120,6 +120,8 @@ def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQu
         recorder=recorder,
         fade_seconds=args.fade,
         slow_open_seconds=args.slow_open,
+        hold_below_db=args.hold_below_db,
+        ready_ride_seconds=args.ready_ride,
         stale_tap_seconds=args.stale_tap,
     )
     return app, log, queue
@@ -447,6 +449,8 @@ CONFIG_MAPPING = {
     "game_hours": "capture.game_hours",
     "fade": "fader.fade_seconds",
     "slow_open": "fader.slow_open_seconds",
+    "hold_below_db": "fader.hold_below_db",
+    "ready_ride": "fader.ready_ride_seconds",
     "stale_tap": "fader.stale_tap_seconds",
     "listen": "ui.listen",
     "http_port": "ui.port",
@@ -497,6 +501,20 @@ def parser() -> argparse.ArgumentParser:
         default=dm7.DEFAULT_SLOW_OPEN_SECONDS,
         metavar="SECONDS",
         help="ride-in for the 'up slow' button, used when the start was missed",
+    )
+    p.add_argument(
+        "--hold-below-db",
+        type=float,
+        default=dm7.DEFAULT_HOLD_BELOW_DB,
+        metavar="DB",
+        help="how far below target the READY hold level sits (#6)",
+    )
+    p.add_argument(
+        "--ready-ride",
+        type=float,
+        default=dm7.DEFAULT_READY_RIDE_SECONDS,
+        metavar="SECONDS",
+        help="ride from idle to the READY hold level",
     )
     p.add_argument(
         "--stale-tap",

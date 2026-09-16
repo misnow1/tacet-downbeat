@@ -170,6 +170,13 @@
       "label": "Timeout: unspecified"
     },
     {
+      "action": "ready",
+      "category": "FDR",
+      "key": "up-ready",
+      "kind": "instant",
+      "label": "Ready (band likely)"
+    },
+    {
       "action": "open",
       "category": "FDR",
       "key": "up-whistle",
@@ -196,6 +203,13 @@
       "key": "out",
       "kind": "instant",
       "label": "Faded out"
+    },
+    {
+      "action": "release",
+      "category": "FDR",
+      "key": "score-reversed",
+      "kind": "instant",
+      "label": "Score reversed"
     },
     {
       "action": null,

@@ -58,6 +58,17 @@ DEFAULT_OPEN_SECONDS = 0.02
 #: deliberate, short enough that the band is audible within the phrase.
 #: Retunable per site as `fader.slow_open_seconds`.
 DEFAULT_SLOW_OPEN_SECONDS = 1.5
+#: How far below target the READY hold level sits (#6). An offset from the
+#: current target rather than an absolute level, so it follows whatever preset
+#: is in force (#9) instead of meaning less as the target moves. Retunable per
+#: site as `fader.hold_below_db`.
+DEFAULT_HOLD_BELOW_DB = 15.0
+#: The ride from IDLE to the READY hold level. Independent of
+#: `slow_open_seconds` rather than reusing it: the two ride different
+#: distances for different reasons and may want to diverge once a captured
+#: game shows what each should be. Retunable per site as
+#: `fader.ready_ride_seconds`.
+DEFAULT_READY_RIDE_SECONDS = 4.0
 DEFAULT_TICK_HZ = 50.0
 #: A ramp always emits at least one step, however short its duration.
 MIN_RAMP_TICKS = 1

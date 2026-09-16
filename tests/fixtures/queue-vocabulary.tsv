@@ -49,10 +49,12 @@ FDR|commanded	-	-
 FDR|move-failed	-	-
 FDR|move-landed	-	-
 FDR|stale-tap	-	-
+FDR|up-ready	-	-
 FDR|up-whistle	-	-
 FDR|up-drums	-	-
 FDR|up-slow	-	-
 FDR|out	-	-
+FDR|score-reversed	-	-
 DET|false-open	-	-
 DET|missed-entrance	-	-
 NOTE|note	-	-
