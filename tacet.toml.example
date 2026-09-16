@@ -65,6 +65,12 @@ fade_seconds = 2.0          # --fade
 # Tapered: fast through the bottom, slow through the top. This sets the
 # length; the shape is fixed. The other two open buttons still snap.
 slow_open_seconds = 1.5     # --slow-open
+# READY: something good happened for the home team, the fader rides to a hold
+# level short of target and waits to see whether the band starts (#6). The
+# hold level is an offset below target, not an absolute level, so it follows
+# whatever preset is in force rather than meaning less as the target moves.
+hold_below_db = 15.0        # --hold-below-db
+ready_ride_seconds = 4.0    # --ready-ride
 # A fader tap that reaches the box later than this is logged and not executed:
 # a late open brings the PA up after the music stopped, a late fade cuts a
 # phrase. Generous, because the page's clock estimate is approximate. Retune

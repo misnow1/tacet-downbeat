@@ -35,10 +35,12 @@ marker	FDR|commanded
 marker	FDR|move-failed
 marker	FDR|move-landed
 marker	FDR|stale-tap
+marker	FDR|up-ready
 marker	FDR|up-whistle
 marker	FDR|up-drums
 marker	FDR|up-slow
 marker	FDR|out
+marker	FDR|score-reversed
 marker	DET|false-open
 marker	DET|missed-entrance
 marker	NOTE|note

@@ -34,6 +34,8 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
     # The same command: a ride-in reaches the same state by a slower route, and
     # the machine has no opinion about how long a move takes.
     ann.Action.OPEN_SLOW: state.Command.TRIGGER,
+    ann.Action.READY: state.Command.READY,
+    # score-reversed reuses this: the same 2 s fade as "out", one tap (#6).
     ann.Action.RELEASE: state.Command.RELEASE,
 }
 
@@ -137,6 +139,8 @@ class App:
         machine: state.Machine | None = None,
         fade_seconds: float = dm7.DEFAULT_FADE_SECONDS,
         slow_open_seconds: float = dm7.DEFAULT_SLOW_OPEN_SECONDS,
+        hold_below_db: float = dm7.DEFAULT_HOLD_BELOW_DB,
+        ready_ride_seconds: float = dm7.DEFAULT_READY_RIDE_SECONDS,
         open_level: int = dm7.UNITY,
         monotonic: Callable[[], float] = time.monotonic,
         stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
@@ -147,6 +151,8 @@ class App:
         self.machine = machine if machine is not None else state.Machine()
         self._fade_seconds = fade_seconds
         self._slow_open_seconds = slow_open_seconds
+        self._hold_below_db = hold_below_db
+        self._ready_ride_seconds = ready_ride_seconds
         self._open_level = open_level
         self._monotonic = monotonic
         self._stale_tap_seconds = stale_tap_seconds
@@ -245,16 +251,16 @@ class App:
         *,
         source: state.Source = state.Source.OPERATOR,
         detail: str = "",
-        open_seconds: float | None = None,
+        ride_seconds: float | None = None,
     ) -> state.Outcome:
         before = self.machine
-        event = state.Event(command, source=source, detail=detail, gradual=open_seconds is not None)
+        event = state.Event(command, source=source, detail=detail, gradual=ride_seconds is not None)
         outcome = state.step(before, event)
         self.machine = outcome.machine
         self._last_refusal = outcome.refusal
 
         if outcome.fader is not None:
-            await self._move_fader(outcome.fader, source=source, detail=detail, open_seconds=open_seconds)
+            await self._move_fader(outcome.fader, source=source, detail=detail, ride_seconds=ride_seconds)
         for key in session_entries(before, outcome.machine):
             self._record(
                 key,
@@ -264,23 +270,35 @@ class App:
         self._notify()
         return outcome
 
+    def _hold_level(self) -> int:
+        """The READY hold level: short of target by `hold_below_db` (#6)."""
+        return dm7.clamp(self._open_level - round(self._hold_below_db * dm7.UNITS_PER_DB))
+
+    def _fader_target(self, command: state.FaderCommand) -> int:
+        if command is state.FaderCommand.OPEN:
+            return self._open_level
+        if command is state.FaderCommand.READY:
+            return self._hold_level()
+        return dm7.MINUS_INF
+
     async def _move_fader(
         self,
         command: state.FaderCommand,
         *,
         source: state.Source,
         detail: str,
-        open_seconds: float | None = None,
+        ride_seconds: float | None = None,
     ) -> None:
         # A console that cannot be reached must not take the box down with it.
         # The fault is recorded and shown; the operator stays in control.
         failed = False
         # A move left running in the background has delivered nothing yet.
-        background = command is state.FaderCommand.FADE or open_seconds is not None
+        # FADE and READY are always background; an OPEN is only when ridden.
+        background = command is not state.FaderCommand.OPEN or ride_seconds is not None
         try:
             if command is state.FaderCommand.OPEN:
                 self._cancel_move()
-                if open_seconds is None:
+                if ride_seconds is None:
                     # The ordinary open, awaited: it is one packet and 20 ms,
                     # and a missed downbeat is unrecoverable, so it goes out
                     # before anything else gets a turn.
@@ -291,7 +309,13 @@ class App:
                     # would hold the annotation - and the playhead stamped on
                     # it - back by the whole length of the ramp, timestamping
                     # the tap where the ramp ended rather than where it began.
-                    self._start_slow_open(open_seconds)
+                    self._start_ride_in(self._open_level, ride_seconds)
+            elif command is state.FaderCommand.READY:
+                # Always a ride - there is no fast form of READY (#6) - and
+                # never held back for the same reason as the ride-in above.
+                self._cancel_move()
+                seconds = ride_seconds if ride_seconds is not None else self._ready_ride_seconds
+                self._start_ride_in(self._hold_level(), seconds)
             else:
                 self._start_fade()
         except TransportError:
@@ -299,7 +323,7 @@ class App:
         # A fade is asynchronous, so `level` is where the fader was when the
         # command was issued. `target` is where it is going, which is the
         # unambiguous half when reading a log back.
-        target = self._open_level if command is state.FaderCommand.OPEN else dm7.MINUS_INF
+        target = self._fader_target(command)
         self._record(
             COMMANDED,
             data={
@@ -343,12 +367,14 @@ class App:
         started it could not say so, because it was written first."""
         self._record(MOVE_LANDED, data=self._move_end(target), project_seconds=self._playhead())
 
-    def _ride_in_landed(self) -> None:
+    def _ride_in_landed(self, target: int) -> None:
         """Tell the machine the ride-in is over, so a later trigger is a
-        confirmation again rather than a snap (#45). Stepped directly, like a
-        failed move: nothing was tapped, so nothing is refused or cleared."""
+        confirmation again rather than a snap (#45), or so a READY holds at
+        the level it just reached rather than looking like it is still on its
+        way. Stepped directly, like a failed move: nothing was tapped, so
+        nothing is refused or cleared."""
         self.machine = state.step(self.machine, state.Event(state.Command.RIDE_IN_COMPLETE)).machine
-        self._move_landed(self._open_level)
+        self._move_landed(target)
 
     def _move_end(self, target: int) -> dict[str, Any]:
         """Where a move ended up against where it was going, for the log."""
@@ -370,33 +396,36 @@ class App:
         self._move_task = asyncio.ensure_future(self._run_fade())
         self._move_push = asyncio.ensure_future(self._push_while_moving())
 
-    def _start_slow_open(self, seconds: float) -> None:
-        """Ride the fader up over `seconds` instead of snapping it.
+    def _start_ride_in(self, level: int, seconds: float) -> None:
+        """Ride the fader up to `level` over `seconds` instead of snapping it.
+
+        Shared by the ordinary open's ride-in (`up-slow`) and READY's ride to
+        the hold level (#6) - both are the same gesture to a different place.
 
         Runs as a task for the same reason the fade does: the operator has
         already tapped, and everything after the tap - the log entry, its
         playhead, the page - must not wait for the ramp to finish.
         """
-        self._move_target = self._open_level
-        self._move_task = asyncio.ensure_future(self._run_slow_open(seconds))
+        self._move_target = level
+        self._move_task = asyncio.ensure_future(self._run_ride_in(level, seconds))
         self._move_push = asyncio.ensure_future(self._push_while_moving())
 
-    async def _run_slow_open(self, seconds: float) -> None:
+    async def _run_ride_in(self, level: int, seconds: float) -> None:
         this = asyncio.current_task()
         try:
-            await self._console.ride_in(self._open_level, seconds=seconds)
+            await self._console.ride_in(level, seconds=seconds)
         except TransportError:
             if self._move_task is this:
-                self._move_failed(self._open_level)
+                self._move_failed(level)
             return
         except asyncio.CancelledError:
             return
         else:
             if self._move_task is this:
-                self._ride_in_landed()
+                self._ride_in_landed(level)
         finally:
-            # No command follows: the machine reached OPEN when the tap landed,
-            # and only the gesture was still running.
+            # No command follows: the machine reached OPEN or READY when the
+            # tap landed, and only the gesture was still running.
             self._settle(this)
 
     def _settle(self, move: asyncio.Task[Any] | None) -> None:
@@ -505,6 +534,16 @@ class App:
         with _tapped(tap):
             return await self._annotate(event, data, tap)
 
+    def _ride_seconds_for(self, action: ann.Action) -> float | None:
+        """How long the gesture behind an action's move should take, or None
+        for a snap. Both rides - `up-slow`'s and READY's - keep their own
+        duration rather than sharing one (#6)."""
+        if action is ann.Action.OPEN_SLOW:
+            return self._slow_open_seconds
+        if action is ann.Action.READY:
+            return self._ready_ride_seconds
+        return None
+
     async def _annotate(
         self, event: ann.EventType, data: dict[str, Any], tap: taps.TapTiming | None
     ) -> ann.Entry | None:
@@ -524,7 +563,7 @@ class App:
             await self._command(
                 _ACTIONS[event.action],
                 detail=event_key,
-                open_seconds=self._slow_open_seconds if event.action is ann.Action.OPEN_SLOW else None,
+                ride_seconds=self._ride_seconds_for(event.action),
             )
         # Recorded whatever the machine did with it, including a refusal: the
         # operator saw what they saw, and a log that only kept the accepted

@@ -11,6 +11,10 @@ def armed(**kwargs):
     return st.Machine(state=st.State.IDLE, **kwargs)
 
 
+def readying(**kwargs):
+    return st.Machine(state=st.State.READY, **kwargs)
+
+
 def opened(**kwargs):
     return st.Machine(state=st.State.OPEN, **kwargs)
 
@@ -51,7 +55,7 @@ class TestTheOperatorDrivesWhileStandingDown(unittest.TestCase):
 
     def test_the_why_line_says_the_open_armed_it(self):
         outcome = send(machine(), st.Command.TRIGGER)
-        self.assertTrue(outcome.machine.armed_by_open)
+        self.assertTrue(outcome.machine.armed_by_operator)
         self.assertIn("armed", st.describe(outcome.machine).lower())
 
     def test_a_ride_in_arms_and_opens_too(self):
@@ -59,14 +63,22 @@ class TestTheOperatorDrivesWhileStandingDown(unittest.TestCase):
         self.assertEqual(outcome.machine.state, st.State.OPEN)
         self.assertTrue(outcome.machine.riding_in)
 
+    def test_a_ready_arms_and_readies_too(self):
+        # #6: a forgotten Arm must not cost a heads-up either.
+        outcome = send(machine(), st.Command.READY)
+        self.assertEqual(outcome.machine.state, st.State.READY)
+        self.assertEqual(outcome.fader, st.FaderCommand.READY)
+        self.assertTrue(outcome.machine.armed_by_operator)
+        self.assertIsNone(outcome.refusal)
+
     def test_an_ordinary_open_is_not_marked_as_arming_anything(self):
         outcome = send(armed(), st.Command.TRIGGER)
-        self.assertFalse(outcome.machine.armed_by_open)
+        self.assertFalse(outcome.machine.armed_by_operator)
         self.assertNotIn("armed by", st.describe(outcome.machine).lower())
 
     def test_the_mark_is_gone_once_the_fader_leaves(self):
         opened_by_tap = send(machine(), st.Command.TRIGGER).machine
-        self.assertFalse(send(opened_by_tap, st.Command.RELEASE).machine.armed_by_open)
+        self.assertFalse(send(opened_by_tap, st.Command.RELEASE).machine.armed_by_operator)
 
     def test_a_close_moves_the_fader_and_changes_nothing(self):
         # A close says nothing about whether the band is in the stands, so the
@@ -190,7 +202,7 @@ class TestDetectorGate(unittest.TestCase):
 
     def test_no_detector_command_moves_the_fader_by_default(self):
         for command in st.Command:
-            for start in (machine(), armed(), opened(), releasing()):
+            for start in (machine(), armed(), readying(), opened(), releasing()):
                 outcome = send(start, command, st.Source.DETECTOR)
                 self.assertIsNone(outcome.fader, f"{command} from {start.state}")
 
@@ -202,6 +214,16 @@ class TestDetectorGate(unittest.TestCase):
         outcome = send(armed(allow_detector=True), st.Command.TRIGGER, st.Source.DETECTOR)
         self.assertEqual(outcome.machine.state, st.State.OPEN)
         self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+
+    def test_unlike_trigger_ready_stays_refused_once_phase_two_is_declared(self):
+        # #6: READY is entered on a prediction, which only a watching human
+        # can make. Confirming sound is already present is what TRIGGER is for
+        # once Phase 2 is declared; guessing sound is about to start never
+        # becomes the detector's job.
+        outcome = send(armed(allow_detector=True), st.Command.READY, st.Source.DETECTOR)
+        self.assertEqual(outcome.machine.state, st.State.IDLE)
+        self.assertIsNone(outcome.fader)
+        self.assertIn("operator-only", outcome.refusal)
 
     def test_the_gate_survives_transitions(self):
         m = armed(allow_detector=True)
@@ -272,7 +294,7 @@ class TestAFailedMoveCanBeRetried(unittest.TestCase):
 
 
 def ride_in(m):
-    """A trigger that opens gradually: `up-slow`, and later `up-for-score`."""
+    """A trigger that opens gradually: `up-slow`."""
     return st.step(m, st.Event(st.Command.TRIGGER, gradual=True))
 
 
@@ -314,7 +336,7 @@ class TestAFastOpenSnapsDuringARideIn(unittest.TestCase):
 
     def test_a_ride_in_landing_anywhere_else_changes_nothing(self):
         # A late report from a ride-in that was already replaced.
-        for m in (machine(), armed(), opened(), releasing()):
+        for m in (machine(), armed(), readying(), opened(), releasing()):
             with self.subTest(state=m.state):
                 outcome = send(m, st.Command.RIDE_IN_COMPLETE)
                 self.assertFalse(outcome.changed)
@@ -346,10 +368,88 @@ class TestAFastOpenSnapsDuringARideIn(unittest.TestCase):
         self.assertTrue(outcome.machine.riding_in)
 
 
+class TestReady(unittest.TestCase):
+    """#6: ready, then go. A hold level short of target, waiting to see
+    whether the band starts - not a ride to the open level."""
+
+    def test_ready_from_idle_rides_to_the_hold_level(self):
+        outcome = send(armed(), st.Command.READY)
+        self.assertEqual(outcome.machine.state, st.State.READY)
+        self.assertEqual(outcome.fader, st.FaderCommand.READY)
+        self.assertTrue(outcome.machine.riding_in)
+
+    def test_any_trigger_commits_to_open_fast(self):
+        outcome = send(readying(), st.Command.TRIGGER)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+
+    def test_a_trigger_commits_whether_or_not_the_ride_has_landed(self):
+        # Unlike OPEN's own ride-in, READY does not distinguish mid-ride from
+        # settled: any trigger takes it the rest of the way either way.
+        mid_ride = send(readying(), st.Command.TRIGGER)
+        landed = send(readying(riding_in=False), st.Command.TRIGGER)
+        self.assertEqual(mid_ride.machine.state, st.State.OPEN)
+        self.assertEqual(landed.machine.state, st.State.OPEN)
+
+    def test_score_reversed_fades_like_an_ordinary_close(self):
+        outcome = send(readying(), st.Command.RELEASE)
+        self.assertEqual(outcome.machine.state, st.State.RELEASING)
+        self.assertEqual(outcome.fader, st.FaderCommand.FADE)
+        self.assertFalse(outcome.machine.pending_stand_down)
+
+    def test_a_stand_down_fades_rather_than_slamming(self):
+        # Same caution as a stand-down from OPEN: the box cannot be sure the
+        # band has not quietly started under the hold level.
+        outcome = send(readying(), st.Command.STAND_DOWN)
+        self.assertEqual(outcome.machine.state, st.State.RELEASING)
+        self.assertEqual(outcome.fader, st.FaderCommand.FADE)
+        self.assertTrue(outcome.machine.pending_stand_down)
+
+    def test_the_pending_stand_down_from_ready_lands_standing_down(self):
+        outcome = send(readying(), st.Command.STAND_DOWN)
+        outcome = st.step(outcome.machine, st.Event(st.Command.FADE_COMPLETE))
+        self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
+
+    def test_a_failed_ride_marks_the_machine_stalled(self):
+        outcome = send(readying(), st.Command.MOVE_FAILED)
+        self.assertEqual(outcome.machine.state, st.State.READY)
+        self.assertTrue(outcome.machine.stalled)
+        self.assertFalse(outcome.machine.riding_in)
+        self.assertIsNone(outcome.fader)
+
+    def test_ready_after_a_failed_ride_retries_it(self):
+        outcome = send(readying(stalled=True), st.Command.READY)
+        self.assertEqual(outcome.fader, st.FaderCommand.READY)
+        self.assertFalse(outcome.machine.stalled)
+
+    def test_a_healthy_ride_is_not_restarted_by_another_ready(self):
+        outcome = send(readying(stalled=False), st.Command.READY)
+        self.assertIsNone(outcome.fader)
+        self.assertFalse(outcome.changed)
+
+    def test_the_ride_landing_is_bookkeeping_only(self):
+        landed = send(readying(riding_in=True), st.Command.RIDE_IN_COMPLETE)
+        self.assertEqual(landed.machine.state, st.State.READY)
+        self.assertFalse(landed.machine.riding_in)
+        self.assertIsNone(landed.fader)
+
+    def test_a_detector_ready_is_refused(self):
+        outcome = send(armed(allow_detector=True), st.Command.READY, st.Source.DETECTOR)
+        self.assertEqual(outcome.machine.state, st.State.IDLE)
+        self.assertIsNone(outcome.fader)
+        self.assertIsNotNone(outcome.refusal)
+
+    def test_the_why_line_names_the_state(self):
+        text = st.describe(readying())
+        self.assertIn("hold level", text.lower())
+
+
 class TestNeverMutes(unittest.TestCase):
-    def test_the_only_fader_commands_are_open_and_fade(self):
-        # Faders only, never mutes. There is no mute to reach for.
-        self.assertEqual(set(st.FaderCommand), {st.FaderCommand.OPEN, st.FaderCommand.FADE})
+    def test_the_only_fader_commands_are_open_ready_and_fade(self):
+        # Faders only, never mutes. READY is a level short of target, not
+        # silence, so it belongs on this list rather than being a third,
+        # unwritten option (#6).
+        self.assertEqual(set(st.FaderCommand), {st.FaderCommand.OPEN, st.FaderCommand.READY, st.FaderCommand.FADE})
 
 
 class TestWhyLine(unittest.TestCase):

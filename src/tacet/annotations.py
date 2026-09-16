@@ -136,6 +136,12 @@ class Action(StrEnum):
     #: transition as OPEN - only the gesture differs, which is why this lives
     #: here and not in `state`.
     OPEN_SLOW = "open-slow"
+    #: Rides to a hold level short of target: something good just happened for
+    #: the home team, and the band is not yet playing (#6). Not an OPEN - the
+    #: state machine gives it a state of its own, READY, because a trigger and
+    #: a release mean something different there than they do from a closed
+    #: fader.
+    READY = "ready"
     RELEASE = "release"
 
 
@@ -263,10 +269,21 @@ VOCABULARY: tuple[EventType, ...] = (
     # Written by the box when a fader tap arrived too late to execute (#16). The
     # fader buttons in the grid log their own entry instead, marked stale.
     _instant("stale-tap", "Fader tap arrived late, not executed", Category.FADER, button=False),
+    # Ready, then go (#6). One control for every cause - a score, a first
+    # down, a defensive stop, "something good happened for the home team" -
+    # rather than one per cause: naming it per cause would spend the column's
+    # limited slots on reasons that are all the same fader move. The cause, if
+    # there is a moment to tap it, goes in the game vocabulary above instead.
+    _instant("up-ready", "Ready (band likely)", Category.FADER, action=Action.READY),
     _instant("up-whistle", "Up on whistle", Category.FADER, action=Action.OPEN),
     _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
     _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN_SLOW),
     _instant("out", "Faded out", Category.FADER, action=Action.RELEASE),
+    # The same 2 s fade as "out", in one tap, next to it: a slip between the
+    # two does the same thing to the fader and only mislabels the log. Only
+    # for abandoning a READY - if the band is already playing when a review
+    # lands, this is not tapped; see design.md and #6.
+    _instant("score-reversed", "Score reversed", Category.FADER, action=Action.RELEASE),
     # Detector was wrong. Useful long before a detector exists, because the
     # operator can mark what one would have got wrong.
     _instant("false-open", "Detector wrong: false open", Category.DETECTOR),

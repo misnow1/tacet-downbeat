@@ -548,11 +548,13 @@ class TestEveryFaderActionIsColoured(unittest.TestCase):
                 with self.subTest(event=event.key):
                     self.assertIn(f'[data-action="{event.action.value}"]', web.PAGE)
 
-    def test_the_two_openers_share_the_colour_that_means_up(self):
-        # Direction, not gesture: both send the fader up, and the button says in
-        # words which of them rides in.
+    def test_every_opener_shares_the_colour_that_means_up(self):
+        # Direction, not gesture: open, open-slow and ready all send the fader
+        # up, and the button says in words which gesture it is.
         self.assertIn(
-            '.grid button[data-action="open"],\n.grid button[data-action="open-slow"]{border-color:var(--open)',
+            '.grid button[data-action="open"],\n'
+            '.grid button[data-action="open-slow"],\n'
+            '.grid button[data-action="ready"]{border-color:var(--open)',
             web.PAGE,
         )
 

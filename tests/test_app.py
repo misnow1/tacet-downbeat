@@ -1101,7 +1101,7 @@ class TestFaderButtons(AppTestCase):
         keys = self.keys()
         self.assertIn(tacet_app.ARMED, keys)
         self.assertLess(keys.index(tacet_app.ARMED), keys.index("up-whistle"))
-        self.assertIn("Armed by that open", app.snapshot()["why"])
+        self.assertIn("Armed by that", app.snapshot()["why"])
 
     async def test_a_fade_button_while_standing_down_closes_and_arms_nothing(self):
         app = self.build()
@@ -1613,6 +1613,136 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.annotate("up-slow")
         self.assertEqual(app.snapshot()["state"], state.State.OPEN.value)
         await app.wait_for_fade()
+
+
+class TestUpReadyRidesToTheHoldLevel(AppTestCase):
+    """#6: ready, then go. Something good happened for the home team; the
+    fader rides to a hold level short of target and waits to see whether the
+    band starts, rather than all the way to the open level."""
+
+    def hold_level(self, app):
+        return dm7.clamp(dm7.UNITY - round(app._hold_below_db * dm7.UNITS_PER_DB))
+
+    async def test_up_ready_is_a_state_of_its_own(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.2
+        await app.arm()
+        await app.annotate("up-ready")
+        self.assertEqual(app.snapshot()["state"], state.State.READY.value)
+        await app.wait_for_fade()
+
+    async def test_up_ready_does_not_arrive_immediately(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-ready")
+        # Still on its way up: a snap would already be at the hold level.
+        self.assertLess(app._console.commanded_level, self.hold_level(app))
+        await app.wait_for_fade()
+
+    async def test_up_ready_stops_short_of_target(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.2
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        self.assertEqual(app._console.commanded_level, self.hold_level(app))
+        self.assertLess(app._console.commanded_level, dm7.UNITY)
+
+    async def test_the_ride_shows_where_it_is_going(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-ready")
+        self.assertEqual(app.snapshot()["fader"]["target"], self.hold_level(app))
+        await app.wait_for_fade()
+        self.assertIsNone(app.snapshot()["fader"]["target"])
+
+    async def test_a_trigger_commits_to_target_fast_from_wherever_it_got_to(self):
+        app = self.build()
+        app._ready_ride_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-ready")
+        await asyncio.sleep(UNDER_WAY)
+        self.assertLess(app._console.commanded_level, dm7.UNITY)
+
+        await app.annotate("up-whistle")
+        # At unity when the tap returns: the snap is awaited like any other.
+        self.assertEqual(app._console.commanded_level, dm7.UNITY)
+        self.assertEqual(app.snapshot()["state"], state.State.OPEN.value)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        await app.wait_for_fade()
+
+    async def test_a_trigger_commits_even_after_the_ride_has_landed(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.1
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        self.assertEqual(app.snapshot()["state"], state.State.READY.value)
+
+        await app.annotate("up-drums")
+        self.assertEqual(app._console.commanded_level, dm7.UNITY)
+        self.assertEqual(app.snapshot()["state"], state.State.OPEN.value)
+
+    async def test_score_reversed_fades_like_an_ordinary_close(self):
+        app = self.build(fade=0.1)
+        app._ready_ride_seconds = 0.1
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        await app.annotate("score-reversed")
+        self.assertIn(app.machine.state, (state.State.RELEASING, state.State.IDLE))
+        self.assertIn("score-reversed", self.keys())
+        await app.wait_for_fade()
+        self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_close_during_the_ride_takes_over(self):
+        app = self.build(fade=0.2)
+        app._ready_ride_seconds = 5.0
+        await app.arm()
+        await app.annotate("up-ready")
+        await asyncio.sleep(UNDER_WAY)
+        await app.annotate("out")
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        await app.wait_for_fade()
+        self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_stand_down_from_ready_fades_rather_than_snapping(self):
+        # #6: the box cannot be sure the band has not quietly started under
+        # the hold level, so this gets the same caution as a stand-down from
+        # OPEN rather than a snap-close.
+        app = self.build(fade=0.1)
+        app._ready_ride_seconds = 0.1
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        await app.stand_down()
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        self.assertGreater(app._console.commanded_level, dm7.MINUS_INF)
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_fader_button_while_standing_down_arms_and_readies(self):
+        # #89's rule extended to READY: a forgotten Arm must not cost a
+        # heads-up either.
+        app = self.build()
+        app._ready_ride_seconds = 0.2
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        await app.annotate("up-ready")
+        self.assertEqual(app.machine.state, state.State.READY)
+        self.assertIn("up-ready", self.keys())
+        self.assertIn(tacet_app.ARMED, self.keys())
+        self.assertIsNone(app.snapshot()["refusal"])
+        await app.wait_for_fade()
+
+    async def test_the_snapshot_tells_the_page_which_buttons_act(self):
+        app = self.build()
+        buttons = {b["key"]: b["action"] for b in app.snapshot()["buttons"]}
+        self.assertEqual(buttons["up-ready"], "ready")
+        self.assertEqual(buttons["score-reversed"], "release")
 
 
 class SwallowingConsole(dm7.Dm7Client):
