@@ -408,6 +408,13 @@ def create_app(
             web.post("/api/trigger", _command_route("trigger")),
             web.post("/api/release", _command_route("release")),
             web.post("/api/record", _record),
+            # StageMix control-authority (#12): all three take only a tap, the
+            # same as arm/stand-down/trigger/release, so `_command_route`
+            # covers them without a handler of its own.
+            web.post("/api/handoff", _command_route("handoff")),
+            web.post("/api/take-back-up", _command_route("take_back_up")),
+            web.post("/api/take-back-down", _command_route("take_back_down")),
+            web.post("/api/still-mine", _command_route("confirm_still_mine")),
             web.post("/api/annotate", _annotate),
             web.post("/api/span/start", _span_start),
             web.post("/api/span/end", _span_end),
@@ -572,12 +579,16 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="out"]{height:136px}
 /* The readout gap: at least 96px, nothing tappable, level/target/refusal
    repeated here because the header carrying #refusal is on the far side of
-   the screen from this thumb. Age of the last command (#12) has no field to
-   show yet; it belongs here once one exists. */
+   the screen from this thumb. The age of the last command (#12) rides along
+   on #level itself rather than a field of its own. */
 #readout{flex:1 1 96px;min-height:96px;display:flex;flex-direction:column;
 justify-content:center;gap:6px}
 #readout #fader-error{color:#ff9d94;font-size:13px}
 #col-refusal{color:#ffb4a9;font-size:13px;display:none}
+/* The take-back prompt (#12): only shown while a fader tap is queued behind a
+   take-back answer, so it shares the readout gap rather than a slot of its
+   own that would sit empty every other night. */
+#takeback{display:none;flex-direction:column;gap:8px}
 </style></head><body>
 <div class="app">
 <div class="left" id="left">
@@ -591,7 +602,19 @@ justify-content:center;gap:6px}
   <div id="refusal"></div>
   <div id="tap"></div>
 </div>
-<div id="prompt"></div>
+<div id="prompt">
+  <!-- Announce, don't surprise (CLAUDE.md principle 4): handing off is a mode
+       change, so it asks before it happens rather than firing on one tap. "No"
+       is `still-mine` (#12) - a pure log entry, answered from here rather than
+       a button in a grid, that changes nothing. -->
+  <div class="panel" id="handoff-confirm" style="display:none">
+    <div>Hand off to StageMix? The commanded level will read as unknown until you say where it really is.</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="btn-handoff-yes">Yes, hand off</button>
+      <button id="btn-handoff-no">No, still mine</button>
+    </div>
+  </div>
+</div>
 <div class="panel" id="recording-status"><div class="label">Recording</div>
   <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
   <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
@@ -607,6 +630,7 @@ justify-content:center;gap:6px}
     <button id="btn-arm">Arm</button>
     <button id="btn-stand-down">Stand down</button>
     <button id="btn-record">Start recording</button>
+    <button id="btn-handoff">StageMix has it</button>
   </div>
 </div>
 <div id="wake"></div>
@@ -614,9 +638,15 @@ justify-content:center;gap:6px}
 <div id="fader-column">
   <div id="fader-top"></div>
   <div id="readout">
-    <div class="value"><span id="level">&mdash;</span><span class="tag commanded">commanded</span></div>
+    <div class="value"><span id="level">&mdash;</span><span class="tag commanded" id="level-tag">commanded</span></div>
     <div id="fader-error"></div>
     <div id="col-refusal"></div>
+    <div id="takeback">
+      <div class="label">Take back control</div>
+      <div style="font-size:13px;color:var(--dim)">Where is the DCA now?</div>
+      <button id="btn-take-back-up" data-action="open">It's up</button>
+      <button id="btn-take-back-down" data-action="release">It's down</button>
+    </div>
   </div>
   <div id="fader-bottom"></div>
 </div>

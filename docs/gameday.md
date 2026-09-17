@@ -183,16 +183,25 @@ this one is a different key.
 **Everything else lives in MAIN and MORE**, beside the fader column, and
 records only, moving nothing. MAIN holds the game clock, scoring and timeouts,
 with no scrolling. MORE holds band movement, the other band, the drumline,
-Note, and Arm / Stand down / Start recording - a tap there returns to MAIN once
-it is answered for, except Note, which stays open until you finish typing.
-Buttons marked `(start)` are spans: tap once to open the region, again to close
-it. They read `(end)` while open. A span left open by an earlier run whose
-button has since gone appears under **OPEN FROM AN EARLIER RUN**, at the bottom
-of MORE, with one button to end it.
+Note, and Arm / Stand down / Start recording / StageMix has it - a tap there
+returns to MAIN once it is answered for, except Note, which stays open until
+you finish typing. Buttons marked `(start)` are spans: tap once to open the
+region, again to close it. They read `(end)` while open. A span left open by an
+earlier run whose button has since gone appears under **OPEN FROM AN EARLIER
+RUN**, at the bottom of MORE, with one button to end it.
 
-**The fader line is what the box commanded, never what the console reports.**
-The DM7 cannot answer, and a move made in StageMix will not appear. Glance at
-the DCA in StageMix to check the two agree.
+**The fader line is what the box commanded, never what the console reports**,
+with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
+answer, and a move made in StageMix will not appear on it.
+
+**If you take the fader to StageMix**, tap **StageMix has it** in MORE first
+and confirm. The commanded reading goes to `unknown` - it would otherwise sit
+there looking current while StageMix moves the real fader, which is exactly
+what happened for 76 minutes in game 2. The first fader-column tap afterwards
+asks **Take back control. Where is the DCA now?**, answered right there with
+**It's up** or **It's down** - answer it before doing anything else with the
+band. A snap open (**Up on whistle** / **Up on drums**) skips the question
+outright, since it is correct starting from anywhere.
 
 ---
 

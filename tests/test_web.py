@@ -63,6 +63,22 @@ class TestPage(WebTestCase):
         for scheme in ("http://", "https://", "//cdn"):
             self.assertNotIn(scheme, body)
 
+    async def test_the_page_carries_the_handoff_controls(self):
+        # #12: the "StageMix has it" control, its confirm prompt, and the
+        # take-back answers the fader column asks for.
+        body = await (await self.client.get("/")).text()
+        for element_id in (
+            "btn-handoff",
+            "handoff-confirm",
+            "btn-handoff-yes",
+            "btn-handoff-no",
+            "takeback",
+            "btn-take-back-up",
+            "btn-take-back-down",
+            "level-tag",
+        ):
+            self.assertIn(f'id="{element_id}"', body)
+
 
 class TestThePageHasWhereTapsReport(WebTestCase):
     async def test_the_tap_line_is_on_the_page(self):
@@ -123,6 +139,43 @@ class TestCommands(WebTestCase):
     @property
     def app_under_test(self):
         return self.server.app
+
+
+class TestHandoff(WebTestCase):
+    """#12: the routes the page's handoff/take-back UI drives. The state
+    machine's own rules are `tests/test_state.py` and `tests/test_app.py`'s
+    job; this is only whether each is wired to a route at all."""
+
+    async def test_handoff(self):
+        payload = await (await self.client.post("/api/handoff")).json()
+        self.assertTrue(payload["handoff"])
+        self.assertIn("handed-off", self.entries())
+
+    async def test_take_back_up(self):
+        await self.client.post("/api/arm")
+        await self.client.post("/api/handoff")
+        payload = await (await self.client.post("/api/take-back-up")).json()
+        self.assertFalse(payload["handoff"])
+        self.assertIn("took-back", self.entries())
+
+    async def test_take_back_down(self):
+        await self.client.post("/api/arm")
+        await self.client.post("/api/handoff")
+        payload = await (await self.client.post("/api/take-back-down")).json()
+        self.assertFalse(payload["handoff"])
+        self.assertTrue(self.console_sender.packets)
+
+    async def test_still_mine(self):
+        payload = await (await self.client.post("/api/still-mine")).json()
+        self.assertEqual(payload["state"], "standing-down")
+        self.assertIn("still-mine", self.entries())
+
+    async def test_a_queued_fader_tap_is_carried_on_the_snapshot(self):
+        await self.client.post("/api/arm")
+        await self.client.post("/api/handoff")
+        payload = await (await self.client.post("/api/annotate", json={"key": "out"})).json()
+        self.assertTrue(payload["state"]["queued"])
+        self.assertFalse(payload["state"]["fader"]["level_known"])
 
 
 class TestAnnotation(WebTestCase):
