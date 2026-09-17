@@ -28,6 +28,16 @@
     in every state until `allow_detector` is set, and refused in STANDING DOWN
     whatever it says.
 
+    `handoff` sits across all of the above, orthogonal to `state` (#12): the
+    box can be in any of them and also not trust its own belief about where
+    the fader really is, because StageMix might be moving it. While handed
+    off, RELEASE, READY and a gradual TRIGGER are queued rather than acted on -
+    each one depends on knowing the real level, which is exactly what is not
+    known - and STAND_DOWN goes straight to STANDING DOWN from wherever it
+    was, sending nothing. A snap TRIGGER always passes straight through.
+    TAKE_BACK_UP and TAKE_BACK_DOWN answer where the fader actually is, clear
+    `handoff`, and run whatever was queued from that corrected belief.
+
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
 transition testable, and it keeps the one decision that matters - whether to
@@ -47,11 +57,13 @@ open there made a forgotten Arm into a missed downbeat, and a missed downbeat
 is unrecoverable. A `READY` while standing down arms the box the same way a
 `TRIGGER` does - a forgotten Arm must not cost a heads-up either.
 
-The machine emits `OPEN`, `READY` and `FADE`, and there is no fourth option.
-Faders only, never mutes: the band mics feed other mixes pre-fader and
-post-mute, so there is deliberately no mute for anything here to reach for.
-`READY` is still a fader write, to a hold level short of target - not a mute
-and not silence.
+The machine emits `OPEN`, `READY`, `FADE`, `TAKE_BACK_UP` and `TAKE_BACK_DOWN`,
+and there is no other option. Faders only, never mutes: the band mics feed
+other mixes pre-fader and post-mute, so there is deliberately no mute for
+anything here to reach for. `READY` is still a fader write, to a hold level
+short of target - not a mute and not silence. `TAKE_BACK_UP` is the one
+exception that writes nothing at all - it corrects a belief, never the fader -
+which is still not a mute, since nothing is silenced by it either.
 """
 
 from __future__ import annotations
@@ -99,6 +111,17 @@ class Command(StrEnum):
     #: A ride-in reached the top - the ordinary open's or READY's hold level.
     #: Reported by the shell, never tapped.
     RIDE_IN_COMPLETE = "ride-in-complete"
+    #: StageMix has the DCA now. Every ramp starts from `commanded_level`, and
+    #: that number is fiction the moment another interface can move the fader
+    #: (#12). A mode change, like ARM - no fader move of its own.
+    HANDOFF = "handoff"
+    #: Take-back answers: where the DCA actually is now that control is back.
+    #: UP never sends anything by itself - forcing a nonzero level with
+    #: nothing queued to justify it is exactly the surprise CLAUDE.md's
+    #: fail-safe principle forbids. DOWN always confirms silence for real,
+    #: because closing is always safe to do proactively.
+    TAKE_BACK_UP = "take-back-up"
+    TAKE_BACK_DOWN = "take-back-down"
 
 
 class FaderCommand(StrEnum):
@@ -107,6 +130,13 @@ class FaderCommand(StrEnum):
     #: a mute (#6).
     READY = "ready"
     FADE = "fade"
+    #: The take-back answers (#12). UP is belief only, never a packet: it
+    #: names the level `Dm7Client.assume` should trust without sending
+    #: anything. DOWN is one immediate packet to -inf, confirming silence for
+    #: real - never the 2 s fade, which would leave the band audible for two
+    #: more seconds if the belief it starts from turns out wrong anyway.
+    TAKE_BACK_UP = "take-back-up"
+    TAKE_BACK_DOWN = "take-back-down"
 
 
 @dataclass(frozen=True)
@@ -148,6 +178,15 @@ class Machine:
     #: regardless of this flag (#6); it is kept there for the why line and so a
     #: failed ride can be retried.
     riding_in: bool = False
+    #: StageMix has the DCA. Every ramp depends on knowing where the fader
+    #: really is, which this box cannot while another interface might be
+    #: moving it (#12). Orthogonal to `state`, like `allow_detector`: the box
+    #: can be in any state and also not trust its own belief about the level.
+    handoff: bool = False
+    #: The one fader tap blocked while handed off, waiting on a take-back
+    #: answer. A new blocked tap silently replaces whatever was queued, the
+    #: same way a ride-in is already superseded by a fade elsewhere.
+    queued: Event | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +197,12 @@ class Outcome:
     refusal: str | None = None
     #: False when the event was legal but changed nothing.
     changed: bool = True
+    #: A take-back answer's own queued tap, now safe to run - only ever set by
+    #: TAKE_BACK_UP/TAKE_BACK_DOWN, and only when one was queued (#12). The
+    #: shell replays it through the ordinary command path, which is what makes
+    #: it ramp from the just-corrected belief without this module needing to
+    #: know any level, target or duration itself.
+    replay: Event | None = None
 
 
 def _unchanged(machine: Machine, refusal: str | None = None) -> Outcome:
@@ -174,22 +219,106 @@ def step(machine: Machine, event: Event) -> Outcome:
         # a detector confirming sound is present is exactly its Phase 2 job,
         # but guessing that sound is about to start never becomes one (#6).
         return _unchanged(machine, "READY is operator-only; only a person can tell what is about to play")
+    if machine.state is State.STANDING_DOWN and event.source is Source.DETECTOR:
+        # Unconditional, whatever `allow_detector` says, and moved up here
+        # (#12) so it covers HANDOFF and the take-back answers too, not only
+        # the commands `_standing_down` itself dispatches: standing down is
+        # what says the band is not in the stands, so there is nothing to
+        # detect, and the detector does not get to change the mode.
+        return _unchanged(machine, "standing down; the detector cannot arm the box")
     if event.source is Source.DETECTOR and not machine.allow_detector:
         return _unchanged(
             machine,
             "detector input is ignored until phase 2 is declared; the operator is driving",
         )
+    if event.command is Command.HANDOFF:
+        # A mode change, like ARM: no fader move, legal from any state. A
+        # second HANDOFF while already handed off changes nothing.
+        if machine.handoff:
+            return _unchanged(machine)
+        return Outcome(machine=replace(_settled_for_handoff(machine), handoff=True, queued=None))
+    if event.command is Command.TAKE_BACK_UP:
+        return _take_back(machine, fader=FaderCommand.TAKE_BACK_UP)
+    if event.command is Command.TAKE_BACK_DOWN:
+        return _take_back(machine, fader=FaderCommand.TAKE_BACK_DOWN)
+    if machine.handoff:
+        # Checked before dispatching by state, because both of these apply
+        # identically whatever `state` currently is (#12).
+        if event.command is Command.STAND_DOWN:
+            # Changes state only and sends nothing: there is no real fader
+            # move for RELEASING to be waiting on, so this goes straight to
+            # STANDING_DOWN from wherever it was, discarding anything queued -
+            # standing down means off duty, so a queued fader intention no
+            # longer applies. `handoff` itself outlives this: the box still
+            # does not know where the console really is.
+            return Outcome(
+                machine=replace(
+                    machine,
+                    state=State.STANDING_DOWN,
+                    queued=None,
+                    pending_stand_down=False,
+                    stalled=False,
+                    riding_in=False,
+                    armed_by_operator=False,
+                )
+            )
+        if _blocked_by_handoff(event):
+            # Queued, not refused: the reason still gets logged by the shell
+            # exactly as tapped, and the move itself runs once answered. A
+            # second blocked tap silently replaces the first.
+            return Outcome(machine=replace(machine, queued=event))
 
     handler = _HANDLERS[machine.state]
     return handler(machine, event)
 
 
+def _settled_for_handoff(machine: Machine) -> Machine:
+    """Presume whatever move is running has already landed, before handing
+    off cancels it for real (#12). `state` describes what the operator wants,
+    not where the fader physically is - handing off does not change that
+    intent, so there is nothing to abandon, only a ramp already under way to
+    stop racing against StageMix. A state that quietly stopped matching what
+    the shell is actually doing until the next tap is exactly the drift
+    CLAUDE.md's fail-visible principle warns about."""
+    if machine.state is State.RELEASING:
+        landing = State.STANDING_DOWN if machine.pending_stand_down else State.IDLE
+        return replace(machine, state=landing, pending_stand_down=False, stalled=False, riding_in=False)
+    if machine.riding_in:
+        return replace(machine, riding_in=False, stalled=False)
+    return machine
+
+
+def _blocked_by_handoff(event: Event) -> bool:
+    """Whether this command is a ramp that depends on knowing the console's
+    real level - the hazard #12 exists to prevent. A snap TRIGGER always
+    passes straight through, correct from any start; STAND_DOWN gets its own
+    handling above, since it must still change state."""
+    if event.command is Command.RELEASE:
+        return True
+    if event.command is Command.READY:
+        return True
+    return event.command is Command.TRIGGER and event.gradual
+
+
+def _take_back(machine: Machine, *, fader: FaderCommand) -> Outcome:
+    """UP and DOWN share everything except which `FaderCommand` they emit."""
+    if not machine.handoff:
+        if machine.stalled:
+            # The confirming packet itself failed to send. Retry it - by now
+            # `queued` is already empty, whichever answer it was: the shell
+            # only replays a queued tap once its own confirming send actually
+            # landed, so nothing was lost, only delayed (#12).
+            return Outcome(machine=replace(machine, stalled=False), fader=fader)
+        return _unchanged(machine)
+    return Outcome(
+        machine=replace(machine, handoff=False, queued=None),
+        fader=fader,
+        replay=machine.queued,
+    )
+
+
 def _standing_down(machine: Machine, event: Event) -> Outcome:
-    if event.source is Source.DETECTOR:
-        # Before anything else, and whatever `allow_detector` says elsewhere.
-        # Standing down is what says the band is not in the stands, so there is
-        # nothing to detect - and the detector does not get to change the mode.
-        return _unchanged(machine, "standing down; the detector cannot arm the box")
+    # A detector-sourced event never reaches here: `step` refuses it first.
     if event.command is Command.ARM:
         # Deliberately no fader move. A mode change is not a fader move:
         # announce, do not surprise.
@@ -365,6 +494,10 @@ _DESCRIPTIONS = {
 def describe(machine: Machine) -> str:
     """The plain-language why line for the UI (design.md 5.5)."""
     text = _DESCRIPTIONS[machine.state]
+    if machine.handoff:
+        text += " StageMix has the DCA; where it really is stays unknown until you say."
+        if machine.queued is not None:
+            text += " Your last tap is waiting on that answer."
     if machine.armed_by_operator:
         text += " Armed by that: the box was standing down."
     if machine.stalled:

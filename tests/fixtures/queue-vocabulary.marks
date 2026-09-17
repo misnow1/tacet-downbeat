@@ -4,6 +4,9 @@ marker	SYS|armed
 marker	SYS|stood-down
 marker	SYS|stand-down-requested
 marker	SYS|stand-down-cancelled
+marker	SYS|handed-off
+marker	SYS|took-back
+marker	SYS|still-mine
 marker	BAND|band-enters-stadium
 marker	BAND|band-enters-stands
 marker	BAND|band-exits-stands

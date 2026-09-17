@@ -194,6 +194,15 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("stood-down", "Stood down", Category.SESSION, button=False),
     _instant("stand-down-requested", "Stand down requested", Category.SESSION, button=False),
     _instant("stand-down-cancelled", "Stand down cancelled", Category.SESSION, button=False),
+    # StageMix control-authority timeline (#12). Written by the box when
+    # `handoff` starts or ends, the same way ARMED and STOOD_DOWN describe a
+    # state change rather than the tap that caused it - which take-back
+    # answer was given lives on that tap's own `commanded` entry instead.
+    _instant("handed-off", "Handed off to StageMix", Category.SESSION, button=False),
+    _instant("took-back", "Took back control", Category.SESSION, button=False),
+    # The return prompt's negative answer: a pure confirmation that changes
+    # nothing, tapped from the prompt slot rather than a button in a grid.
+    _instant("still-mine", "Still mine (no handoff)", Category.SESSION, button=False),
     # Band, from design.md 5.6
     _instant("band-enters-stadium", "Band enters stadium", Category.BAND),
     _instant("band-enters-stands", "Band enters stands", Category.BAND),

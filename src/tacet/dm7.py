@@ -308,6 +308,11 @@ class Dm7Client:
         self._timing = MoveTiming()
         self.last_error: str | None = None
         self.sent_count = 0
+        #: When `commanded_level` was last actually sent, on `monotonic`. None
+        #: before anything has been sent. Age of the last command, shown on
+        #: every mode's readout (#12) - not touched by `assume`, which corrects
+        #: a belief without sending anything.
+        self.last_sent_at: float | None = None
 
     # -- state ------------------------------------------------------------
 
@@ -352,7 +357,19 @@ class Dm7Client:
         self.last_error = None
         self.sent_count += 1
         self._commanded = level
+        self.last_sent_at = self._monotonic()
         return level
+
+    def assume(self, level: int) -> None:
+        """Correct the believed level without sending anything (#12).
+
+        For a take-back answer that should not itself move the fader: forcing
+        a nonzero level with nothing yet queued to justify it would be exactly
+        the surprise CLAUDE.md's fail-safe principle forbids. `last_sent_at`
+        is untouched - nothing was actually sent, so its age keeps counting
+        from whatever really happened last.
+        """
+        self._commanded = clamp(level)
 
     # -- moves ------------------------------------------------------------
 

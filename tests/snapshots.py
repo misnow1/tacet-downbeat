@@ -71,10 +71,19 @@ class Box:
 
 def _build(root: Path, *, console: _Sender | _Unreachable) -> Box:
     clock = [CLOCK_START]
+
+    async def tick(seconds: float) -> None:
+        # The console needs its own clock to actually advance during a move -
+        # otherwise its ramp-scheduling loop sees the same "due" step forever
+        # and never finishes. Harmless before `age` existed, since nothing
+        # read the console's clock; #12 made the mismatch a real bug (fixture
+        # `age` values computed against a live wall clock, and non-reproducible).
+        clock[0] += seconds
+
     disk = Disk()
     log = ann.AnnotationLog(root / "game.jsonl", opener=disk.open).open()
     app = App(
-        console=dm7.Dm7Client("192.0.2.1", dca=3, sender=console),
+        console=dm7.Dm7Client("192.0.2.1", dca=3, sender=console, monotonic=lambda: clock[0], sleep=tick),
         log=log,
         recorder=reaper.ReaperClient(sender=_Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],

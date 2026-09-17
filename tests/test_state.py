@@ -444,12 +444,196 @@ class TestReady(unittest.TestCase):
         self.assertIn("hold level", text.lower())
 
 
+class TestHandoff(unittest.TestCase):
+    """#12: every ramp starts from `commanded_level`, which is fiction once
+    StageMix might also be moving the fader. `handoff` is orthogonal to
+    `state`, like `allow_detector` - the box can be in any state and also not
+    trust its own belief about where the fader really is."""
+
+    def test_handoff_is_a_mode_change_with_no_fader_move(self):
+        outcome = send(opened(), st.Command.HANDOFF)
+        self.assertTrue(outcome.machine.handoff)
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+
+    def test_handoff_a_second_time_changes_nothing(self):
+        outcome = send(opened(handoff=True), st.Command.HANDOFF)
+        self.assertFalse(outcome.changed)
+        self.assertIsNone(outcome.fader)
+
+    def test_handoff_is_legal_from_standing_down(self):
+        # The operator drives in every state (#89) - handing off is about the
+        # console, not the band, so it is no different.
+        outcome = send(machine(), st.Command.HANDOFF)
+        self.assertTrue(outcome.machine.handoff)
+        self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
+
+    def test_a_detector_cannot_hand_off_while_standing_down(self):
+        outcome = send(machine(allow_detector=True), st.Command.HANDOFF, st.Source.DETECTOR)
+        self.assertFalse(outcome.machine.handoff)
+        self.assertIn("standing down", outcome.refusal)
+
+    def test_a_detector_cannot_hand_off_before_phase_two(self):
+        outcome = send(opened(), st.Command.HANDOFF, st.Source.DETECTOR)
+        self.assertFalse(outcome.machine.handoff)
+        self.assertIsNotNone(outcome.refusal)
+
+    def test_handing_off_mid_fade_presumes_it_landed(self):
+        # #12: the in-flight fade is cancelled by the shell the moment
+        # StageMix might touch the fader too, so `state` has to stop claiming
+        # to be fading, or it would sit in RELEASING forever - nothing will
+        # ever fire FADE_COMPLETE for a fade that never ran.
+        outcome = send(releasing(), st.Command.HANDOFF)
+        self.assertEqual(outcome.machine.state, st.State.IDLE)
+        self.assertTrue(outcome.machine.handoff)
+
+    def test_handing_off_mid_fade_honours_a_pending_stand_down(self):
+        outcome = send(releasing(pending_stand_down=True), st.Command.HANDOFF)
+        self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
+        self.assertFalse(outcome.machine.pending_stand_down)
+
+    def test_handing_off_mid_ride_in_presumes_it_arrived(self):
+        outcome = send(opened(riding_in=True), st.Command.HANDOFF)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertFalse(outcome.machine.riding_in)
+
+    def test_handing_off_mid_ready_ride_presumes_it_arrived_too(self):
+        outcome = send(readying(riding_in=True), st.Command.HANDOFF)
+        self.assertEqual(outcome.machine.state, st.State.READY)
+        self.assertFalse(outcome.machine.riding_in)
+
+    def test_a_snap_trigger_passes_straight_through(self):
+        # "Snap opens skip the question" - correct from any start.
+        outcome = send(armed(handoff=True), st.Command.TRIGGER)
+        self.assertEqual(outcome.fader, st.FaderCommand.OPEN)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+
+    def test_a_snap_trigger_does_not_clear_handoff(self):
+        outcome = send(armed(handoff=True), st.Command.TRIGGER)
+        self.assertTrue(outcome.machine.handoff)
+
+    def test_release_is_queued_not_refused(self):
+        event = st.Event(st.Command.RELEASE, detail="out")
+        outcome = st.step(opened(handoff=True), event)
+        self.assertIsNone(outcome.fader)
+        self.assertIsNone(outcome.refusal)
+        self.assertTrue(outcome.changed)
+        self.assertEqual(outcome.machine.queued, event)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+
+    def test_ready_is_queued_too(self):
+        event = st.Event(st.Command.READY)
+        outcome = st.step(armed(handoff=True), event)
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(outcome.machine.queued, event)
+
+    def test_a_gradual_trigger_is_queued(self):
+        event = st.Event(st.Command.TRIGGER, gradual=True, detail="up-slow")
+        outcome = st.step(armed(handoff=True), event)
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(outcome.machine.queued, event)
+
+    def test_a_second_blocked_tap_replaces_the_first(self):
+        first = st.Event(st.Command.RELEASE, detail="out")
+        second = st.Event(st.Command.RELEASE, detail="score-reversed")
+        after_first = st.step(opened(handoff=True), first).machine
+        after_second = st.step(after_first, second).machine
+        self.assertEqual(after_second.queued, second)
+
+    def test_stand_down_while_handed_off_goes_straight_to_standing_down(self):
+        for start in (opened(handoff=True), readying(handoff=True), armed(handoff=True)):
+            with self.subTest(state=start.state):
+                outcome = send(start, st.Command.STAND_DOWN)
+                self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
+                self.assertIsNone(outcome.fader)
+                self.assertTrue(outcome.machine.handoff)
+
+    def test_stand_down_while_handed_off_discards_anything_queued(self):
+        queued_event = st.Event(st.Command.RELEASE, detail="out")
+        machine_with_queued = st.step(opened(handoff=True), queued_event).machine
+        outcome = send(machine_with_queued, st.Command.STAND_DOWN)
+        self.assertIsNone(outcome.machine.queued)
+
+    def test_stand_down_from_releasing_while_handed_off_skips_the_wait(self):
+        # Otherwise nothing would ever move it on: no fade is sent, so
+        # FADE_COMPLETE never arrives.
+        outcome = send(releasing(handoff=True, pending_stand_down=True), st.Command.STAND_DOWN)
+        self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
+        self.assertFalse(outcome.machine.pending_stand_down)
+
+    def test_take_back_up_with_nothing_queued_sends_no_packet(self):
+        outcome = send(opened(handoff=True), st.Command.TAKE_BACK_UP)
+        self.assertEqual(outcome.fader, st.FaderCommand.TAKE_BACK_UP)
+        self.assertIsNone(outcome.replay)
+        self.assertFalse(outcome.machine.handoff)
+
+    def test_take_back_down_always_sends_its_packet(self):
+        outcome = send(opened(handoff=True), st.Command.TAKE_BACK_DOWN)
+        self.assertEqual(outcome.fader, st.FaderCommand.TAKE_BACK_DOWN)
+        self.assertIsNone(outcome.replay)
+        self.assertFalse(outcome.machine.handoff)
+
+    def test_take_back_runs_whatever_was_queued(self):
+        queued_event = st.Event(st.Command.RELEASE, detail="out")
+        handed_off_with_queue = st.step(opened(handoff=True), queued_event).machine
+        outcome = send(handed_off_with_queue, st.Command.TAKE_BACK_UP)
+        self.assertEqual(outcome.replay, queued_event)
+        self.assertIsNone(outcome.machine.queued)
+
+    def test_taking_back_control_is_a_no_op_when_not_handed_off(self):
+        for command in (st.Command.TAKE_BACK_UP, st.Command.TAKE_BACK_DOWN):
+            with self.subTest(command=command):
+                outcome = send(opened(), command)
+                self.assertFalse(outcome.changed)
+                self.assertIsNone(outcome.fader)
+
+    def test_a_failed_take_back_can_be_retried(self):
+        # The confirming packet itself did not reach the console. By the time
+        # MOVE_FAILED marks the machine stalled, `handoff` is already false -
+        # this is what lets the same answer be tapped again to retry it.
+        for command, fader in (
+            (st.Command.TAKE_BACK_UP, st.FaderCommand.TAKE_BACK_UP),
+            (st.Command.TAKE_BACK_DOWN, st.FaderCommand.TAKE_BACK_DOWN),
+        ):
+            with self.subTest(command=command):
+                outcome = send(opened(stalled=True), command)
+                self.assertEqual(outcome.fader, fader)
+                self.assertFalse(outcome.machine.stalled)
+
+    def test_a_healthy_take_back_is_not_retried_by_a_stray_answer(self):
+        # `handoff` already false and not stalled: nothing to retry.
+        outcome = send(opened(), st.Command.TAKE_BACK_DOWN)
+        self.assertFalse(outcome.changed)
+        self.assertIsNone(outcome.fader)
+
+    def test_the_why_line_says_stagemix_has_it(self):
+        text = st.describe(opened(handoff=True))
+        self.assertIn("stagemix", text.lower())
+
+    def test_the_why_line_mentions_a_queued_tap(self):
+        queued_event = st.Event(st.Command.RELEASE, detail="out")
+        with_queue = st.step(opened(handoff=True), queued_event).machine
+        self.assertIn("waiting", st.describe(with_queue).lower())
+        self.assertNotIn("waiting", st.describe(opened(handoff=True)).lower())
+
+
 class TestNeverMutes(unittest.TestCase):
     def test_the_only_fader_commands_are_open_ready_and_fade(self):
         # Faders only, never mutes. READY is a level short of target, not
         # silence, so it belongs on this list rather than being a third,
-        # unwritten option (#6).
-        self.assertEqual(set(st.FaderCommand), {st.FaderCommand.OPEN, st.FaderCommand.READY, st.FaderCommand.FADE})
+        # unwritten option (#6). TAKE_BACK_UP writes nothing at all - a belief
+        # correction, not a fader move - and TAKE_BACK_DOWN is one packet to
+        # -inf, never a mute (#12).
+        self.assertEqual(
+            set(st.FaderCommand),
+            {
+                st.FaderCommand.OPEN,
+                st.FaderCommand.READY,
+                st.FaderCommand.FADE,
+                st.FaderCommand.TAKE_BACK_UP,
+                st.FaderCommand.TAKE_BACK_DOWN,
+            },
+        )
 
 
 class TestWhyLine(unittest.TestCase):
