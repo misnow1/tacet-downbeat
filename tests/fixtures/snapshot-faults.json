@@ -1,5 +1,5 @@
 {
-  "at": 5060.0,
+  "at": 5060.02,
   "buttons": [
     {
       "action": null,
@@ -235,15 +235,18 @@
   ],
   "detector_enabled": false,
   "fader": {
+    "age": null,
     "commanded": -32768,
     "confirmed": false,
     "db": null,
     "error": "no route to host",
     "healthy": false,
+    "level_known": true,
     "moving": false,
     "target": null,
     "target_db": null
   },
+  "handoff": false,
   "log": {
     "error": "could not write game.jsonl: No space left on device",
     "failures": 3,
@@ -256,6 +259,7 @@
     "healthy": true
   },
   "open_spans": [],
+  "queued": false,
   "recording": {
     "can_start": false,
     "confirmed": false,

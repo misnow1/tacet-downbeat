@@ -235,15 +235,18 @@
   ],
   "detector_enabled": false,
   "fader": {
+    "age": null,
     "commanded": -32768,
     "confirmed": false,
     "db": null,
     "error": null,
     "healthy": true,
+    "level_known": true,
     "moving": false,
     "target": null,
     "target_db": null
   },
+  "handoff": false,
   "log": {
     "error": null,
     "failures": 0,
@@ -256,6 +259,7 @@
     "healthy": true
   },
   "open_spans": [],
+  "queued": false,
   "recording": {
     "can_start": true,
     "confirmed": false,

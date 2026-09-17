@@ -258,6 +258,56 @@ class TestSending(unittest.TestCase):
         assert c.last_error is not None
         self.assertIn("network unreachable", c.last_error)
 
+    def test_last_sent_at_is_none_before_anything_is_sent(self):
+        c, _ = client()
+        self.assertIsNone(c.last_sent_at)
+
+    def test_last_sent_at_tracks_a_successful_send(self):
+        clock = [100.0]
+        c, _ = client(monotonic=lambda: clock[0])
+        c.send_level(0)
+        self.assertEqual(c.last_sent_at, 100.0)
+        clock[0] = 105.0
+        c.send_level(-500)
+        self.assertEqual(c.last_sent_at, 105.0)
+
+    def test_a_failed_send_does_not_update_last_sent_at(self):
+        clock = [100.0]
+        c = dm7.Dm7Client(UNREACHABLE_HOST, sender=FailingSender(), monotonic=lambda: clock[0])
+        with self.assertRaises(TransportError):
+            c.send_level(0)
+        self.assertIsNone(c.last_sent_at)
+
+
+class TestAssume(unittest.TestCase):
+    """#12: a take-back answer that should not itself move the fader still
+    has to correct what the box believes, or every ramp after it starts from
+    the same fiction the answer was meant to fix."""
+
+    def test_assume_corrects_the_believed_level(self):
+        c, _ = client()
+        c.assume(-1500)
+        self.assertEqual(c.commanded_level, -1500)
+        self.assertEqual(c.commanded_db, -15.0)
+
+    def test_assume_sends_nothing(self):
+        c, sender = client()
+        c.assume(0)
+        self.assertEqual(sender.packets, [])
+
+    def test_assume_is_clamped_like_any_other_level(self):
+        c, _ = client()
+        c.assume(50000)
+        self.assertEqual(c.commanded_level, dm7.LEVEL_MAX)
+
+    def test_assume_does_not_touch_last_sent_at(self):
+        clock = [100.0]
+        c, _ = client(monotonic=lambda: clock[0])
+        c.send_level(0)
+        clock[0] = 200.0
+        c.assume(-500)
+        self.assertEqual(c.last_sent_at, 100.0)
+
     def test_any_sender_error_is_raised_as_a_transport_error(self):
         # The Sender contract says TransportError, but a fade runs in a task
         # that catches only that. Anything else would kill it silently (#72).

@@ -1,5 +1,5 @@
 {
-  "at": 5000.0,
+  "at": 5000.02,
   "buttons": [
     {
       "action": null,
@@ -235,15 +235,18 @@
   ],
   "detector_enabled": false,
   "fader": {
+    "age": 0.0,
     "commanded": 0,
     "confirmed": false,
     "db": 0.0,
     "error": null,
     "healthy": true,
+    "level_known": true,
     "moving": false,
     "target": -32768,
     "target_db": null
   },
+  "handoff": false,
   "log": {
     "error": null,
     "failures": 0,
@@ -256,6 +259,7 @@
     "healthy": true
   },
   "open_spans": [],
+  "queued": false,
   "recording": {
     "can_start": true,
     "confirmed": false,
