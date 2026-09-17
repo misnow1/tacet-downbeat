@@ -361,6 +361,143 @@ check(
   "Console unreachable: no route to host",
 );
 
+// -- the age of the last command (#12) ---------------------------------------
+
+const { context: ageContext } = browser();
+const ageText = ageContext.ageText;
+
+check("age: nothing sent yet is blank", ageText(null), "");
+check("age: seconds are exact and close up", ageText(3.4), "3s ago");
+check("age: rounds rather than truncating", ageText(59.6), "1 min ago");
+check("age: minutes once it is not urgent any more", ageText(76 * 60), "76 min ago");
+check("age: unbounded, so a whole game's worth is still readable", ageText(3 * 3600 + 5 * 60), "185 min ago");
+
+check(
+  "the readout carries the age of the last command, not only in handoff mode",
+  rendered({}, { db: 0.0, age: 76 * 60 }).get("level").textContent,
+  "0.00 dB - 76 min ago",
+);
+check(
+  "no age is shown when nothing has ever been sent",
+  rendered({}, { age: null }).get("level").textContent,
+  "-∞ dB",
+);
+
+// -- StageMix has the DCA: the commanded level renders as unknown (#12) ------
+
+check(
+  "a level that is not trusted reads as unknown rather than a confident number",
+  rendered({}, { level_known: false, db: 0.0 }).get("level").textContent,
+  "unknown",
+);
+check(
+  "the age still shows so a stale belief cannot look current",
+  rendered({}, { level_known: false, db: 0.0, age: 76 * 60 }).get("level").textContent,
+  "unknown - 76 min ago",
+);
+check(
+  "the tag says unknown too",
+  rendered({}, { level_known: false }).get("level-tag").textContent,
+  "unknown",
+);
+check(
+  "styled as unknown, not as commanded",
+  rendered({}, { level_known: false }).get("level-tag").className,
+  "tag unknown",
+);
+check(
+  "an ordinary reading is tagged commanded, as before",
+  rendered({}, { level_known: true }).get("level-tag").textContent,
+  "commanded",
+);
+
+// -- handing off to StageMix, and taking it back (#12) -----------------------
+
+function handoffSnapshot(over = {}) {
+  const base = snapshot();
+  return { ...base, handoff: false, queued: false, ...over };
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(handoffSnapshot());
+  check("the confirm prompt starts closed", nodes.get("handoff-confirm").style.display, "none");
+  check("the button invites a handoff", nodes.get("btn-handoff").textContent, "StageMix has it");
+  check("and is not disabled", nodes.get("btn-handoff").disabled, false);
+}
+
+{
+  // Tapping it does not itself post anything: the box only hears about a
+  // handoff once the prompt is answered (CLAUDE.md principle 4).
+  const { context, nodes, posted } = browser();
+  context.render(handoffSnapshot());
+  posted.length = 0; // the page's own /api/state fetch on load
+  nodes.get("btn-handoff").onclick();
+  check("tapping it opens the prompt rather than acting at once", nodes.get("handoff-confirm").style.display, "block");
+  check("opening the prompt sends nothing", posted.length, 0);
+
+  nodes.get("btn-handoff-yes").onclick();
+  check("yes hands off", posted[0].path, "/api/handoff");
+  check("and closes the prompt", nodes.get("handoff-confirm").style.display, "none");
+  check("and returns to MAIN", nodes.get("tab-main").style.display, "");
+}
+
+{
+  // The negative answer is `still-mine` (#12): a pure log entry, never a
+  // handoff.
+  const { context, nodes, posted } = browser();
+  context.render(handoffSnapshot());
+  posted.length = 0;
+  nodes.get("btn-handoff").onclick();
+  nodes.get("btn-handoff-no").onclick();
+  check("no logs still-mine instead", posted[0].path, "/api/still-mine");
+  check("and never hands off", posted.some((p) => p.path === "/api/handoff"), false);
+  check("and closes the prompt too", nodes.get("handoff-confirm").style.display, "none");
+}
+
+{
+  // Answered elsewhere - another browser's "yes", or this tap's own already
+  // having landed - the question this page was asking is stale.
+  const { context, nodes } = browser();
+  context.render(handoffSnapshot());
+  nodes.get("btn-handoff").onclick();
+  check("the prompt is open", nodes.get("handoff-confirm").style.display, "block");
+  context.render(handoffSnapshot({ handoff: true }));
+  check("a snapshot that is already handed off closes it", nodes.get("handoff-confirm").style.display, "none");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(handoffSnapshot({ handoff: true }));
+  check("once handed off the button says so", nodes.get("btn-handoff").textContent, "Handed off to StageMix");
+  check("a second handoff is a no-op on the box, so the button is disabled",
+        nodes.get("btn-handoff").disabled, true);
+}
+
+// -- the take-back prompt, answered in the fader column (#12) ----------------
+
+{
+  const { context, nodes } = browser();
+  context.render(handoffSnapshot());
+  check("no prompt while nothing is queued", nodes.get("takeback").style.display, "none");
+  context.render(handoffSnapshot({ handoff: true }));
+  check("nor while handed off with nothing queued yet", nodes.get("takeback").style.display, "none");
+  context.render(handoffSnapshot({ handoff: true, queued: true }));
+  check("only once a fader tap is queued behind an answer", nodes.get("takeback").style.display, "flex");
+  context.render(handoffSnapshot({ handoff: false, queued: false }));
+  check("and it goes away once taken back", nodes.get("takeback").style.display, "none");
+}
+
+{
+  const { context, nodes, posted } = browser();
+  context.render(handoffSnapshot({ handoff: true, queued: true }));
+  posted.length = 0;
+  nodes.get("btn-take-back-up").onclick();
+  check("it's up answers the take-back", posted[0].path, "/api/take-back-up");
+  nodes.get("btn-take-back-down").onclick();
+  check("it's down answers it the other way", posted[1].path, "/api/take-back-down");
+}
+
 // -- the box's own snapshots --------------------------------------------------
 
 // Each state the box wrote, rendered as it came. A change to the snapshot's
@@ -420,7 +557,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
 
 {
   const { nodes, button } = renderedFixture("open-recording");
-  check("open: unity", nodes.get("level").textContent, "0.00 dB");
+  check("open: unity", nodes.get("level").textContent, "0.00 dB - 0s ago");
   check("open: rolling", nodes.get("rec").textContent, "ROLLING");
   check("open: confirmed", nodes.get("rec-tag").textContent, "confirmed");
   check("open: where", nodes.get("rec-pos").textContent, "at 0:12:34.500");
@@ -430,7 +567,11 @@ for (const name of Object.keys(SNAPSHOTS)) {
 
 {
   const { nodes } = renderedFixture("releasing");
-  check("releasing: where it is and where it is going", nodes.get("level").textContent, "0.00 dB \u2192 -\u221e dB");
+  check(
+    "releasing: where it is and where it is going",
+    nodes.get("level").textContent,
+    "0.00 dB \u2192 -\u221e dB - 0s ago",
+  );
 }
 
 {

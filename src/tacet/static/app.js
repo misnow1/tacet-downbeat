@@ -334,6 +334,21 @@ function faderDb(db) {
   return db === null ? "-∞ dB" : db.toFixed(2) + " dB";
 }
 
+// The age of the last thing actually sent to the console - a snap, a ramp
+// step, or a take-back's own confirming packet - in the box's own words
+// (#12). Shown whether or not the level is trusted: game 2 spent 76 minutes
+// with StageMix on the DCA and the page reading a confident number that had
+// not been true since 14:15, and the age is what would have said so. Seconds
+// close up, so a page that just tapped does not say "0 min ago"; minutes
+// further out, since nobody needs second-level precision on a number that
+// might be an hour old.
+function ageText(seconds) {
+  if (seconds === null) return "";
+  const whole = Math.round(seconds);
+  if (whole < 60) return whole + "s ago";
+  return Math.round(seconds / 60) + " min ago";
+}
+
 function recordingTag(liveness, known) {
   if (liveness === "lost") return ["unknown", "LINK LOST"];
   if (liveness === "unknown") return ["unknown", "no feedback"];
@@ -393,10 +408,35 @@ function render(next) {
   // as a fader that is not moving. Null dB is -inf, never a missing reading.
   // Compared as console units, not dB: -inf has no number to compare with.
   const arrived = fader.target === null || fader.target === fader.commanded;
-  $("level").textContent = arrived
-    ? faderDb(fader.db)
-    : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db);
+  // StageMix has the DCA (#12): `commanded` is fiction until a take-back
+  // answer corrects it, and the number must say so rather than sit there
+  // looking confident - the game 2 hazard this whole feature exists for.
+  const value = fader.level_known
+    ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
+    : "unknown";
+  const age = ageText(fader.age);
+  $("level").textContent = age ? value + " - " + age : value;
+  const levelTag = $("level-tag");
+  levelTag.textContent = fader.level_known ? "commanded" : "unknown";
+  levelTag.className = "tag " + (fader.level_known ? "commanded" : "unknown");
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
+
+  // The take-back prompt: only while a fader tap is queued behind an answer,
+  // and answered in the fader column (#12) rather than the prompt slot - it
+  // is timed against the music, unlike handing off itself.
+  $("takeback").style.display = next.handoff && next.queued ? "flex" : "none";
+  // A second handoff is a no-op on the box (state.step), so the button says
+  // as much rather than inviting a tap that does nothing.
+  const handoffButton = $("btn-handoff");
+  handoffButton.disabled = next.handoff;
+  handoffButton.textContent = next.handoff ? "Handed off to StageMix" : "StageMix has it";
+  // Whatever this page's own prompt was asking is answered the moment
+  // `handoff` is true, however that happened - another browser's "yes", or
+  // this one's own tap already landing.
+  if (handoffPromptOpen && next.handoff) {
+    handoffPromptOpen = false;
+    paintHandoffPrompt();
+  }
 
   const rec = next.recording;
   const [recClass, recLabel] = recordingTag(rec.liveness, rec.known);
@@ -447,6 +487,42 @@ for (const [id, path] of [["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stan
                           ["btn-record", "/api/record"]]) {
   const node = $(id);
   node.onclick = () => { post(path, undefined, node); returnToMain(); };
+}
+
+// -- handing off to StageMix, and taking it back (#12) -----------------------
+//
+// A mode change asks rather than firing on one tap (CLAUDE.md principle 4:
+// "announce, don't surprise"), using the prompt slot #19 will also draw on.
+// "No" is `still-mine`: a pure log entry, answered from here rather than a
+// button in a grid, that changes nothing on the box.
+let handoffPromptOpen = false;
+
+function paintHandoffPrompt() {
+  $("handoff-confirm").style.display = handoffPromptOpen ? "block" : "none";
+}
+
+$("btn-handoff").onclick = () => { handoffPromptOpen = true; paintHandoffPrompt(); };
+
+$("btn-handoff-yes").onclick = () => {
+  handoffPromptOpen = false;
+  paintHandoffPrompt();
+  post("/api/handoff", undefined, $("btn-handoff-yes"));
+  returnToMain();
+};
+
+$("btn-handoff-no").onclick = () => {
+  handoffPromptOpen = false;
+  paintHandoffPrompt();
+  post("/api/still-mine", undefined, $("btn-handoff-no"));
+  returnToMain();
+};
+
+// The take-back answers, unlike the handoff prompt above, are not asked for -
+// they only ever appear because a fader tap is already queued behind one, so
+// there is nothing left to confirm and no navigation to do.
+for (const [id, path] of [["btn-take-back-up", "/api/take-back-up"], ["btn-take-back-down", "/api/take-back-down"]]) {
+  const node = $(id);
+  node.onclick = () => post(path, undefined, node);
 }
 
 // -- expand: a tap reveals a status chip's full sentence without growing the
@@ -665,6 +741,7 @@ document.addEventListener("visibilitychange", () => {
 fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
 paintTabs();
+paintHandoffPrompt();
 setInterval(paintLink, LINK_TICK_MS);
 connect();
 holdWake();
