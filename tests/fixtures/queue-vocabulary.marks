@@ -7,6 +7,11 @@ marker	SYS|stand-down-cancelled
 marker	SYS|handed-off
 marker	SYS|took-back
 marker	SYS|still-mine
+marker	SYS|prompt-raised
+marker	SYS|prompt-accepted
+marker	SYS|prompt-dismissed
+marker	SYS|prompt-resolved
+marker	SYS|prompt-withdrawn
 marker	BAND|band-enters-stadium
 marker	BAND|band-enters-stands
 marker	BAND|band-exits-stands

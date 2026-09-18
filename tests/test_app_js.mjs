@@ -654,7 +654,7 @@ for (const known of [false, true]) {
 check(
   "the box wrote the snapshots these tests read",
   Object.keys(SNAPSHOTS).sort(),
-  ["faults", "open-recording", "releasing", "standing-down"],
+  ["faults", "open-recording", "prompt", "releasing", "standing-down"],
 );
 
 function renderedFixture(name) {

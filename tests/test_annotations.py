@@ -69,6 +69,32 @@ class TestVocabulary(unittest.TestCase):
         # in the busiest ten seconds of the night (#14).
         self.assertNotIn("cannon", ann.EVENTS)
 
+    def test_the_trigger_keys_the_prompts_ask_about_have_names(self):
+        # #19: named once, like ANCHOR_EVENT, so the vocabulary and the prompts
+        # that key off three of its events cannot drift apart.
+        self.assertEqual(ann.BAND_ENTERS_STANDS, "band-enters-stands")
+        self.assertEqual(ann.BAND_EXITS_STANDS, "band-exits-stands")
+        self.assertEqual(ann.HALFTIME_EXODUS, "halftime-exodus")
+        for key in (ann.BAND_ENTERS_STANDS, ann.BAND_EXITS_STANDS, ann.HALFTIME_EXODUS):
+            self.assertIn(key, ann.EVENTS)
+            self.assertTrue(ann.EVENTS[key].button)
+        self.assertIs(ann.EVENTS[ann.HALFTIME_EXODUS].kind, ann.Kind.SPAN)
+
+    def test_the_prompt_keys_are_written_by_the_box_not_tapped(self):
+        # #19: five keys because each instant becomes a Reaper marker named
+        # after its key, and five identically named markers are unreadable.
+        keys = ("prompt-raised", "prompt-accepted", "prompt-dismissed", "prompt-resolved", "prompt-withdrawn")
+        for key in keys:
+            with self.subTest(key=key):
+                event = ann.lookup(key)
+                self.assertFalse(event.button)
+                self.assertIsNone(event.action)
+                self.assertIs(event.category, ann.Category.SESSION)
+                self.assertTrue(event.label)
+                self.assertNotIn(key, {b.key for b in ann.BUTTONS})
+                with self.assertRaises(ann.NotAButtonError):
+                    ann.operator_event(key)
+
     def test_retired_keys_still_read_but_are_no_longer_offered(self):
         # A key is never deleted: `end_span` looks up the event of a span an
         # older log left open, and old logs must go on deriving markers (#14).

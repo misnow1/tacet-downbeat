@@ -45,6 +45,9 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")
         self.assertEqual(states["snapshot-open-recording.json"]["recording"]["liveness"], "live")
         self.assertEqual(states["snapshot-releasing.json"]["fader"]["target"], -32768)
+        prompt = states["snapshot-prompt.json"]
+        self.assertEqual(prompt["state"], "open")
+        self.assertEqual(prompt["prompt"], {"seq": 1, "kind": "stand-down", "source": "band-exits-stands"})
         faults = states["snapshot-faults.json"]
         self.assertFalse(faults["fader"]["healthy"])
         self.assertFalse(faults["log"]["healthy"])
@@ -60,6 +63,18 @@ class TestSnapshotFixtures(unittest.TestCase):
                 self.assertEqual(snapshot["fader"]["level_known"], name != "snapshot-standing-down.json")
                 self.assertNotIn("handoff", snapshot)
                 self.assertNotIn("queued", snapshot)
+
+    def test_every_fixture_says_whether_it_is_asking_and_whether_it_is_on_duty(self):
+        # #19: `prompt` is the question on the page, or null; `duty` is when the
+        # box last armed or stood down on its own monotonic clock, or null.
+        for path, text in self.generated.items():
+            snapshot = json.loads(text)
+            with self.subTest(fixture=path.name):
+                self.assertIn("prompt", snapshot)
+                self.assertEqual(set(snapshot["duty"]), {"armed", "since"})
+                self.assertEqual(snapshot["duty"]["armed"], snapshot["state"] != "standing-down")
+                asking = path.name == "snapshot-prompt.json"
+                self.assertEqual(snapshot["prompt"] is not None, asking)
 
     def test_the_page_tests_load_the_fixtures_rather_than_a_copy(self):
         source = PAGE_TESTS.read_text(encoding="utf-8")
