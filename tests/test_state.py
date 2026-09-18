@@ -578,7 +578,42 @@ class TestHandoff(unittest.TestCase):
         handed_off_with_queue = st.step(opened(handoff=True), queued_event).machine
         outcome = send(handed_off_with_queue, st.Command.TAKE_BACK_UP)
         self.assertEqual(outcome.replay, queued_event)
+        # Not forgotten yet - only TAKE_BACK_CONFIRMED, once the shell knows
+        # this answer's own packet actually landed, is allowed to clear it
+        # (#101): losing it here, before delivery is known, is what let a
+        # failed confirming send drop a queued move silently.
+        self.assertEqual(outcome.machine.queued, queued_event)
+
+    def test_take_back_confirmed_forgets_the_queued_replay(self):
+        queued_event = st.Event(st.Command.RELEASE, detail="out")
+        with_queue = opened(queued=queued_event)
+        outcome = send(with_queue, st.Command.TAKE_BACK_CONFIRMED)
         self.assertIsNone(outcome.machine.queued)
+
+    def test_take_back_confirmed_is_a_no_op_with_nothing_queued(self):
+        outcome = send(opened(), st.Command.TAKE_BACK_CONFIRMED)
+        self.assertIsNone(outcome.machine.queued)
+
+    def test_take_back_up_from_a_handed_off_ready_commits_to_open(self):
+        # #101: "up" no longer distinguishes the hold level from target once
+        # StageMix may have moved the fader anywhere in between - resolving
+        # the belief to target but leaving `state` at READY would have the
+        # why line keep describing a ride that is no longer happening.
+        outcome = send(readying(handoff=True), st.Command.TAKE_BACK_UP)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertEqual(outcome.fader, st.FaderCommand.TAKE_BACK_UP)
+
+    def test_take_back_down_from_a_handed_off_ready_stays_in_ready(self):
+        # Only "up" needs the extra case (#101) - "down" already resolves to
+        # -inf regardless of what state preceded the handoff.
+        outcome = send(readying(handoff=True), st.Command.TAKE_BACK_DOWN)
+        self.assertEqual(outcome.machine.state, st.State.READY)
+
+    def test_take_back_up_from_other_states_does_not_change_state(self):
+        for start in (armed(handoff=True), opened(handoff=True)):
+            with self.subTest(state=start.state):
+                outcome = send(start, st.Command.TAKE_BACK_UP)
+                self.assertEqual(outcome.machine.state, start.state)
 
     def test_taking_back_control_is_a_no_op_when_not_handed_off(self):
         for command in (st.Command.TAKE_BACK_UP, st.Command.TAKE_BACK_DOWN):
@@ -588,17 +623,19 @@ class TestHandoff(unittest.TestCase):
                 self.assertIsNone(outcome.fader)
 
     def test_a_failed_take_back_can_be_retried(self):
-        # The confirming packet itself did not reach the console. By the time
-        # MOVE_FAILED marks the machine stalled, `handoff` is already false -
-        # this is what lets the same answer be tapped again to retry it.
+        # The confirming packet itself did not reach the console. `handoff`
+        # is already false by then (#12); what says a retry is still owed is
+        # `queued` surviving, not `stalled` - TAKE_BACK_UP can never fail, so
+        # it never sets `stalled` at all (#101).
         for command, fader in (
             (st.Command.TAKE_BACK_UP, st.FaderCommand.TAKE_BACK_UP),
             (st.Command.TAKE_BACK_DOWN, st.FaderCommand.TAKE_BACK_DOWN),
         ):
             with self.subTest(command=command):
-                outcome = send(opened(stalled=True), command)
+                queued_event = st.Event(st.Command.RELEASE, detail="out")
+                outcome = send(opened(queued=queued_event), command)
                 self.assertEqual(outcome.fader, fader)
-                self.assertFalse(outcome.machine.stalled)
+                self.assertEqual(outcome.replay, queued_event)
 
     def test_a_healthy_take_back_is_not_retried_by_a_stray_answer(self):
         # `handoff` already false and not stalled: nothing to retry.

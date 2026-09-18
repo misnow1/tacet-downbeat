@@ -39,6 +39,10 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
     ann.Action.RELEASE: state.Command.RELEASE,
 }
 
+#: The two `FaderCommand`s a take-back answer can emit (#12) - the trigger for
+#: confirming delivery and clearing `queued` via TAKE_BACK_CONFIRMED.
+_TAKE_BACK_FADER_COMMANDS = (state.FaderCommand.TAKE_BACK_UP, state.FaderCommand.TAKE_BACK_DOWN)
+
 #: How often the page is told where a fade has reached.
 #:
 #: The ramp ticks at 50 Hz, so pushing every step would be a hundred frames
@@ -308,6 +312,11 @@ class App:
         delivered = True
         if outcome.fader is not None:
             delivered = await self._move_fader(outcome.fader, source=source, detail=detail, ride_seconds=ride_seconds)
+        if outcome.fader in _TAKE_BACK_FADER_COMMANDS and delivered:
+            # Only now is it safe to forget `queued` - see TAKE_BACK_CONFIRMED
+            # in state.py. A failed send leaves it in place for the retry a
+            # repeated tap of the same answer runs (#12).
+            self._take_back_confirmed()
         for key in session_entries(before, outcome.machine):
             self._record(
                 key,
@@ -321,10 +330,11 @@ class App:
             # Replayed through the ordinary path rather than special-cased
             # here, so it ramps from whatever `commanded_level` the answer
             # just corrected, exactly as if the operator tapped it again now.
-            # Skipped if the answer's own packet failed to send (MOVE_FAILED
-            # already marked the machine stalled for a retry): replaying
+            # Skipped if the answer's own packet failed to send: replaying
             # against a belief that was never actually confirmed would be the
-            # exact hazard #12 exists to prevent.
+            # exact hazard #12 exists to prevent. `queued` is untouched in
+            # that case (TAKE_BACK_CONFIRMED above did not run), so a repeat
+            # tap of the same answer retries and replays it then instead.
             replay = outcome.replay
             await self._command(
                 replay.command,
@@ -333,6 +343,14 @@ class App:
                 ride_seconds=self._ride_seconds_for_replay(replay),
             )
         return outcome
+
+    def _take_back_confirmed(self) -> None:
+        """A take-back answer's own fader command was actually delivered.
+
+        Stepped directly, like `_ride_in_landed` - nothing was tapped. Only
+        now is it safe to let the machine forget `queued` (#12).
+        """
+        self.machine = state.step(self.machine, state.Event(state.Command.TAKE_BACK_CONFIRMED)).machine
 
     def _ride_seconds_for_replay(self, replay: state.Event) -> float | None:
         if replay.command is state.Command.READY:
