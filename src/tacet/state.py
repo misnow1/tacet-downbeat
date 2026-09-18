@@ -35,8 +35,13 @@
     each one depends on knowing the real level, which is exactly what is not
     known - and STAND_DOWN goes straight to STANDING DOWN from wherever it
     was, sending nothing. A snap TRIGGER always passes straight through.
-    TAKE_BACK_UP and TAKE_BACK_DOWN answer where the fader actually is, clear
-    `handoff`, and run whatever was queued from that corrected belief.
+    TAKE_BACK_UP and TAKE_BACK_DOWN answer where the fader actually is and
+    clear `handoff`; TAKE_BACK_UP also commits READY the rest of the way to
+    OPEN, since "up" no longer distinguishes the hold level from target once
+    control has been handed over. Neither clears `queued` by itself - only
+    TAKE_BACK_CONFIRMED, once the shell knows the answer's own fader command
+    actually landed, runs whatever was queued and lets the machine forget it.
+    A failed send leaves `queued` in place for a repeated tap to retry.
 
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
@@ -122,6 +127,11 @@ class Command(StrEnum):
     #: because closing is always safe to do proactively.
     TAKE_BACK_UP = "take-back-up"
     TAKE_BACK_DOWN = "take-back-down"
+    #: A take-back answer's own fader command was confirmed delivered.
+    #: Reported by the shell, never tapped - like RIDE_IN_COMPLETE, it exists
+    #: so `queued` is only forgotten once the belief it depends on is
+    #: actually real, not merely attempted (#12).
+    TAKE_BACK_CONFIRMED = "take-back-confirmed"
 
 
 class FaderCommand(StrEnum):
@@ -241,6 +251,8 @@ def step(machine: Machine, event: Event) -> Outcome:
         return _take_back(machine, fader=FaderCommand.TAKE_BACK_UP)
     if event.command is Command.TAKE_BACK_DOWN:
         return _take_back(machine, fader=FaderCommand.TAKE_BACK_DOWN)
+    if event.command is Command.TAKE_BACK_CONFIRMED:
+        return _take_back_confirmed(machine)
     if machine.handoff:
         # Checked before dispatching by state, because both of these apply
         # identically whatever `state` currently is (#12).
@@ -301,20 +313,39 @@ def _blocked_by_handoff(event: Event) -> bool:
 
 
 def _take_back(machine: Machine, *, fader: FaderCommand) -> Outcome:
-    """UP and DOWN share everything except which `FaderCommand` they emit."""
+    """UP and DOWN share everything except which `FaderCommand` they emit.
+
+    Neither clears `queued` here. UP never sends a packet, so it cannot fail,
+    but DOWN does, and clearing `queued` before knowing whether that packet
+    actually landed would silently drop a blocked tap the moment it failed -
+    exactly the surprise CLAUDE.md's fail-visible principle forbids. Only
+    TAKE_BACK_CONFIRMED, once the shell knows the packet was delivered, is
+    allowed to forget it (#12)."""
     if not machine.handoff:
-        if machine.stalled:
-            # The confirming packet itself failed to send. Retry it - by now
-            # `queued` is already empty, whichever answer it was: the shell
-            # only replays a queued tap once its own confirming send actually
-            # landed, so nothing was lost, only delayed (#12).
-            return Outcome(machine=replace(machine, stalled=False), fader=fader)
+        if machine.queued is not None:
+            # A previous take-back answer's own packet failed to send -
+            # `queued` survived because nothing has confirmed delivery yet.
+            # Retry by tapping the same answer again.
+            return Outcome(machine=machine, fader=fader, replay=machine.queued)
         return _unchanged(machine)
+    state_after = machine.state
+    if fader is FaderCommand.TAKE_BACK_UP and state_after is State.READY:
+        # "Up" no longer distinguishes the hold level from target once
+        # StageMix may have moved the fader anywhere in between - commit to
+        # OPEN the same way an ordinary trigger would from READY (#12).
+        state_after = State.OPEN
     return Outcome(
-        machine=replace(machine, handoff=False, queued=None),
+        machine=replace(machine, state=state_after, handoff=False),
         fader=fader,
         replay=machine.queued,
     )
+
+
+def _take_back_confirmed(machine: Machine) -> Outcome:
+    """The shell steps this directly, like RIDE_IN_COMPLETE - nothing was
+    tapped - once a take-back answer's own fader command is confirmed
+    delivered. Only now is it safe to forget the queued replay (#12)."""
+    return Outcome(machine=replace(machine, queued=None))
 
 
 def _standing_down(machine: Machine, event: Event) -> Outcome:

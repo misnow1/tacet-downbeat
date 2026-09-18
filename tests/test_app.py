@@ -1967,6 +1967,44 @@ class TestHandoff(AppTestCase):
         self.assertFalse(app.machine.handoff)
         self.assertEqual(self.keys().count("took-back"), 0)
 
+    async def test_take_back_up_from_ready_commits_to_open(self):
+        # #101: taking back "up" from a handed-off READY has to commit the
+        # rest of the way to OPEN, not leave `state` claiming a ride to the
+        # hold level that is no longer what is believed.
+        app = self.build()
+        app._ready_ride_seconds = 0.05
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        await app.handoff()
+        await app.take_back_up()
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+
+    async def test_a_failed_take_back_down_can_be_retried_without_losing_the_queued_move(self):
+        # #101: the confirming -inf packet fails to send, so the answer has
+        # to be tapped again. The move it was blocking must still be there to
+        # replay once the retry actually lands, not silently gone.
+        sender = FlakySender(fail_after=0)
+        app = self.build(console_sender=sender)
+        app._slow_open_seconds = 0.05
+        await app.arm()
+        await app.handoff()
+        await app.annotate("up-slow")
+        self.assertTrue(app.snapshot()["queued"])
+
+        await app.take_back_down()
+        self.assertFalse(app.machine.handoff)
+        self.assertTrue(app.snapshot()["queued"])
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+        sender.heal()
+        await app.take_back_down()
+        self.assertFalse(app.snapshot()["queued"])
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+
 
 class SwallowingConsole(dm7.Dm7Client):
     """The console client as it was before #34: a fade whose caller was
