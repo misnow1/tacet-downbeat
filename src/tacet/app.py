@@ -39,10 +39,6 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
     ann.Action.RELEASE: state.Command.RELEASE,
 }
 
-#: The two `FaderCommand`s a take-back answer can emit (#12) - the trigger for
-#: confirming delivery and clearing `queued` via TAKE_BACK_CONFIRMED.
-_TAKE_BACK_FADER_COMMANDS = (state.FaderCommand.TAKE_BACK_UP, state.FaderCommand.TAKE_BACK_DOWN)
-
 #: How often the page is told where a fade has reached.
 #:
 #: The ramp ticks at 50 Hz, so pushing every step would be a hundred frames
@@ -70,8 +66,12 @@ MOVE_LANDED = "move-landed"
 MOVE_FAILED = "move-failed"
 #: A fader command that arrived too late to execute (#16).
 STALE_TAP = "stale-tap"
-#: Written when `handoff` starts or ends - the control-authority timeline
-#: `docs/design.md` describes (#12).
+#: Written when the box stops knowing where the fader is (`HANDED_OFF`, only
+#: ever from the operator's own hand-off) and when it starts knowing again
+#: (`TOOK_BACK`) - the control-authority timeline `docs/design.md` describes
+#: (#12). Since #107 `TOOK_BACK` also marks the first absolute tap after a cold
+#: boot, which never handed anything off; the key is kept so older logs still
+#: read, and the log's own `handed-off` is what says a handoff really happened.
 HANDED_OFF = "handed-off"
 TOOK_BACK = "took-back"
 #: The return prompt's negative answer: a pure confirmation, nothing changes.
@@ -138,9 +138,9 @@ def session_entries(before: state.Machine, after: state.Machine) -> tuple[str, .
         entries.append(STAND_DOWN_CANCELLED)
     if after.state is down and before.state is not down:
         entries.append(STOOD_DOWN)
-    if after.handoff and not before.handoff:
+    if before.level_known and not after.level_known:
         entries.append(HANDED_OFF)
-    if before.handoff and not after.handoff:
+    if after.level_known and not before.level_known:
         entries.append(TOOK_BACK)
     return tuple(entries)
 
@@ -242,17 +242,23 @@ class App:
         with _tapped(tap):
             return await self._command(state.Command.HANDOFF)
 
-    async def take_back_up(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+    async def close_now(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+        """One immediate packet to -inf, correct from any belief (#107). The
+        one fader move always available, so it is never refused by state or by
+        not knowing the level. Stale-checked like every other fader tap (#16)."""
         with _tapped(tap):
-            if self._refuse_stale("take_back_up", tap):
+            if self._refuse_stale("close_now", tap):
                 return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
-            return await self._command(state.Command.TAKE_BACK_UP, detail="take-back-up")
+            return await self._command(state.Command.CLOSE_NOW, detail="close-now")
 
-    async def take_back_down(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+    async def report_ready(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+        """The operator says the fader is already at the hold level (#107).
+        Belief only: nothing is sent. Stale-checked like every other fader tap
+        (#16), for parity with `stand_down`, though it moves nothing."""
         with _tapped(tap):
-            if self._refuse_stale("take_back_down", tap):
+            if self._refuse_stale("report_ready", tap):
                 return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
-            return await self._command(state.Command.TAKE_BACK_DOWN, detail="take-back-down")
+            return await self._command(state.Command.REPORT_READY, detail="report-ready")
 
     async def confirm_still_mine(self, *, tap: taps.TapTiming | None = None) -> None:
         """The return prompt's negative answer (#12): a pure log entry, never
@@ -309,14 +315,14 @@ class App:
             # (#12) - the same reasoning as any newer move superseding an
             # older one, just triggered by a mode change instead of a move.
             self._cancel_move()
-        delivered = True
         if outcome.fader is not None:
-            delivered = await self._move_fader(outcome.fader, source=source, detail=detail, ride_seconds=ride_seconds)
-        if outcome.fader in _TAKE_BACK_FADER_COMMANDS and delivered:
-            # Only now is it safe to forget `queued` - see TAKE_BACK_CONFIRMED
-            # in state.py. A failed send leaves it in place for the retry a
-            # repeated tap of the same answer runs (#12).
-            self._take_back_confirmed()
+            await self._move_fader(
+                outcome.fader,
+                source=source,
+                detail=detail,
+                ride_seconds=ride_seconds,
+                level_was_known=before.level_known,
+            )
         for key in session_entries(before, outcome.machine):
             self._record(
                 key,
@@ -324,50 +330,18 @@ class App:
                 project_seconds=self._playhead(),
             )
         self._notify()
-
-        if outcome.replay is not None and delivered:
-            # The tap that was blocked pending this answer, now safe to run.
-            # Replayed through the ordinary path rather than special-cased
-            # here, so it ramps from whatever `commanded_level` the answer
-            # just corrected, exactly as if the operator tapped it again now.
-            # Skipped if the answer's own packet failed to send: replaying
-            # against a belief that was never actually confirmed would be the
-            # exact hazard #12 exists to prevent. `queued` is untouched in
-            # that case (TAKE_BACK_CONFIRMED above did not run), so a repeat
-            # tap of the same answer retries and replays it then instead.
-            replay = outcome.replay
-            await self._command(
-                replay.command,
-                source=replay.source,
-                detail=replay.detail,
-                ride_seconds=self._ride_seconds_for_replay(replay),
-            )
         return outcome
-
-    def _take_back_confirmed(self) -> None:
-        """A take-back answer's own fader command was actually delivered.
-
-        Stepped directly, like `_ride_in_landed` - nothing was tapped. Only
-        now is it safe to let the machine forget `queued` (#12).
-        """
-        self.machine = state.step(self.machine, state.Event(state.Command.TAKE_BACK_CONFIRMED)).machine
-
-    def _ride_seconds_for_replay(self, replay: state.Event) -> float | None:
-        if replay.command is state.Command.READY:
-            return self._ready_ride_seconds
-        if replay.command is state.Command.TRIGGER and replay.gradual:
-            return self._slow_open_seconds
-        return None
 
     def _hold_level(self) -> int:
         """The READY hold level: short of target by `hold_below_db` (#6)."""
         return dm7.clamp(self._open_level - round(self._hold_below_db * dm7.UNITS_PER_DB))
 
     def _fader_target(self, command: state.FaderCommand) -> int:
-        if command in (state.FaderCommand.OPEN, state.FaderCommand.TAKE_BACK_UP):
+        if command is state.FaderCommand.OPEN:
             return self._open_level
-        if command is state.FaderCommand.READY:
+        if command in (state.FaderCommand.READY, state.FaderCommand.REPORT_READY):
             return self._hold_level()
+        # FADE and CLOSE_NOW.
         return dm7.MINUS_INF
 
     async def _move_fader(
@@ -377,25 +351,35 @@ class App:
         source: state.Source,
         detail: str,
         ride_seconds: float | None = None,
-    ) -> bool:
-        """Returns whether the move's own packet was actually delivered - a
-        background ramp counts as delivered once it is under way, since
-        nothing about starting it can fail synchronously. `_command` uses this
-        to decide whether a take-back's queued replay is safe to run (#12)."""
+        level_was_known: bool,
+    ) -> None:
+        """Carry out what the machine asked for. A failure is recorded and
+        shown, never raised: the operator stays in control.
+
+        `level_was_known` is required and has no default, so a new caller has
+        to say it: forgotten, a snap open from a believed-unity fader would
+        send nothing and still mark the level known (#107)."""
         # A console that cannot be reached must not take the box down with it.
         # The fault is recorded and shown; the operator stays in control.
         failed = False
         # A move left running in the background has delivered nothing yet.
         # FADE and READY are always background; an OPEN is only when ridden.
-        # The take-back answers are always synchronous, like a snap open: one
-        # packet or none, never a ramp of their own.
+        # CLOSE_NOW and REPORT_READY are always synchronous, like a snap open:
+        # one packet or none, never a ramp of their own.
         background = command in (state.FaderCommand.FADE, state.FaderCommand.READY) or (
             command is state.FaderCommand.OPEN and ride_seconds is not None
         )
         try:
             if command is state.FaderCommand.OPEN:
                 self._cancel_move()
-                if ride_seconds is None:
+                if ride_seconds is None and not level_was_known and self._console.commanded_level == self._open_level:
+                    # The box believes the fader is already there, and does not
+                    # know that it is (#107): `open` ramps from the belief and
+                    # says nothing to a target it is already at, which would
+                    # mark the level known without the box ever having put the
+                    # fader anywhere. Write it, so an open is absolute.
+                    self._console.send_level(self._open_level)
+                elif ride_seconds is None:
                     # The ordinary open, awaited: it is one packet and 20 ms,
                     # and a missed downbeat is unrecoverable, so it goes out
                     # before anything else gets a turn.
@@ -413,17 +397,19 @@ class App:
                 self._cancel_move()
                 seconds = ride_seconds if ride_seconds is not None else self._ready_ride_seconds
                 self._start_ride_in(self._hold_level(), seconds)
-            elif command is state.FaderCommand.TAKE_BACK_UP:
-                # Belief only - never a packet. Forcing a nonzero level with
-                # nothing queued to justify it would be exactly the surprise
-                # CLAUDE.md's fail-safe principle forbids (#12).
+            elif command is state.FaderCommand.REPORT_READY:
+                # Belief only - never a packet. The operator says the fader is
+                # already at the hold level, and READY has no fast form to
+                # drive it there with (#107). Forcing a nonzero level the
+                # operator did not put there would be exactly the surprise
+                # CLAUDE.md's fail-safe principle forbids.
                 self._cancel_move()
-                self._console.assume(self._open_level)
-            elif command is state.FaderCommand.TAKE_BACK_DOWN:
+                self._console.assume(self._hold_level())
+            elif command is state.FaderCommand.CLOSE_NOW:
                 # One immediate packet, never the 2 s fade: closing is always
                 # safe to confirm for real, and a slow ramp from a belief that
                 # might be wrong would leave the band audible for two more
-                # seconds regardless (#12).
+                # seconds regardless (#12, #107).
                 self._cancel_move()
                 self._console.send_level(dm7.MINUS_INF)
             else:
@@ -455,7 +441,6 @@ class App:
         )
         if failed:
             self._move_failed(target)
-        return not failed
 
     def _move_failed(self, target: int) -> None:
         """A send failed partway through a move.
@@ -844,23 +829,20 @@ class App:
             # the refusal loudly while this is set (#16).
             "stale_tap": self._stale,
             "detector_enabled": self.machine.allow_detector,
-            # StageMix has the DCA (#12): `commanded_level` is fiction until a
-            # take-back answer says otherwise. `queued` is whether a fader tap
-            # is waiting on that answer - the fader column pulses while it is.
-            "handoff": self.machine.handoff,
-            "queued": self.machine.queued is not None,
             "fader": {
                 "commanded": self._console.commanded_level,
                 "db": _finite(self._console.commanded_db),
                 # Always false. The protocol is write-only; see the module docstring.
                 "confirmed": False,
-                # False only while handed off (#12): `commanded_level` is not
-                # to be trusted until a take-back answer corrects it.
-                "level_known": not self.machine.handoff,
+                # False at cold boot and after a hand-off (#107, #12):
+                # `commanded_level` is a belief nothing has confirmed, and it
+                # is not to be trusted until an absolute command says where the
+                # fader is. Not a claim the last such packet was delivered;
+                # `healthy` and `stalled` carry that.
+                "level_known": self.machine.level_known,
                 # Seconds since the console was last actually told something -
-                # a snap, a ramp step, or a take-back's own confirming packet.
-                # None before anything has ever been sent. Shown in every
-                # mode, not only while handed off.
+                # a snap, a ramp step, or a close. None before anything has
+                # ever been sent. Shown in every mode, known or not.
                 "age": age,
                 "healthy": self._console.healthy,
                 "error": self._console.last_error,

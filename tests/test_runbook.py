@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, app, config, disk, serve
+from tacet import annotations, app, config, disk, serve, state, web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -140,6 +140,38 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
     def test_the_runbook_quotes_the_stale_tap_refusal(self) -> None:
         # Quoted up to the first value filled in.
         self.assertIn(app.STALE_REFUSAL.split("{")[0].strip(), self.troubleshooting)
+
+    def test_the_runbook_quotes_every_unknown_level_refusal(self) -> None:
+        # #107: quoted up to the semicolon, which is where each says what to do
+        # about it and the runbook says that on its own.
+        for message in (state.UNKNOWN_LEVEL_ARM, state.UNKNOWN_LEVEL_MOVE, state.LEVEL_ALREADY_KNOWN):
+            with self.subTest(message[:40]):
+                self.assertIn(message.split(";")[0], self.troubleshooting)
+
+    def test_the_runbook_names_the_belief_buttons_as_the_page_labels_them(self) -> None:
+        # #107: the two buttons in the readout gap. Read from the page's own
+        # markup rather than typed twice, and against the runbook with its
+        # whitespace collapsed: a label split across a line break once hid a
+        # stale one from a plain search.
+        runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
+        for button in ("btn-close-now", "btn-report-ready"):
+            with self.subTest(button=button):
+                found = re.search(rf'<button id="{button}">([^<]+)</button>', web.PAGE)
+                self.assertIsNotNone(found, f"{button} is not on the page")
+                assert found is not None
+                self.assertIn(f"**{found[1]}**", runbook)
+
+    def test_no_doc_still_bolds_an_older_wording_of_the_ready_report(self) -> None:
+        # Presence is not enough: the stale label sat in a second paragraph
+        # while the table row was right. Every bold "It's at ..." in the two
+        # operator docs has to be the page's label.
+        found = re.search(r'<button id="btn-report-ready">([^<]+)</button>', web.PAGE)
+        assert found is not None
+        for doc in ("gameday.md", "troubleshooting.md"):
+            text = " ".join((DOCS / doc).read_text(encoding="utf-8").split())
+            for bolded in re.findall(r"\*\*(It's at[^*]*)\*\*", text):
+                with self.subTest(doc=doc, bolded=bolded):
+                    self.assertEqual(bolded, found[1])
 
     def test_the_runbook_quotes_the_stopped_writer(self) -> None:
         # Quoted up to the semicolon; the page puts "Log not saving: " before it.

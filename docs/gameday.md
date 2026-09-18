@@ -97,7 +97,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 | Reading | Should say |
 |---|---|
 | State | `STANDING DOWN` |
-| Fader | `-∞ dB`, tagged **commanded** |
+| Fader | `unknown`, tagged **unknown**. The box does not know where the fader is at any boot, and says so rather than showing a number it cannot vouch for |
 | Recording | `unknown`, tagged **no feedback** (correct until something is recorded) |
 | Top of the screen | Nothing. No banner is the healthy state |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
@@ -116,6 +116,13 @@ reads right. Starting early costs nothing; see
 2. **Check a marker lands.** Tap any annotation button and confirm a marker
    appears in Reaper at the playhead. This is the only check that covers the
    whole chain - box, queue, script, Reaper.
+3. **Tap Close now**, in the fader column beside the readout. It sends one write
+   to `-∞ dB`, the fader reads `-∞ dB` tagged **commanded**, and Arm works from
+   here. Do this once at every boot, and again if the fader ever reads
+   `unknown` (after **StageMix has it**, below). It is correct from any starting
+   point and never a mute, but it cuts rather than fades: with the band playing
+   it is an abrupt cut of the band PA. Once the box knows the level, use
+   **Faded out** to close.
 
 ---
 
@@ -129,13 +136,16 @@ second press.
 
 | When | Tap |
 |---|---|
-| The band is in the stands | **Arm**. The state goes to `IDLE` |
+| The band is in the stands | **Arm**. The state goes to `IDLE`. While the fader reads `unknown` the box refuses it and says why - tap **Close now** first (pre-flight step 3) |
 | The band leaves the stands - halftime exodus, end of the game | **Stand down**. If the fader is up it fades first, then stands down |
 | The band is back in the stands after halftime | **Arm** again |
 
 **Standing down never blocks you.** The fader column works in every state: if
 the band strikes up before you have armed, tap the open you wanted and the box
-arms itself and opens. Ready does the same. The why line says it did. A fade
+arms itself and opens, even while the fader reads `unknown`: an open says where
+the fader is, so the box knows again afterwards. **Ready** does the same once
+the box knows where the fader is; while it does not, **It's at ready
+level** does, and arms the box too. The why line says it did. A fade
 while standing down just fades. What standing down changes is the duty labels
 in the log, and it is what will keep the detector out when there is one.
 
@@ -194,14 +204,31 @@ RUN**, at the bottom of MORE, with one button to end it.
 with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
 answer, and a move made in StageMix will not appear on it.
 
+**If the fader reads `unknown`** - at boot, or after you took it to StageMix -
+the box does not know where it really is. Nothing that ramps from a level can be
+trusted, so the four column buttons that ramp - **Up slow**, **Ready**,
+**Faded out** and **Score reversed** - and **Arm** are refused with the reason
+on the refusal line, and are not queued to run later. Two answers sit beside the
+readout, always in the same place:
+
+| You know | Tap |
+|---|---|
+| Nothing, and the band is not playing | **Close now**. One write to `-∞ dB`, then every button works |
+| The band is playing | **Up on whistle** or **Up on drums**. A snap open says where the fader is, whatever it was before |
+| It is sitting at the ready level | **It's at ready level**. Sends nothing, tells the box, and puts it in `READY` |
+
+**Close now** is never refused, and is the one close that is never a fade: it
+is a single write, because a 2 s fade would start from a level the box cannot
+trust. It cuts the band PA at once, so once the box knows the level use
+**Faded out**. **Stand down** is never refused either.
+
 **If you take the fader to StageMix**, tap **StageMix has it** in MORE first
 and confirm. The commanded reading goes to `unknown` - it would otherwise sit
 there looking current while StageMix moves the real fader, which is exactly
-what happened for 76 minutes in game 2. The first fader-column tap afterwards
-asks **Take back control. Where is the DCA now?**, answered right there with
-**It's up** or **It's down** - answer it before doing anything else with the
-band. A snap open (**Up on whistle** / **Up on drums**) skips the question
-outright, since it is correct starting from anywhere.
+what happened for 76 minutes in game 2. When you take it back, tap **Close now**
+or an open, as above. The log's `handed-off` entry marks the hand-off; its
+`took-back` marks the moment the box knew again, which also happens at every
+boot.
 
 ---
 

@@ -137,8 +137,14 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         console_class=dm7.Dm7Client,
         stale_tap_seconds=taps.DEFAULT_STALE_TAP_SECONDS,
         steady=False,
+        level_known=True,
     ):
-        """`steady` puts the console on a `LoopClock`, for any test that makes
+        """`level_known` defaults to True, unlike the production machine: a
+        hundred-odd tests here are about something other than a cold boot, and
+        a box that refuses to arm would make each of them open with a ritual.
+        The tests about not knowing say `level_known=False` out loud.
+
+        `steady` puts the console on a `LoopClock`, for any test that makes
         the console fail after a number of packets: on the real clock that
         number depends on how fast the runner is (#92)."""
         options = {} if opener is None else {"opener": opener}
@@ -167,6 +173,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             fade_seconds=fade,
             monotonic=clock,
             stale_tap_seconds=stale_tap_seconds,
+            machine=state.Machine(level_known=level_known),
         )
 
     def expect_push(self, app, condition):
@@ -433,7 +440,7 @@ class TestArming(AppTestCase):
 def _after(*commands):
     """The machine each command leaves, from boot. Built with the real state
     machine so no test hand-assembles a machine that cannot occur."""
-    machines = [state.Machine()]
+    machines = [state.Machine(level_known=True)]
     for command in commands:
         machines.append(state.step(machines[-1], state.Event(command)).machine)
     return machines
@@ -484,6 +491,25 @@ class TestSessionEntries(unittest.TestCase):
                 self.assertEqual(self.entries_for(self.C.ARM, *commands), ())
         landing = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.RELEASE, self.C.FADE_COMPLETE)
         self.assertEqual(landing, ())
+
+    def test_not_knowing_the_level_is_handed_off_and_knowing_it_again_is_took_back(self):
+        # #107 inverted the flag (True is now "known"), so both lines are pinned
+        # against the direction they read in.
+        known = state.Machine(level_known=True)
+        unknown = state.Machine(level_known=False)
+        self.assertEqual(tacet_app.session_entries(known, unknown), (tacet_app.HANDED_OFF,))
+        self.assertEqual(tacet_app.session_entries(unknown, known), (tacet_app.TOOK_BACK,))
+        self.assertEqual(tacet_app.session_entries(known, known), ())
+        self.assertEqual(tacet_app.session_entries(unknown, unknown), ())
+
+    def test_the_first_absolute_tap_after_boot_earns_took_back(self):
+        # A cold boot never handed anything off; the key is kept, and so is
+        # the entry, because it is the moment the box started knowing.
+        boot = state.Machine()
+        opened = state.step(boot, state.Event(self.C.TRIGGER)).machine
+        self.assertEqual(tacet_app.session_entries(boot, opened), (tacet_app.ARMED, tacet_app.TOOK_BACK))
+        closed = state.step(boot, state.Event(self.C.CLOSE_NOW)).machine
+        self.assertEqual(tacet_app.session_entries(boot, closed), (tacet_app.TOOK_BACK,))
 
     def test_a_failed_move_earns_nothing(self):
         # move-failed is written by the shell, with the level the fader stopped at.
@@ -730,12 +756,19 @@ class TestFader(AppTestCase):
         self.assertEqual(self.console_sender.levels()[-1], dm7.UNITY)
 
     async def test_every_console_packet_is_a_fader_level_write(self):
-        # Faders only, never mutes - asserted at the level the operator drives.
-        app = self.build()
+        # Faders only, never mutes - asserted at the level the operator drives,
+        # from a cold boot through every move the page can ask for (#107).
+        app = self.build(level_known=False)
+        await app.close_now()
         await app.arm()
         await app.trigger()
         await app.release()
         await app.wait_for_fade()
+        await app.handoff()
+        await app.report_ready()
+        await app.trigger()
+        await app.close_now()
+        self.assertGreaterEqual(len(self.console_sender.packets), 5)
         for address in self.console_sender.addresses():
             self.assertEqual(address, dm7.fader_address(3))
 
@@ -1745,9 +1778,89 @@ class TestUpReadyRidesToTheHoldLevel(AppTestCase):
         self.assertEqual(buttons["score-reversed"], "release")
 
 
-class TestHandoff(AppTestCase):
-    """#12: every ramp starts from `commanded_level`, which is fiction once
-    StageMix might also be moving the fader."""
+class TestFaderPositionTrust(AppTestCase):
+    """#107 (generalising #12): the box does not know where the fader is at
+    cold boot, and again after handing the DCA to StageMix. Everything here is
+    built without `level_known=True` unless it is about a known level."""
+
+    async def test_a_fresh_app_does_not_know_the_level(self):
+        # No `machine=` argument: the production default, which is unknown.
+        app = self.build(level_known=False)
+        self.assertFalse(app.machine.level_known)
+        self.assertFalse(app.snapshot()["fader"]["level_known"])
+
+    async def test_the_production_default_is_unknown(self):
+        self.build()
+        # No `machine=` at all, the way `serve` constructs it.
+        app = tacet_app.App(console=self.console, log=self.log)
+        self.assertFalse(app.machine.level_known)
+        self.assertFalse(app.snapshot()["fader"]["level_known"])
+
+    async def test_arm_at_cold_boot_is_refused_and_logs_nothing(self):
+        app = self.build(level_known=False)
+        outcome = await app.arm()
+        self.assertEqual(outcome.refusal, state.UNKNOWN_LEVEL_ARM)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertNotIn(tacet_app.ARMED, self.keys())
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_ARM)
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_the_cold_boot_ritual_is_close_now_then_arm(self):
+        app = self.build(level_known=False)
+        await app.close_now()
+        self.assertEqual(self.console_sender.levels(), [dm7.MINUS_INF])
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertTrue(app.snapshot()["fader"]["level_known"])
+        await app.arm()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertIsNone(app.snapshot()["refusal"])
+        # One packet in all: arming still sends nothing of its own.
+        self.assertEqual(self.console_sender.levels(), [dm7.MINUS_INF])
+        self.assertEqual(self.keys().count(tacet_app.TOOK_BACK), 1)
+        self.assertIn(tacet_app.ARMED, self.keys())
+
+    async def test_a_snap_open_at_cold_boot_arms_opens_and_trusts(self):
+        # The #89 pin, at the shell: a forgotten Arm must not cost a downbeat.
+        app = self.build(level_known=False)
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertTrue(app.snapshot()["fader"]["level_known"])
+        self.assertIn(tacet_app.ARMED, self.keys())
+        self.assertIn(tacet_app.TOOK_BACK, self.keys())
+
+    async def test_a_fade_at_cold_boot_is_refused_and_sends_nothing(self):
+        app = self.build(level_known=False)
+        outcome = await app.release()
+        self.assertEqual(outcome.refusal, state.UNKNOWN_LEVEL_MOVE)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_MOVE)
+
+    async def test_a_slow_open_at_cold_boot_is_refused_but_its_reason_is_still_logged(self):
+        # The operator saw what they saw: a log that kept only the accepted
+        # taps would misrepresent the night.
+        app = self.build(level_known=False)
+        await app.annotate("up-slow")
+        self.assertIn("up-slow", self.keys())
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_MOVE)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+
+    async def test_a_fade_reason_at_cold_boot_is_refused_but_still_logged(self):
+        app = self.build(level_known=False)
+        await app.annotate("out")
+        self.assertIn("out", self.keys())
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_a_refused_move_is_never_run_later(self):
+        # #107 deleted the queue: a tap blocked for want of a known level does
+        # not wait to run on a belief nobody has looked at.
+        app = self.build(level_known=False)
+        await app.annotate("out")
+        await app.annotate("up-slow")
+        await app.close_now()
+        await app.wait_for_fade()
+        self.assertEqual(self.console_sender.levels(), [dm7.MINUS_INF])
 
     async def test_handoff_is_logged_and_sends_nothing(self):
         app = self.build()
@@ -1755,37 +1868,69 @@ class TestHandoff(AppTestCase):
         await app.trigger()
         sent = len(self.console_sender.packets)
         await app.handoff()
-        self.assertTrue(app.machine.handoff)
+        self.assertFalse(app.machine.level_known)
+        self.assertFalse(app.snapshot()["fader"]["level_known"])
         self.assertEqual(len(self.console_sender.packets), sent)
-        self.assertIn("handed-off", self.keys())
+        self.assertIn(tacet_app.HANDED_OFF, self.keys())
 
     async def test_a_second_handoff_is_not_logged_again(self):
         app = self.build()
         await app.handoff()
         await app.handoff()
-        self.assertEqual(self.keys().count("handed-off"), 1)
+        self.assertEqual(self.keys().count(tacet_app.HANDED_OFF), 1)
 
     async def test_handoff_is_legal_while_standing_down(self):
         app = self.build()
         await app.handoff()
-        self.assertTrue(app.machine.handoff)
+        self.assertFalse(app.machine.level_known)
         self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
 
-    async def test_a_snap_open_still_works_while_handed_off(self):
+    async def test_a_snap_open_after_handoff_makes_the_level_known_again(self):
         app = self.build()
         await app.arm()
         await app.handoff()
         await app.annotate("up-whistle")
         self.assertEqual(app.machine.state, state.State.OPEN)
         self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertTrue(app.machine.level_known)
+        self.assertIn(tacet_app.TOOK_BACK, self.keys())
 
-    async def test_a_snap_open_does_not_clear_handoff(self):
+    async def test_a_snap_open_writes_even_when_the_box_believes_the_fader_is_already_there(self):
+        # The absolute half of the invariant (#107). After a hand-off from OPEN
+        # the box still *believes* unity, and `Dm7Client.open` says nothing to
+        # a level it thinks it is already at: without a real write the box
+        # would mark the level known having put the fader nowhere, while
+        # StageMix may have left it anywhere at all.
         app = self.build()
         await app.arm()
+        await app.trigger()
         await app.handoff()
+        sent = len(self.console_sender.packets)
+        await app.trigger()
+        self.assertEqual(len(self.console_sender.packets), sent + 1)
+        self.assertEqual(self.console_sender.levels()[-1], dm7.UNITY)
+        self.assertTrue(app.machine.level_known)
+        self.assertTrue(app.snapshot()["fader"]["level_known"])
+
+    async def test_that_holds_after_standing_down_while_unknown_too(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.handoff()
+        await app.stand_down()
+        sent = len(self.console_sender.packets)
         await app.annotate("up-whistle")
-        self.assertTrue(app.machine.handoff)
-        self.assertFalse(app.snapshot()["fader"]["level_known"])
+        self.assertEqual(len(self.console_sender.packets), sent + 1)
+        self.assertEqual(self.console_sender.levels()[-1], dm7.UNITY)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def test_an_open_while_the_level_is_known_and_already_there_still_says_nothing(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        sent = len(self.console_sender.packets)
+        await app.trigger()
+        self.assertEqual(len(self.console_sender.packets), sent)
 
     async def test_handoff_cancels_a_move_in_flight(self):
         app = self.build(fade=5.0)
@@ -1794,7 +1939,7 @@ class TestHandoff(AppTestCase):
         await app.annotate("out")
         await asyncio.sleep(UNDER_WAY)
         await app.handoff()
-        self.assertTrue(app.machine.handoff)
+        self.assertFalse(app.machine.level_known)
         # Presumed landed rather than left fading forever (#12): nothing will
         # ever fire FADE_COMPLETE for a fade that got cancelled.
         self.assertEqual(app.machine.state, state.State.IDLE)
@@ -1802,117 +1947,114 @@ class TestHandoff(AppTestCase):
         await asyncio.sleep(SUPERSEDED_WAKES)
         self.assertEqual(self.console.commanded_level, level_after_cancel)
 
-    async def test_faded_out_is_queued_and_the_reason_is_logged_immediately(self):
+    async def test_a_fade_after_handoff_is_refused_not_queued(self):
         app = self.build()
         await app.arm()
         await app.trigger()
         commanded_before = self.console.commanded_level
-        commanded_count_before = len([e for e in self.entries() if e.event == tacet_app.COMMANDED])
+        count_before = len([e for e in self.entries() if e.event == tacet_app.COMMANDED])
         await app.handoff()
         await app.annotate("out")
         self.assertEqual(app.machine.state, state.State.OPEN)
         self.assertEqual(self.console.commanded_level, commanded_before)
         self.assertIn("out", self.keys())
-        # The reason is logged at once; no new fader move - and so no new
-        # `commanded` entry - happens until the take-back is answered.
-        commanded_count_after = len([e for e in self.entries() if e.event == tacet_app.COMMANDED])
-        self.assertEqual(commanded_count_after, commanded_count_before)
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_MOVE)
+        count_after = len([e for e in self.entries() if e.event == tacet_app.COMMANDED])
+        self.assertEqual(count_after, count_before)
 
-    async def test_a_second_queued_tap_replaces_the_first(self):
+    async def test_close_now_sends_one_packet_to_minus_infinity(self):
         app = self.build()
         await app.arm()
         await app.trigger()
-        await app.handoff()
-        await app.annotate("out")
-        await app.annotate("score-reversed")
-        self.assertIn("out", self.keys())
-        self.assertIn("score-reversed", self.keys())
-        await app.take_back_down()
-        await app.wait_for_fade()
-        # Only the replaced tap's reason ever gets a fader move: "out" is
-        # queued and then silently dropped, never "score-reversed" and "out"
-        # both moving the fader.
-        replayed = [e for e in self.entries() if e.event == tacet_app.COMMANDED and e.data["detail"] == "out"]
-        self.assertEqual(replayed, [])
-
-    async def test_take_back_up_with_nothing_queued_sends_nothing(self):
-        app = self.build()
-        await app.arm()
         await app.handoff()
         sent = len(self.console_sender.packets)
-        await app.take_back_up()
-        self.assertEqual(len(self.console_sender.packets), sent)
-        self.assertFalse(app.machine.handoff)
+        await app.close_now()
+        self.assertEqual(len(self.console_sender.packets), sent + 1)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertTrue(app.machine.level_known)
+        self.assertIn(tacet_app.TOOK_BACK, self.keys())
+
+    async def test_close_now_works_when_the_level_is_already_known(self):
+        app = self.build()
+        await app.arm()
+        await app.trigger()
+        await app.close_now()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        # Not the 2 s fade: no background move is left running.
+        self.assertFalse(self.console.is_ramping)
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED][-1]
+        self.assertEqual(commanded.data["command"], "close-now")
+        self.assertEqual(commanded.data["detail"], "close-now")
+        self.assertTrue(commanded.data["delivered"])
+
+    async def test_close_now_cancels_a_move_in_flight(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await asyncio.sleep(UNDER_WAY)
+        await app.close_now()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+    async def test_close_now_from_a_pending_stand_down_lands_standing_down(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        await app.close_now()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+
+    async def test_report_ready_sends_no_packet_and_assumes_the_hold_level(self):
+        app = self.build(level_known=False)
+        outcome = await app.report_ready()
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(outcome.fader, state.FaderCommand.REPORT_READY)
+        self.assertEqual(self.console.commanded_level, app._hold_level())
+        self.assertEqual(app.machine.state, state.State.READY)
         self.assertTrue(app.snapshot()["fader"]["level_known"])
-        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertIn(tacet_app.ARMED, self.keys())
+        self.assertIn(tacet_app.TOOK_BACK, self.keys())
 
-    async def test_take_back_down_always_sends_a_packet(self):
+    async def test_report_ready_is_logged_as_the_belief_it_is(self):
+        app = self.build(level_known=False)
+        await app.report_ready()
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED][-1]
+        self.assertEqual(commanded.data["command"], "report-ready")
+        self.assertEqual(commanded.data["detail"], "report-ready")
+        self.assertEqual(commanded.data["level"], app._hold_level())
+
+    async def test_report_ready_is_refused_once_the_level_is_known(self):
         app = self.build()
         await app.arm()
-        await app.trigger()
-        await app.handoff()
-        await app.take_back_down()
+        outcome = await app.report_ready()
+        self.assertEqual(outcome.refusal, state.LEVEL_ALREADY_KNOWN)
+        self.assertEqual(app.machine.state, state.State.IDLE)
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
-        self.assertFalse(app.machine.handoff)
 
-    async def test_take_back_up_replays_a_queued_fade(self):
-        app = self.build(fade=0.1)
-        await app.arm()
-        await app.trigger()
-        await app.handoff()
-        await app.annotate("out")
-        await app.take_back_up()
-        # Believed open, so the fade genuinely ramps: not a no-op.
-        self.assertEqual(app.machine.state, state.State.RELEASING)
+    async def test_a_fade_after_a_ready_report_is_ordinary(self):
+        app = self.build(level_known=False, fade=0.05)
+        await app.report_ready()
+        await app.release()
         await app.wait_for_fade()
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
 
-    async def test_take_back_down_replays_a_queued_ride_in_in_full(self):
-        app = self.build()
-        app._slow_open_seconds = 0.1
-        await app.arm()
-        await app.handoff()
-        await app.annotate("up-slow")
-        await app.take_back_down()
-        # Believed closed already, so the ride-in runs its whole curve up.
-        self.assertEqual(app.machine.state, state.State.OPEN)
-        await app.wait_for_fade()
-        self.assertEqual(self.console.commanded_level, dm7.UNITY)
-
-    async def test_take_back_down_replaying_a_queued_fade_is_a_no_op(self):
-        app = self.build()
-        await app.arm()
-        await app.trigger()
-        await app.handoff()
-        await app.annotate("out")
-        sent_before_take_back = len(self.console_sender.packets)
-        await app.take_back_down()
-        # One packet: the take-back's own confirming -inf. The queued fade,
-        # replayed from an already-believed -inf, has nowhere left to go.
-        self.assertEqual(len(self.console_sender.packets), sent_before_take_back + 1)
-        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
-
-    async def test_take_back_up_replaying_a_queued_ride_in_is_a_no_op(self):
-        app = self.build()
-        app._slow_open_seconds = 0.1
-        await app.arm()
-        await app.trigger()
-        await app.handoff()
-        await app.annotate("up-slow")
-        sent_before_take_back = len(self.console_sender.packets)
-        await app.take_back_up()
-        # UP sends nothing itself, and the queued ride-in, from an already-
-        # believed target, has nowhere left to go either.
-        self.assertEqual(len(self.console_sender.packets), sent_before_take_back)
-
-    async def test_take_back_answers_are_stale_checked(self):
-        app = self.build()
-        await app.arm()
-        await app.handoff()
+    async def test_the_belief_answers_are_stale_checked_like_every_fader_tap(self):
+        # Parity with stand_down and every other fader tap (#16), kept deliberately.
         stale = late(taps.DEFAULT_STALE_TAP_SECONDS + 1.0)
-        outcome = await app.take_back_up(tap=stale)
-        self.assertFalse(outcome.changed)
-        self.assertTrue(app.machine.handoff)
+        for name in ("close_now", "report_ready"):
+            with self.subTest(name=name):
+                app = self.build(level_known=False)
+                outcome = await getattr(app, name)(tap=stale)
+                self.assertFalse(outcome.changed)
+                self.assertFalse(app.machine.level_known)
+                self.assertEqual(self.console_sender.packets, [])
         self.assertIn(tacet_app.STALE_TAP, self.keys())
 
     async def test_still_mine_is_logged_and_changes_nothing(self):
@@ -1921,23 +2063,38 @@ class TestHandoff(AppTestCase):
         before = app.machine
         await app.confirm_still_mine()
         self.assertEqual(app.machine, before)
-        self.assertIn("still-mine", self.keys())
+        self.assertIn(tacet_app.STILL_MINE, self.keys())
 
-    async def test_the_snapshot_carries_handoff_and_queued(self):
+    async def test_the_snapshot_carries_level_known_and_no_handoff_or_queue(self):
         app = self.build()
         await app.arm()
         await app.trigger()
         snap = app.snapshot()
-        self.assertFalse(snap["handoff"])
-        self.assertFalse(snap["queued"])
         self.assertTrue(snap["fader"]["level_known"])
-
         await app.handoff()
-        await app.annotate("out")
         snap = app.snapshot()
-        self.assertTrue(snap["handoff"])
-        self.assertTrue(snap["queued"])
         self.assertFalse(snap["fader"]["level_known"])
+        # Two facts became one (#107): the top-level flags are gone.
+        self.assertNotIn("handoff", snap)
+        self.assertNotIn("queued", snap)
+
+    async def test_the_why_line_says_the_level_is_unknown_and_not_why(self):
+        app = self.build(level_known=False)
+        why = app.snapshot()["why"].lower()
+        self.assertIn("does not know where the fader", why)
+        self.assertNotIn("stagemix", why)
+
+    async def test_an_absolute_command_whose_packet_failed_still_marks_the_level_known(self):
+        # A known residual, pinned rather than fixed (#107). `step` is pure and
+        # cannot know whether the packet went out, and `Dm7Client.send_level`
+        # does not update its belief when the send raises. It is loud while it
+        # lasts - the console reads unreachable and the machine stalled - but
+        # the level is marked known. A follow-up issue tracks un-knowing it.
+        app = self.build(console_sender=FailingSender(), level_known=False)
+        await app.trigger()
+        self.assertTrue(app.machine.level_known)
+        self.assertTrue(app.machine.stalled)
+        self.assertFalse(app.snapshot()["fader"]["healthy"])
 
     async def test_the_snapshot_carries_the_age_of_the_last_command(self):
         # Built directly rather than through `build()`: the console and the
@@ -1953,57 +2110,18 @@ class TestHandoff(AppTestCase):
         console = dm7.Dm7Client(
             "192.0.2.1", dca=3, sender=self.console_sender, monotonic=clock.monotonic, sleep=clock.sleep
         )
-        app = tacet_app.App(console=console, log=self.log, recorder=None, monotonic=clock.monotonic)
+        app = tacet_app.App(
+            console=console,
+            log=self.log,
+            recorder=None,
+            monotonic=clock.monotonic,
+            machine=state.Machine(level_known=True),
+        )
         self.assertIsNone(app.snapshot()["fader"]["age"])
         await app.arm()
         await app.trigger()
         clock.now += 10.0
         self.assertEqual(app.snapshot()["fader"]["age"], 10.0)
-
-    async def test_taking_back_control_a_second_time_is_a_no_op(self):
-        app = self.build()
-        await app.arm()
-        await app.take_back_up()
-        self.assertFalse(app.machine.handoff)
-        self.assertEqual(self.keys().count("took-back"), 0)
-
-    async def test_take_back_up_from_ready_commits_to_open(self):
-        # #101: taking back "up" from a handed-off READY has to commit the
-        # rest of the way to OPEN, not leave `state` claiming a ride to the
-        # hold level that is no longer what is believed.
-        app = self.build()
-        app._ready_ride_seconds = 0.05
-        await app.arm()
-        await app.annotate("up-ready")
-        await app.wait_for_fade()
-        await app.handoff()
-        await app.take_back_up()
-        self.assertEqual(app.machine.state, state.State.OPEN)
-        self.assertEqual(self.console.commanded_level, dm7.UNITY)
-
-    async def test_a_failed_take_back_down_can_be_retried_without_losing_the_queued_move(self):
-        # #101: the confirming -inf packet fails to send, so the answer has
-        # to be tapped again. The move it was blocking must still be there to
-        # replay once the retry actually lands, not silently gone.
-        sender = FlakySender(fail_after=0)
-        app = self.build(console_sender=sender)
-        app._slow_open_seconds = 0.05
-        await app.arm()
-        await app.handoff()
-        await app.annotate("up-slow")
-        self.assertTrue(app.snapshot()["queued"])
-
-        await app.take_back_down()
-        self.assertFalse(app.machine.handoff)
-        self.assertTrue(app.snapshot()["queued"])
-        self.assertEqual(app.machine.state, state.State.IDLE)
-
-        sender.heal()
-        await app.take_back_down()
-        self.assertFalse(app.snapshot()["queued"])
-        self.assertEqual(app.machine.state, state.State.OPEN)
-        await app.wait_for_fade()
-        self.assertEqual(self.console.commanded_level, dm7.UNITY)
 
 
 class SwallowingConsole(dm7.Dm7Client):

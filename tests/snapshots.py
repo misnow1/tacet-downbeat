@@ -31,6 +31,7 @@ from tacet import annotations as ann
 from tacet import dm7, osc, reaper
 from tacet.app import App
 from tacet.net import TransportError
+from tacet.state import Machine
 from tests.disk import Disk
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -69,7 +70,7 @@ class Box:
         self.app.handle_recorder_packet(osc.encode_message(address, value))
 
 
-def _build(root: Path, *, console: _Sender | _Unreachable) -> Box:
+def _build(root: Path, *, console: _Sender | _Unreachable, machine: Machine | None = None) -> Box:
     clock = [CLOCK_START]
 
     async def tick(seconds: float) -> None:
@@ -87,18 +88,29 @@ def _build(root: Path, *, console: _Sender | _Unreachable) -> Box:
         log=log,
         recorder=reaper.ReaperClient(sender=_Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],
+        machine=machine,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
 
+#: The machine for every state that got somewhere by arming. At cold boot the
+#: box does not know where the fader is and refuses to arm (#107), so a fixture
+#: that arms says up front that the level was already known - the way a box
+#: that had been told is.
+def _known() -> Machine:
+    return Machine(level_known=True)
+
+
 async def standing_down(root: Path) -> dict[str, Any]:
-    """The boot state. Reaper configured, and never heard from."""
+    """The boot state. Reaper configured, and never heard from. The level is
+    deliberately unknown: this fixture IS the cold-boot page (#107), and must
+    stay honest about it."""
     return _build(root, console=_Sender()).app.snapshot()
 
 
 async def open_recording(root: Path) -> dict[str, Any]:
     """Armed, open at unity, Reaper rolling, a quarter under way."""
-    box = _build(root, console=_Sender())
+    box = _build(root, console=_Sender(), machine=_known())
     await box.app.arm()
     await box.app.annotate("up-whistle")
     box.reaper_says("/record", 1.0)
@@ -110,7 +122,7 @@ async def open_recording(root: Path) -> dict[str, Any]:
 
 async def releasing(root: Path) -> dict[str, Any]:
     """The push that follows FADE OUT, before the ramp has taken a step."""
-    box = _build(root, console=_Sender())
+    box = _build(root, console=_Sender(), machine=_known())
     await box.app.arm()
     await box.app.trigger()
     await box.app.release()
@@ -121,7 +133,7 @@ async def releasing(root: Path) -> dict[str, Any]:
 
 async def faults(root: Path) -> dict[str, Any]:
     """Everything the page has a way of saying is wrong, at once."""
-    box = _build(root, console=_Unreachable())
+    box = _build(root, console=_Unreachable(), machine=_known())
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE

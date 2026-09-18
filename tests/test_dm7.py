@@ -280,9 +280,10 @@ class TestSending(unittest.TestCase):
 
 
 class TestAssume(unittest.TestCase):
-    """#12: a take-back answer that should not itself move the fader still
-    has to correct what the box believes, or every ramp after it starts from
-    the same fiction the answer was meant to fix."""
+    """#12, #107: an answer that should not itself move the fader (the
+    operator reporting the fader is already at the ready level) still has to
+    correct what the box believes, or every ramp after it starts from the same
+    fiction the answer was meant to fix."""
 
     def test_assume_corrects_the_believed_level(self):
         c, _ = client()

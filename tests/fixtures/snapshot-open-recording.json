@@ -246,7 +246,6 @@
     "target": null,
     "target_db": null
   },
-  "handoff": false,
   "log": {
     "error": null,
     "failures": 0,
@@ -265,7 +264,6 @@
       "span_id": "q2-4"
     }
   ],
-  "queued": false,
   "recording": {
     "can_start": false,
     "confirmed": true,

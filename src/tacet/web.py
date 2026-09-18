@@ -408,12 +408,12 @@ def create_app(
             web.post("/api/trigger", _command_route("trigger")),
             web.post("/api/release", _command_route("release")),
             web.post("/api/record", _record),
-            # StageMix control-authority (#12): all three take only a tap, the
-            # same as arm/stand-down/trigger/release, so `_command_route`
-            # covers them without a handler of its own.
+            # Where the fader is, and who has it (#12, #107): all four take only
+            # a tap, the same as arm/stand-down/trigger/release, so
+            # `_command_route` covers them without a handler of its own.
             web.post("/api/handoff", _command_route("handoff")),
-            web.post("/api/take-back-up", _command_route("take_back_up")),
-            web.post("/api/take-back-down", _command_route("take_back_down")),
+            web.post("/api/close-now", _command_route("close_now")),
+            web.post("/api/report-ready", _command_route("report_ready")),
             web.post("/api/still-mine", _command_route("confirm_still_mine")),
             web.post("/api/annotate", _annotate),
             web.post("/api/span/start", _span_start),
@@ -577,18 +577,55 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="up-ready"]{height:80px}
 #fader-column button[data-key="score-reversed"]{height:72px}
 #fader-column button[data-key="out"]{height:136px}
-/* The readout gap: at least 96px, nothing tappable, level/target/refusal
-   repeated here because the header carrying #refusal is on the far side of
-   the screen from this thumb. The age of the last command (#12) rides along
-   on #level itself rather than a field of its own. */
+/* The readout gap: exactly 96px of room, never more asked for. The column is 592
+   of buttons + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
+   iPad; growing it makes the page scroll, the failure #5 was built to remove
+   (#107 put the belief row in here without changing that). Level/target/refusal
+   are repeated here because the header carrying #refusal is on the far side of
+   the screen from this thumb; the age of the last command (#12) rides on
+   #level itself. Budget, top to bottom:
+     level line     ~22.5   flex:none, one line, never wrapped. 18px at 1.2 is
+                            21.6, but baseline alignment makes the flex line
+                            taller than that
+     error line     15      12px at 15px. NOT a duplicate: "Console unreachable"
+                            is shown nowhere else on the page, so it never yields
+     refusal line   15      12px at 15px. The header chip carries its full text,
+                            so this is the line that yields
+     belief row     43.6    13px padding twice + 15.6 line + 2 border, flex:none,
+                            pinned to the bottom
+   Fixed parts (level + belief) are 66.1, leaving 29.9 for the two lines. Both at
+   once want 30, so the worst case is 96.1 against 96: 0.1px short, taken out of
+   the refusal line, which is the only one allowed to shrink. One line showing
+   leaves ~14.9 spare; none, ~29.9. The protection is flex-shrink on that
+   refusal line, with the level line and the belief row flex:none. overflow:hidden
+   on #readout is only the backstop: a deficit beyond what the refusal line can
+   absorb would clip the bottom, which is where the belief row sits, so keep the
+   sum above under 96 if any of these numbers change.
+   The level is 18px, not the 22px it used to be, so the fade destination stays
+   inside the ellipsis: during a close it reads "-3.00 dB -> -inf dB", which at
+   22px is ~181px against ~183px available and would start clipping the
+   destination during the two seconds it exists for. At 18px there is ~35px of
+   headroom. Do not raise it back without redoing that sum. */
 #readout{flex:1 1 96px;min-height:96px;display:flex;flex-direction:column;
-justify-content:center;gap:6px}
-#readout #fader-error{color:#ff9d94;font-size:13px}
-#col-refusal{color:#ffb4a9;font-size:13px;display:none}
-/* The take-back prompt (#12): only shown while a fader tap is queued behind a
-   take-back answer, so it shares the readout gap rather than a slot of its
-   own that would sit empty every other night. */
-#takeback{display:none;flex-direction:column;gap:8px}
+justify-content:flex-start;overflow:hidden}
+#readout .value{display:flex;align-items:baseline;flex:none;font-size:18px;line-height:1.2}
+#readout #level{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;
+text-overflow:ellipsis}
+#readout .tag{flex:none}
+#readout #fader-error{color:#ff9d94;font-size:12px;line-height:15px;flex:0 0 auto;
+min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#col-refusal{color:#ffb4a9;font-size:12px;line-height:15px;display:none;flex:0 1 auto;
+min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* The two answers to "where is the fader" (#107): always here, never shown or
+   hidden, never moved. The script only ever disables one in place, so a thumb
+   that finds the row finds it in the same place every time. One row, no
+   heading, one line of label each (so 43.6px tall), pinned to the
+   bottom of the readout gap. Close now is its natural width and the ready
+   report takes the rest, so its label has room without wrapping. */
+#belief{display:flex;gap:8px;flex:none;margin-top:auto}
+#belief button{width:auto;flex:1 1 0;min-width:0;padding:13px 6px;font-size:13px;line-height:1.2;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#belief #btn-close-now{flex:0 0 auto}
 </style></head><body>
 <div class="app">
 <div class="left" id="left">
@@ -641,11 +678,9 @@ justify-content:center;gap:6px}
     <div class="value"><span id="level">&mdash;</span><span class="tag commanded" id="level-tag">commanded</span></div>
     <div id="fader-error"></div>
     <div id="col-refusal"></div>
-    <div id="takeback">
-      <div class="label">Take back control</div>
-      <div style="font-size:13px;color:var(--dim)">Where is the DCA now?</div>
-      <button id="btn-take-back-up" data-action="open">It's up</button>
-      <button id="btn-take-back-down" data-action="release">It's down</button>
+    <div id="belief">
+      <button id="btn-close-now">Close now</button>
+      <button id="btn-report-ready">It's at ready level</button>
     </div>
   </div>
   <div id="fader-bottom"></div>
