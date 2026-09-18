@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-09-18.** #5 is built (the pinned fader column, the fixed
+**Last updated 2026-09-17.** #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
