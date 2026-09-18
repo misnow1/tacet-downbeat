@@ -10,8 +10,9 @@ every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
 short of what it decided: a real state-machine bug plus missing UI (return
 prompt, accept-delay, pulse cue, always-available take-back), split into #101
-and #102 so #12 itself stays closed. Decisions on the remaining issues are
-recorded as comments on #9, #12 and #19, and on #5, #6 and #89 themselves.
+and #102 so #12 itself stays closed. #101 (the backend half) is now done too.
+Decisions on the remaining issues are recorded as comments on #9, #12 and #19,
+and on #5, #6 and #89 themselves.
 
 ## Game 3 (2026-10-02)
 
@@ -24,7 +25,7 @@ In build order. Each step says why it comes where it does.
 | ~~3~~ | ~~[#6](https://github.com/misnow1/tacet-downbeat/issues/6) READY, then go~~ | Done. A new state between IDLE and OPEN: the operator rides to a hold level short of target and waits to see whether the band starts, before committing with the ordinary up buttons or abandoning with Score reversed |
 | ~~4~~ | ~~[#5](https://github.com/misnow1/tacet-downbeat/issues/5) Button layout for thumbs~~ | Done. Game 2's biggest page failure was scrolling and a grid that moved under the thumb; the fixed status strip and prompt slot are where #12 and #19 now put things |
 | ~~5~~ | ~~[#12](https://github.com/misnow1/tacet-downbeat/issues/12) StageMix handoff and take-back~~ | Closed, but incompletely - see #101 and #102 below. Was meant to remove the only known path to a full-level blast: a ramp from a level the box only believes in |
-| 6 | [#101](https://github.com/misnow1/tacet-downbeat/issues/101) Take-back state/queue bugs | Small and pure-logic; closes the part of #12's hazard that is a real correctness bug (state stuck at READY, a queued move droppable on a failed retry) |
+| ~~6~~ | ~~[#101](https://github.com/misnow1/tacet-downbeat/issues/101) Take-back state/queue bugs~~ | Done. `TAKE_BACK_UP` from a handed-off READY now commits to OPEN, and a queued move survives a failed confirming packet through to a retry (`TAKE_BACK_CONFIRMED`, mirroring `RIDE_IN_COMPLETE`) |
 | 7 | [#102](https://github.com/misnow1/tacet-downbeat/issues/102) StageMix take-back UI gaps | The return prompt is the mechanism aimed at game 2's actual failure (forgot to tap handoff on the same iPad); the accept-delay is a real thumb-slip guard, not polish |
 | 8 | [#19](https://github.com/misnow1/tacet-downbeat/issues/19) Prompt arm / stand down from band annotations | Independent of #12 - built on #5's prompt slot, not the fader column. Small, and keeps Phase 1's duty labels right from game 3 on |
 
