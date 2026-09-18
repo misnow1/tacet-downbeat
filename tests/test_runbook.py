@@ -161,6 +161,18 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
                 assert found is not None
                 self.assertIn(f"**{found[1]}**", runbook)
 
+    def test_the_runbook_quotes_the_greyed_buttons_note(self) -> None:
+        # #107: the line in the fader column that says why four buttons are
+        # grey. It lives in the operator page's script, so it is read out of
+        # there as text (as the Lua script is above) rather than typed twice,
+        # and the runbook is compared with its whitespace collapsed.
+        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+        found = re.search(r'^const RAMPING_BLOCKED = "([^"]+)";$', script, re.MULTILINE)
+        self.assertIsNotNone(found, "app.js no longer defines RAMPING_BLOCKED")
+        assert found is not None
+        runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
+        self.assertIn(f"`{found[1]}`", runbook)
+
     def test_no_doc_still_bolds_an_older_wording_of_the_ready_report(self) -> None:
         # Presence is not enough: the stale label sat in a second paragraph
         # while the table row was right. Every bold "It's at ..." in the two

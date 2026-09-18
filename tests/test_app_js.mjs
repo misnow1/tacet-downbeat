@@ -546,6 +546,106 @@ check(
   check("and the script no longer knows the word", SOURCE.includes("take-back-"), false);
 }
 
+// -- the ramping buttons, greyed while the level is unknown (#107) --------------
+
+// The four column buttons whose move ramps from the believed level, and the two
+// snaps that do not. Keys, not actions: the column is six named, pinned
+// buttons (#5).
+const RAMPING_KEYS = ["up-slow", "up-ready", "out", "score-reversed"];
+const SNAP_KEYS = ["up-whistle", "up-drums"];
+const COLUMN_KEYS = [...RAMPING_KEYS, ...SNAP_KEYS];
+const RAMPING_BLOCKED = "Greyed: they ramp from an unknown level";
+
+// What one page shows for the fader column at a belief. The standing-down
+// fixture is the unknown case; the known case is the same box with the level
+// trusted.
+function columnAt(known, top = {}) {
+  const { context, nodes, created } = browser();
+  context.render({ ...levelSnapshot(known), ...top });
+  const column = (key) => created.find((node) => node.tag === "button" && node.dataset.key === key);
+  return { context, nodes, created, column };
+}
+
+for (const known of [false, true]) {
+  const at = `level ${known ? "known" : "unknown"}`;
+  const { column } = columnAt(known);
+  for (const key of RAMPING_KEYS) {
+    check(`${at}: ${key} is disabled iff the level is unknown`, column(key).disabled, !known);
+  }
+  for (const key of SNAP_KEYS) {
+    check(`${at}: ${key} (a snap open) is never disabled`, column(key).disabled, false);
+  }
+  for (const key of ["band-enters-stands", "q1", "touchdown", "note"]) {
+    check(`${at}: the annotation ${key} is never disabled by the belief`, column(key).disabled, false);
+  }
+  for (const key of COLUMN_KEYS) {
+    check(`${at}: ${key} is never hidden`, column(key).style.display, undefined);
+  }
+}
+
+{
+  const { column } = columnAt(false);
+  check("a greyed button keeps its own label; the reason lives in the column, not on it",
+        [column("up-slow").textContent, column("up-ready").textContent,
+         column("out").textContent, column("score-reversed").textContent],
+        ["Up slow, missed the start", "Ready (band likely)", "Faded out", "Score reversed"]);
+}
+
+{
+  // In place: the same four nodes, in the same order, before and after. This is
+  // how level_known is pinned out of the rebuild signature. The assertion is
+  // indirect - renderButtons is the only thing that creates these buttons, so
+  // an unchanged created list across a belief change proves no rebuild.
+  const { context, created } = browser();
+  const buttonsNow = () => created.filter((node) => node.tag === "button");
+  context.render(levelSnapshot(false));
+  const before = buttonsNow();
+  const keysBefore = before.map((node) => node.dataset.key);
+  const stale = before.filter((node) => RAMPING_KEYS.includes(node.dataset.key)).map((node) => node.disabled);
+  context.render(levelSnapshot(true));
+  const after = buttonsNow();
+  check("the four were disabled first", stale, [true, true, true, true]);
+  check("changing the belief creates nothing", after.length, before.length);
+  check("changing the belief reorders nothing", after.map((node) => node.dataset.key), keysBefore);
+  check("every node is the very same node", after.every((node, i) => node === before[i]), true);
+  check("they re-enable in place once the level is known",
+        after.filter((node) => RAMPING_KEYS.includes(node.dataset.key)).map((node) => node.disabled),
+        [false, false, false, false]);
+  context.render(levelSnapshot(false));
+  check("and grey again in place when the belief is lost", buttonsNow().length, before.length);
+  check("still the same nodes", buttonsNow().every((node, i) => node === before[i]), true);
+  check("and disabled again",
+        buttonsNow().filter((node) => RAMPING_KEYS.includes(node.dataset.key)).map((node) => node.disabled),
+        [true, true, true, true]);
+}
+
+{
+  const { nodes } = columnAt(false);
+  check("the column says why they are greyed, while the level is unknown",
+        nodes.get("col-unknown").textContent, RAMPING_BLOCKED);
+  check("and shows the line", nodes.get("col-unknown").style.display, "block");
+}
+
+{
+  // The readout gap has room for one of the two lines, not both (see the
+  // budget in web.py), and the refusal says the same thing in more words.
+  const refusal = "the box does not know where the fader is, and this move ramps from that belief";
+  const { nodes } = columnAt(false, { refusal });
+  check("the note yields to a refusal", nodes.get("col-unknown").style.display, "none");
+  check("and the refusal shows", nodes.get("col-refusal").style.display, "block");
+  check("in the box's words", nodes.get("col-refusal").textContent, refusal);
+}
+
+{
+  const { context, nodes } = columnAt(false);
+  context.render({ ...levelSnapshot(true) });
+  check("the note is gone once the level is known", nodes.get("col-unknown").style.display, "none");
+  check("and empty, so nothing stale is left to read", nodes.get("col-unknown").textContent, "");
+  context.render({ ...levelSnapshot(false), refusal: "x" });
+  context.render({ ...levelSnapshot(false), refusal: null });
+  check("a refusal clearing brings the note back", nodes.get("col-unknown").style.display, "block");
+}
+
 // -- the box's own snapshots --------------------------------------------------
 
 // Each state the box wrote, rendered as it came. A change to the snapshot's
@@ -602,6 +702,10 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("standing down: the cold-boot level reads unknown", nodes.get("level").textContent, "unknown");
   check("standing down: Close now is there and live", nodes.get("btn-close-now").disabled, false);
   check("standing down: the ready report is there and live", nodes.get("btn-report-ready").disabled, false);
+  // End to end: the box's own cold-boot snapshot, not a hand-built one.
+  check("standing down: the ramping buttons are greyed", button("out").disabled, true);
+  check("standing down: and the column says why", nodes.get("col-unknown").style.display, "block");
+  check("standing down: the snap opens are live", button("up-whistle").disabled, false);
   check("standing down: an unheard Reaper is unknown", nodes.get("rec").textContent, "unknown");
   check("standing down: and says so", nodes.get("rec-tag").textContent, "no feedback");
   check("standing down: nothing is wrong with saving", nodes.get("saving").className, "");

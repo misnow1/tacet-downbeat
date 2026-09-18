@@ -585,7 +585,10 @@ def describe(machine: Machine) -> str:
     if not machine.level_known:
         # Says what is not known, never why: the machine cannot tell a handoff
         # from a cold boot, and the log already records which it was.
-        text += " The box does not know where the fader really is; close it now, or open, to say where it is."
+        text += (
+            " The box does not know where the fader really is - it can only say what it last"
+            " asked for, never what the console did with it; close it now, or open, to say where it is."
+        )
     if machine.armed_by_operator:
         text += " Armed by that: the box was standing down."
     if machine.stalled:
