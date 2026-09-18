@@ -260,6 +260,17 @@ For an agent working here: branch, commit, push and open the PR when asked to
 work an issue. **Never merge** — merging is the maintainer's call — and never
 push to `main` directly.
 
+**Task workflow is plan / implement / review, across model tiers.** When
+picking up a task or issue, don't plan and implement it in one pass:
+
+1. Plan the task with an Opus-class agent.
+2. Implement per that plan with a Sonnet-class agent.
+3. Send the implementation back to the *same* Opus-class agent that wrote
+   the plan for review, and iterate with the Sonnet implementer on anything
+   it flags, before opening the PR.
+
+This is a process convention, not a hard constraint from `docs/design.md`.
+
 ## Working notes
 
 - `docs/priorities.md` is the current build order: what to pick up next, and
