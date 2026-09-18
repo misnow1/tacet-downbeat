@@ -114,6 +114,37 @@ class TestPage(WebTestCase):
         order = [readout.index(f'id="{name}"') for name in ("level", "fader-error", "col-refusal", "belief")]
         self.assertEqual(order, sorted(order))
 
+    async def test_the_page_carries_the_column_note_and_ships_it_hidden(self):
+        # #107: the one line that says why the ramping buttons are grey. Hidden
+        # until the script has a snapshot to decide from, so a page that renders
+        # before the first push shows nothing rather than a stale reason.
+        body = await (await self.client.get("/")).text()
+        self.assertIn('<div id="col-unknown"></div>', body)
+        self.assertIn("display:none", body.split("#col-unknown{", 1)[1].split("}", 1)[0])
+
+    async def test_the_note_cannot_grow_the_readout(self):
+        # The readout has no spare height: level 22.5 + console error 15 +
+        # refusal 15 + belief row 43.6 = 96.1 against 96, and that 0.1 is
+        # absorbed by the one line allowed to shrink. The note is a third line
+        # in that yielding class, and the script never shows it alongside the
+        # refusal (tests/test_app_js.mjs), so the worst case is unchanged. Were
+        # it to hold its height, or show with the refusal, the belief row at
+        # the bottom would be the thing clipped.
+        body = await (await self.client.get("/")).text()
+        rule = body.split("#col-unknown{", 1)[1].split("}", 1)[0]
+        for wanted in (
+            "flex:0 1 auto",
+            "min-height:0",
+            "overflow:hidden",
+            "white-space:nowrap",
+            "text-overflow:ellipsis",
+            "line-height:15px",
+        ):
+            self.assertIn(wanted, rule)
+        readout = body.split('<div id="readout">', 1)[1]
+        order = [readout.index(f'id="{name}"') for name in ("fader-error", "col-refusal", "col-unknown", "belief")]
+        self.assertEqual(order, sorted(order))
+
     async def test_the_page_carries_the_belief_controls(self):
         # #107: the two answers to "where is the fader", always on the page.
         body = await (await self.client.get("/")).text()

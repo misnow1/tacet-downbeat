@@ -276,6 +276,60 @@ parameter changes as SysEx. Whether the DM7 does, and whether it would give
 readback, is unverified — it needs the MIDI data format document, which is not
 the OSC spec. See §7.
 
+#### What the box believes about the fader
+
+The box cannot read the fader back, so the level it has is the last one it
+wrote, never a measurement. That belief can be wrong two ways, and they are the
+same fact reached twice: at boot, where nothing has been written yet and the
+-inf the client starts from is only a convenient number; and after the operator
+hands the DCA to StageMix, where another interface can move it. `tacet.state`
+tracks one flag, `level_known`, and deliberately does not record which of the
+two it was - the annotation log's `handed-off` entry does that.
+
+What the flag gates is absolute against relative:
+
+- An **absolute** command puts the fader in one known place whatever the box
+  believed: the snap open to unity, and the operator's instant close to -inf.
+  Neither waits on the belief, and both make the level known. The instant close
+  is available in every state; a snap open is too, except when the box already
+  knows the fader is open and nothing is pending, where it would only repeat
+  what is true.
+- A **relative** command ramps from the believed level: the 2 s fade, READY's
+  ride to the hold level, and the slow open. Each is refused while the level is
+  unknown, with the reason on the page. Refused, not queued - a tap held back
+  and run later runs on a belief nobody has looked at since. The page also
+  greys the four column buttons that make these moves, in place, so the refusal
+  is rarely reached.
+- `ARM` is refused too. It sends nothing and calls the fader closed, which only
+  a known level makes true.
+- `STAND_DOWN` is never refused for want of a known level. While the level is
+  unknown it changes the duty state at once and sends nothing, since there is
+  no fade to wait for.
+
+READY is the one state that needs a control of its own. It has no fast form -
+there is no snap to the hold level, only a ride - so from an unknown level it
+can only be reported, never driven to. That is what "It's at ready level" is on
+the page: a belief correction that writes no packet.
+
+Known limits, as of #107:
+
+- An absolute command whose packet never reached the console still marks the
+  level known. The state machine is pure and cannot know what was delivered,
+  and the protocol has no acknowledgement to tell it. A send that fails
+  locally is loud - the page says the console is unreachable, and after a failed
+  open the why line offers the retry - but it does not put the belief back,
+  and a packet that is sent and simply lost is not noticed at all.
+- A detector-sourced hand-off is still accepted once `allow_detector` is set
+  (anywhere but STANDING DOWN, where the detector is refused outright). It
+  sends nothing, and no detector exists yet.
+- After a restart while StageMix really has the DCA, the level is already
+  unknown, so the hand-off cannot be recorded. The box's state is right; only
+  the log entry is lost.
+
+If the console turns out to report the fader (#18), "who has control" and "is
+the position known" become two independent facts, and this collapses to the
+second of them. #103 covers the operator-facing mechanism in detail.
+
 ### 5.4 Game data (RTD)
 
 Scoreboard and PA were replaced by Daktronics this year. See §8 for the specific

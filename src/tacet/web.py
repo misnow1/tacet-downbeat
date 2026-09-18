@@ -591,15 +591,21 @@ border-left:1px solid var(--line);background:var(--bg)}
                             is shown nowhere else on the page, so it never yields
      refusal line   15      12px at 15px. The header chip carries its full text,
                             so this is the line that yields
+     column note    15      12px at 15px, the same yielding class (#107). Says why
+                            the ramping buttons are grey. NEVER shown with the
+                            refusal - app.js paints it only when there is none, so
+                            it takes that line's place and is not a fifth row
      belief row     43.6    13px padding twice + 15.6 line + 2 border, flex:none,
                             pinned to the bottom
    Fixed parts (level + belief) are 66.1, leaving 29.9 for the two lines. Both at
    once want 30, so the worst case is 96.1 against 96: 0.1px short, taken out of
-   the refusal line, which is the only one allowed to shrink. One line showing
-   leaves ~14.9 spare; none, ~29.9. The protection is flex-shrink on that
-   refusal line, with the level line and the belief row flex:none. overflow:hidden
-   on #readout is only the backstop: a deficit beyond what the refusal line can
-   absorb would clip the bottom, which is where the belief row sits, so keep the
+   the refusal line or the note, whichever is showing, which are the only ones
+   allowed to shrink. The note and the refusal are mutually exclusive, so the
+   worst case with the note is the same 96.1 and no worse. One line showing
+   leaves ~14.9 spare; none, ~29.9. The protection is flex-shrink on those two
+   lines, with the level line and the belief row flex:none. overflow:hidden
+   on #readout is only the backstop: a deficit beyond what they can absorb
+   would clip the bottom, which is where the belief row sits, so keep the
    sum above under 96 if any of these numbers change.
    The level is 18px, not the 22px it used to be, so the fade destination stays
    inside the ellipsis: during a close it reads "-3.00 dB -> -inf dB", which at
@@ -615,6 +621,11 @@ text-overflow:ellipsis}
 #readout #fader-error{color:#ff9d94;font-size:12px;line-height:15px;flex:0 0 auto;
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #col-refusal{color:#ffb4a9;font-size:12px;line-height:15px;display:none;flex:0 1 auto;
+min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* Why four of the column's buttons are grey (#107): a standing note, not a
+   fault, so the dim colour rather than the refusal's. Same yielding class as
+   the refusal line, and never shown with it (see the budget above). */
+#col-unknown{color:var(--dim);font-size:12px;line-height:15px;display:none;flex:0 1 auto;
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 /* The two answers to "where is the fader" (#107): always here, never shown or
    hidden, never moved. The script only ever disables one in place, so a thumb
@@ -678,6 +689,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     <div class="value"><span id="level">&mdash;</span><span class="tag commanded" id="level-tag">commanded</span></div>
     <div id="fader-error"></div>
     <div id="col-refusal"></div>
+    <div id="col-unknown"></div>
     <div id="belief">
       <button id="btn-close-now">Close now</button>
       <button id="btn-report-ready">It's at ready level</button>

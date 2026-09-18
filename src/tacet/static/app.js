@@ -117,6 +117,14 @@ const FADER_COLUMN_TOP = ["up-whistle", "up-drums", "up-slow", "up-ready"];
 const FADER_COLUMN_BOTTOM = ["score-reversed", "out"];
 const FADER_COLUMN = [...FADER_COLUMN_TOP, ...FADER_COLUMN_BOTTOM];
 
+// Commands that ramp from what the box believes the level is. Disabled in
+// place while that belief is not trusted (#107) - never hidden, never moved,
+// and never relabelled: `up-slow`'s label already fills its one permitted
+// line, so an explanation on the button would wrap it out of a pinned height.
+// The column says it once instead, in the readout gap.
+const RAMPING_ACTIONS = new Set(["open-slow", "ready", "release"]);
+const RAMPING_BLOCKED = "Greyed: they ramp from an unknown level";
+
 // MAIN: the whole GAME category, split into the three groups the hallway test
 // was run against.
 const MAIN_GROUPS = [
@@ -422,6 +430,12 @@ function render(next) {
   levelTag.textContent = fader.level_known ? "commanded" : "unknown";
   levelTag.className = "tag " + (fader.level_known ? "commanded" : "unknown");
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
+  // Said once, in the column, rather than on each button: see RAMPING_ACTIONS.
+  // Suppressed while a refusal is showing - that line says the same thing in
+  // more words, and the readout gap has room for one of them, not both.
+  const blocked = !fader.level_known && !next.refusal;
+  $("col-unknown").textContent = blocked ? RAMPING_BLOCKED : "";
+  $("col-unknown").style.display = blocked ? "block" : "none";
 
   // The two belief controls are always on the page and never hidden (#107):
   // nothing here may appear, disappear or move on a belief change, only a
@@ -479,6 +493,10 @@ function render(next) {
     const open = openSpan(next, node.dataset.key) !== undefined;
     node.classList.toggle("on", open);
     node.textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
+    // In this paint loop and not in buildButtonNode, so that the belief stays
+    // out of the rebuild signature above: a belief change re-enables these in
+    // place, and never tears the grid down under a thumb.
+    node.disabled = !fader.level_known && RAMPING_ACTIONS.has(node.dataset.action);
   }
 }
 

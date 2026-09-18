@@ -292,9 +292,11 @@ Honest state of things, so nothing here reads as more settled than it is.
   right, but no tablet has run it, so button sizing at arm's length and the
   Auto-Lock advice on iPadOS Safari are both unverified. See handoff.md, which
   also explains why the laptop shows a different wake-lock reading than the iPad
-  will. The belief row (Close now / It's at ready level, in the readout gap) and
-  the height of the fader column (760px, sized for a 768px-tall landscape iPad)
-  are unverified too: both need an eyeball on the iPad before game 3.
+  will. The readout stack (the level, the console fault, the refusal or the
+  "Greyed: they ramp from an unknown level" note, and the belief row of Close
+  now / It's at ready level, all in the 96px readout gap) and the height of the
+  fader column (760px, sized for a 768px-tall landscape iPad) are unverified
+  too: both need an eyeball on the iPad before game 3.
 
 Reaper, the mirror script and the page itself have all been run against the real
 thing.

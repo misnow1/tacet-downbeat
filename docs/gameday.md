@@ -206,10 +206,13 @@ answer, and a move made in StageMix will not appear on it.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
 the box does not know where it really is. Nothing that ramps from a level can be
-trusted, so the four column buttons that ramp - **Up slow**, **Ready**,
-**Faded out** and **Score reversed** - and **Arm** are refused with the reason
-on the refusal line, and are not queued to run later. Two answers sit beside the
-readout, always in the same place:
+trusted, so the four column buttons that ramp - **Up slow**, **Ready (band
+likely)**, **Faded out** and **Score reversed** - go grey where they are, and
+the column says `Greyed: they ramp from an unknown level`. They are never hidden
+and never move, so nothing shifts under your thumb when they come back. The two
+snap opens, **Up on whistle** and **Up on drums**, stay live. **Arm** is refused
+with the reason on the refusal line. Nothing is queued to run later. Two
+answers sit beside the readout, always in the same place:
 
 | You know | Tap |
 |---|---|
