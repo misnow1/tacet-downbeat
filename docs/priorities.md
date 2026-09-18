@@ -11,8 +11,15 @@ done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
 short of what it decided: a real state-machine bug plus missing UI (return
 prompt, accept-delay, pulse cue, always-available take-back), split into #101
 and #102 so #12 itself stays closed. #101 (the backend half) is now done too.
-Decisions on the remaining issues are recorded as comments on #9, #12 and #19,
-and on #5, #6 and #89 themselves.
+A same-day design conversation then reworked the model #102 was scoped
+against: the box's distrust of its own fader belief generalizes to cold boot,
+not just a StageMix handoff, and the underlying invariant is absolute-vs-relative
+fader commands rather than "handed off or not." #102 is now superseded by
+#107 (that model), with #108 and #109 as two small, independent UI fixes
+surfaced in the same conversation. Decisions on the remaining issues are
+recorded as comments on #9, #12 and #19, and on #5, #6 and #89 themselves;
+#107/#108/#109 carry their own decisions in their bodies, and #102's closing
+comment maps what became of each of its original items.
 
 ## Game 3 (2026-10-02)
 
@@ -26,15 +33,17 @@ In build order. Each step says why it comes where it does.
 | ~~4~~ | ~~[#5](https://github.com/misnow1/tacet-downbeat/issues/5) Button layout for thumbs~~ | Done. Game 2's biggest page failure was scrolling and a grid that moved under the thumb; the fixed status strip and prompt slot are where #12 and #19 now put things |
 | ~~5~~ | ~~[#12](https://github.com/misnow1/tacet-downbeat/issues/12) StageMix handoff and take-back~~ | Closed, but incompletely - see #101 and #102 below. Was meant to remove the only known path to a full-level blast: a ramp from a level the box only believes in |
 | ~~6~~ | ~~[#101](https://github.com/misnow1/tacet-downbeat/issues/101) Take-back state/queue bugs~~ | Done. `TAKE_BACK_UP` from a handed-off READY now commits to OPEN, and a queued move survives a failed confirming packet through to a retry (`TAKE_BACK_CONFIRMED`, mirroring `RIDE_IN_COMPLETE`) |
-| 7 | [#102](https://github.com/misnow1/tacet-downbeat/issues/102) StageMix take-back UI gaps | The return prompt is the mechanism aimed at game 2's actual failure (forgot to tap handoff on the same iPad); the accept-delay is a real thumb-slip guard, not polish |
+| 7 | [#107](https://github.com/misnow1/tacet-downbeat/issues/107) Generalize fader-position trust (level_known) | Supersedes #102. The same hazard #12 was for - a ramp from a level the box only believes in - generalized to cold boot as well as StageMix handoff |
 | 8 | [#19](https://github.com/misnow1/tacet-downbeat/issues/19) Prompt arm / stand down from band annotations | Independent of #12 - built on #5's prompt slot, not the fader column. Small, and keeps Phase 1's duty labels right from game 3 on |
 
 Alongside, not in the build order above:
 
 - [#13](https://github.com/misnow1/tacet-downbeat/issues/13) gameday.md: game 3 patch list, network plan, stale sections. Needs site information; must land before game day regardless. Includes setting `capture.audio_path` and `capture.channels` in the box's `tacet.toml` (#53).
 - [#15](https://github.com/misnow1/tacet-downbeat/issues/15) design.md: pre-open and cannon hard cases, now also READY (#6) as a fader-up-no-band span Phase 1 has to be able to exclude. Documentation; any time.
-- [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. Research; if the console turns out to report the fader, #12 (and #101/#102) get simpler, so worth an early look.
-- [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the handoff/take-back mechanism #12 built. Waits on #101 and #102 landing, so it describes what actually shipped rather than what was decided.
+- [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. Research; if the console turns out to report the fader, #12 (and #107) get simpler, so worth an early look.
+- [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the handoff/take-back mechanism #12 built. Waits on #107 landing, so it describes what actually shipped rather than what was decided.
+- [#108](https://github.com/misnow1/tacet-downbeat/issues/108) Move the StageMix handoff confirmation next to its button. Small UI fix from the same 2026-09-17 conversation as #107; independent of it.
+- [#109](https://github.com/misnow1/tacet-downbeat/issues/109) Stop returning to Main after every tap in the More tab. Same conversation, same independence; revisit if it turns out to be the wrong call once used in a game.
 
 ## Proposed for Game 4
 
