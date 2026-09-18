@@ -1,5 +1,5 @@
 {
-  "at": 5060.02,
+  "at": 5000.02,
   "buttons": [
     {
       "action": null,
@@ -239,21 +239,21 @@
     "since": 5000.0
   },
   "fader": {
-    "age": null,
-    "commanded": -32768,
+    "age": 0.0,
+    "commanded": 0,
     "confirmed": false,
-    "db": null,
-    "error": "no route to host",
-    "healthy": false,
+    "db": 0.0,
+    "error": null,
+    "healthy": true,
     "level_known": true,
     "moving": false,
     "target": null,
     "target_db": null
   },
   "log": {
-    "error": "could not write game.jsonl: No space left on device",
-    "failures": 3,
-    "healthy": false,
+    "error": null,
+    "failures": 0,
+    "healthy": true,
     "path": "/games/game.jsonl"
   },
   "mirror": {
@@ -262,18 +262,22 @@
     "healthy": true
   },
   "open_spans": [],
-  "prompt": null,
+  "prompt": {
+    "kind": "stand-down",
+    "seq": 1,
+    "source": "band-exits-stands"
+  },
   "recording": {
-    "can_start": false,
+    "can_start": true,
     "confirmed": false,
     "healthy": true,
     "known": false,
-    "liveness": "lost",
+    "liveness": "unknown",
     "position": null,
-    "recording": true
+    "recording": false
   },
-  "refusal": "Reaper has stopped answering. Start the recording in Reaper.",
+  "refusal": null,
   "stale_tap": null,
   "state": "open",
-  "why": "Open at unity. The last fader move did not finish; tap it again to retry. You are driving; the detector cannot move the fader."
+  "why": "Open at unity. You are driving; the detector cannot move the fader."
 }
