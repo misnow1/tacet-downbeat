@@ -320,36 +320,39 @@ check(
 // A closed fader is -inf, which JSON cannot carry, so it arrives as null. This
 // also pins the escaping: the script is inlined into a Python string, and a
 // doubled backslash here would put a literal "∞" on the screen.
-check("a closed fader reads as minus infinity", rendered().get("level").textContent, "-∞ dB");
+// The box's boot snapshot does not know where the fader is (#107), so every
+// check about a number on the screen says the level is known, out loud: the
+// fixture stays honest about the cold boot and the checks are about the number.
+check("a closed fader reads as minus infinity", rendered({}, { level_known: true }).get("level").textContent, "-∞ dB");
 check(
   "an open fader reads in dB",
-  rendered({}, { db: -12.5 }).get("level").textContent,
+  rendered({}, { level_known: true, db: -12.5 }).get("level").textContent,
   "-12.50 dB",
 );
 // A close takes two seconds, so the number on its own reads as a fader that is
 // not moving. The destination is shown beside it while the move is in flight.
 check(
   "a fade in flight shows where it is heading",
-  rendered({}, { commanded: -300, db: -3.0, target: -32768, target_db: null, moving: true })
+  rendered({}, { level_known: true, commanded: -300, db: -3.0, target: -32768, target_db: null, moving: true })
     .get("level")
     .textContent,
   "-3.00 dB \u2192 -\u221E dB",
 );
 check(
   "and nothing is pointed at when the fader is settled",
-  rendered({}, { db: -3.0 }).get("level").textContent,
+  rendered({}, { level_known: true, db: -3.0 }).get("level").textContent,
   "-3.00 dB",
 );
 check(
   "a fade that has arrived does not point at itself",
-  rendered({}, { commanded: -32768, db: null, target: -32768, target_db: null, moving: true })
+  rendered({}, { level_known: true, commanded: -32768, db: null, target: -32768, target_db: null, moving: true })
     .get("level")
     .textContent,
   "-\u221E dB",
 );
 check(
   "an open in flight points at its destination too",
-  rendered({}, { commanded: -6000, db: -60.0, target: 0, target_db: 0.0, moving: true })
+  rendered({}, { level_known: true, commanded: -6000, db: -60.0, target: 0, target_db: 0.0, moving: true })
     .get("level")
     .textContent,
   "-60.00 dB \u2192 0.00 dB",
@@ -373,17 +376,17 @@ check("age: minutes once it is not urgent any more", ageText(76 * 60), "76 min a
 check("age: unbounded, so a whole game's worth is still readable", ageText(3 * 3600 + 5 * 60), "185 min ago");
 
 check(
-  "the readout carries the age of the last command, not only in handoff mode",
-  rendered({}, { db: 0.0, age: 76 * 60 }).get("level").textContent,
+  "the readout carries the age of the last command, known level or not",
+  rendered({}, { level_known: true, db: 0.0, age: 76 * 60 }).get("level").textContent,
   "0.00 dB - 76 min ago",
 );
 check(
   "no age is shown when nothing has ever been sent",
-  rendered({}, { age: null }).get("level").textContent,
+  rendered({}, { level_known: true, age: null }).get("level").textContent,
   "-∞ dB",
 );
 
-// -- StageMix has the DCA: the commanded level renders as unknown (#12) ------
+// -- the box does not know where the fader is: the level renders as unknown (#107) --
 
 check(
   "a level that is not trusted reads as unknown rather than a confident number",
@@ -406,21 +409,28 @@ check(
   "tag unknown",
 );
 check(
+  "the box's own boot snapshot does not know, so the cold-boot page reads unknown",
+  rendered().get("level").textContent,
+  "unknown",
+);
+check(
   "an ordinary reading is tagged commanded, as before",
   rendered({}, { level_known: true }).get("level-tag").textContent,
   "commanded",
 );
 
-// -- handing off to StageMix, and taking it back (#12) -----------------------
+// -- handing off to StageMix (#12) ------------------------------------------
 
-function handoffSnapshot(over = {}) {
-  const base = snapshot();
-  return { ...base, handoff: false, queued: false, ...over };
+// The boot snapshot with the level known or not. The page reads one flag for
+// both things it used to read two for (#107): the box does not know where the
+// fader is, whether that is a cold boot or a hand-off.
+function levelSnapshot(known) {
+  return snapshot({}, { level_known: known });
 }
 
 {
   const { context, nodes } = browser();
-  context.render(handoffSnapshot());
+  context.render(levelSnapshot(true));
   check("the confirm prompt starts closed", nodes.get("handoff-confirm").style.display, "none");
   check("the button invites a handoff", nodes.get("btn-handoff").textContent, "StageMix has it");
   check("and is not disabled", nodes.get("btn-handoff").disabled, false);
@@ -430,7 +440,7 @@ function handoffSnapshot(over = {}) {
   // Tapping it does not itself post anything: the box only hears about a
   // handoff once the prompt is answered (CLAUDE.md principle 4).
   const { context, nodes, posted } = browser();
-  context.render(handoffSnapshot());
+  context.render(levelSnapshot(true));
   posted.length = 0; // the page's own /api/state fetch on load
   nodes.get("btn-handoff").onclick();
   check("tapping it opens the prompt rather than acting at once", nodes.get("handoff-confirm").style.display, "block");
@@ -446,7 +456,7 @@ function handoffSnapshot(over = {}) {
   // The negative answer is `still-mine` (#12): a pure log entry, never a
   // handoff.
   const { context, nodes, posted } = browser();
-  context.render(handoffSnapshot());
+  context.render(levelSnapshot(true));
   posted.length = 0;
   nodes.get("btn-handoff").onclick();
   nodes.get("btn-handoff-no").onclick();
@@ -459,43 +469,81 @@ function handoffSnapshot(over = {}) {
   // Answered elsewhere - another browser's "yes", or this tap's own already
   // having landed - the question this page was asking is stale.
   const { context, nodes } = browser();
-  context.render(handoffSnapshot());
+  context.render(levelSnapshot(true));
   nodes.get("btn-handoff").onclick();
   check("the prompt is open", nodes.get("handoff-confirm").style.display, "block");
-  context.render(handoffSnapshot({ handoff: true }));
-  check("a snapshot that is already handed off closes it", nodes.get("handoff-confirm").style.display, "none");
+  context.render(levelSnapshot(false));
+  check("a snapshot whose level is already unknown closes it", nodes.get("handoff-confirm").style.display, "none");
 }
 
 {
   const { context, nodes } = browser();
-  context.render(handoffSnapshot({ handoff: true }));
-  check("once handed off the button says so", nodes.get("btn-handoff").textContent, "Handed off to StageMix");
+  context.render(levelSnapshot(false));
+  check("once the level is unknown the button says so", nodes.get("btn-handoff").textContent, "The level is already unknown");
   check("a second handoff is a no-op on the box, so the button is disabled",
         nodes.get("btn-handoff").disabled, true);
+  context.render(levelSnapshot(true));
+  check("and it invites a handoff again once the level is known",
+        nodes.get("btn-handoff").textContent, "StageMix has it");
+  check("and is tappable again", nodes.get("btn-handoff").disabled, false);
 }
 
-// -- the take-back prompt, answered in the fader column (#12) ----------------
-
 {
+  // The cold-boot page is the box's own boot snapshot, and it does not know.
   const { context, nodes } = browser();
-  context.render(handoffSnapshot());
-  check("no prompt while nothing is queued", nodes.get("takeback").style.display, "none");
-  context.render(handoffSnapshot({ handoff: true }));
-  check("nor while handed off with nothing queued yet", nodes.get("takeback").style.display, "none");
-  context.render(handoffSnapshot({ handoff: true, queued: true }));
-  check("only once a fader tap is queued behind an answer", nodes.get("takeback").style.display, "flex");
-  context.render(handoffSnapshot({ handoff: false, queued: false }));
-  check("and it goes away once taken back", nodes.get("takeback").style.display, "none");
+  context.render(snapshot());
+  check("at cold boot there is nothing to hand off", nodes.get("btn-handoff").disabled, true);
+}
+
+// -- where is the fader: the two belief controls (#107) -----------------------
+
+const STATES = ["standing-down", "idle", "ready", "open", "releasing"];
+
+for (const state of STATES) {
+  for (const known of [true, false]) {
+    const { context, nodes } = browser();
+    context.render({ ...levelSnapshot(known), state });
+    const label = `${state}, level ${known ? "known" : "unknown"}`;
+    // Nothing appears, disappears or moves on a belief change: the row is in
+    // the readout gap for good, and only a button with nothing to say is
+    // disabled in place.
+    check(`${label}: Close now is never hidden`, nodes.get("btn-close-now").style.display, undefined);
+    check(`${label}: Close now is never disabled`, nodes.get("btn-close-now").disabled, false);
+    check(`${label}: the ready report is never hidden`, nodes.get("btn-report-ready").style.display, undefined);
+    check(`${label}: the ready report is disabled iff the level is known`,
+          nodes.get("btn-report-ready").disabled, known);
+  }
+}
+
+check(
+  "the script never rewrites the belief buttons' labels; they are the page's own markup",
+  [
+    rendered({}, { level_known: true }).get("btn-close-now").textContent,
+    rendered({}, { level_known: false }).get("btn-close-now").textContent,
+  ],
+  ["", ""],
+);
+
+{
+  // Both post to their own routes, and neither navigates: the fader column is
+  // on screen whatever tab is showing.
+  const { context, nodes, posted } = browser();
+  context.render(levelSnapshot(false));
+  posted.length = 0;
+  nodes.get("btn-close-now").onclick();
+  check("close now posts to its own route", posted[0].path, "/api/close-now");
+  nodes.get("btn-report-ready").onclick();
+  check("the ready report posts to its own route", posted[1].path, "/api/report-ready");
+  check("neither asks first", posted.length, 2);
 }
 
 {
-  const { context, nodes, posted } = browser();
-  context.render(handoffSnapshot({ handoff: true, queued: true }));
-  posted.length = 0;
-  nodes.get("btn-take-back-up").onclick();
-  check("it's up answers the take-back", posted[0].path, "/api/take-back-up");
-  nodes.get("btn-take-back-down").onclick();
-  check("it's down answers it the other way", posted[1].path, "/api/take-back-down");
+  // The take-back prompt and its routes are gone (#107).
+  const { context, posted } = browser();
+  context.render(levelSnapshot(false));
+  check("nothing on the page posts to a take-back route",
+        posted.some((p) => p.path.includes("take-back")), false);
+  check("and the script no longer knows the word", SOURCE.includes("take-back-"), false);
 }
 
 // -- the box's own snapshots --------------------------------------------------
@@ -547,8 +595,13 @@ for (const name of Object.keys(SNAPSHOTS)) {
 
 {
   const { nodes, button } = renderedFixture("standing-down");
-  // Null dB is a closed fader, -inf, never a missing reading.
-  check("standing down: the closed fader reads -inf", nodes.get("level").textContent, "-\u221e dB");
+  // The boot fixture does not know where the fader is (#107), and the page
+  // says so rather than showing the -inf the box merely starts from. (Null dB
+  // is a closed fader, never a missing reading: see the readout checks above,
+  // which say the level is known.)
+  check("standing down: the cold-boot level reads unknown", nodes.get("level").textContent, "unknown");
+  check("standing down: Close now is there and live", nodes.get("btn-close-now").disabled, false);
+  check("standing down: the ready report is there and live", nodes.get("btn-report-ready").disabled, false);
   check("standing down: an unheard Reaper is unknown", nodes.get("rec").textContent, "unknown");
   check("standing down: and says so", nodes.get("rec-tag").textContent, "no feedback");
   check("standing down: nothing is wrong with saving", nodes.get("saving").className, "");
@@ -1007,7 +1060,7 @@ const snapshotFrame = { data: JSON.stringify(snapshot()) };
   sockets[0].onmessage(snapshotFrame);
   sockets[0].onmessage(keepaliveFrame);
   check("a keepalive does not blank the state", nodes.get("state").textContent, "STANDING DOWN");
-  check("and does not blank the fader", nodes.get("level").textContent, "-\u221E dB");
+  check("and does not blank the fader", nodes.get("level").textContent, "unknown");
 }
 {
   // Everything the old socket established goes with it, the threshold

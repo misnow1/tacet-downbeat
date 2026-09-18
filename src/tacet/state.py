@@ -28,20 +28,27 @@
     in every state until `allow_detector` is set, and refused in STANDING DOWN
     whatever it says.
 
-    `handoff` sits across all of the above, orthogonal to `state` (#12): the
-    box can be in any of them and also not trust its own belief about where
-    the fader really is, because StageMix might be moving it. While handed
-    off, RELEASE, READY and a gradual TRIGGER are queued rather than acted on -
-    each one depends on knowing the real level, which is exactly what is not
-    known - and STAND_DOWN goes straight to STANDING DOWN from wherever it
-    was, sending nothing. A snap TRIGGER always passes straight through.
-    TAKE_BACK_UP and TAKE_BACK_DOWN answer where the fader actually is and
-    clear `handoff`; TAKE_BACK_UP also commits READY the rest of the way to
-    OPEN, since "up" no longer distinguishes the hold level from target once
-    control has been handed over. Neither clears `queued` by itself - only
-    TAKE_BACK_CONFIRMED, once the shell knows the answer's own fader command
-    actually landed, runs whatever was queued and lets the machine forget it.
-    A failed send leaves `queued` in place for a repeated tap to retry.
+    `level_known` sits across all of the above, orthogonal to `state` (#107,
+    which generalises #12): the box can be in any of them and also not know
+    where the fader really is. That is true at every cold boot - the protocol is
+    write-only, so nothing can be read back (#18) - and again after the operator
+    hands the DCA to StageMix. Both are the same fact reached two ways, and the
+    machine does not distinguish them: the cause is in the log.
+
+    The invariant is absolute against relative. An absolute command (a snap
+    TRIGGER, CLOSE_NOW) lands the fader in one known place whatever the box
+    believed, so it is always safe, and it makes the level known. A relative
+    one - RELEASE's fade, READY's ride, a gradual TRIGGER - ramps from
+    `commanded_level`, which is fiction while the level is unknown, so it is
+    refused (not queued: there is no intention worth holding onto, and a queued
+    tap ran later on a belief nobody had looked at). ARM is refused too: it
+    sends nothing and calls the fader closed, which only the level being known
+    makes true. STAND_DOWN is never refused; it goes straight to STANDING DOWN
+    and sends nothing. REPORT_READY is the one way to READY from an unknown
+    level: READY has no fast form, so it cannot be driven to, only reported.
+    HANDOFF makes the level unknown again. A snap TRIGGER from STANDING DOWN
+    while unknown still arms and opens: STANDING DOWN never blocks the
+    operator (#89), and an open is absolute.
 
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
@@ -62,11 +69,12 @@ open there made a forgotten Arm into a missed downbeat, and a missed downbeat
 is unrecoverable. A `READY` while standing down arms the box the same way a
 `TRIGGER` does - a forgotten Arm must not cost a heads-up either.
 
-The machine emits `OPEN`, `READY`, `FADE`, `TAKE_BACK_UP` and `TAKE_BACK_DOWN`,
-and there is no other option. Faders only, never mutes: the band mics feed
-other mixes pre-fader and post-mute, so there is deliberately no mute for
-anything here to reach for. `READY` is still a fader write, to a hold level
-short of target - not a mute and not silence. `TAKE_BACK_UP` is the one
+The machine emits `OPEN`, `READY`, `FADE`, `CLOSE_NOW` and `REPORT_READY`, and
+there is no other option. Faders only, never mutes: the band mics feed other
+mixes pre-fader and post-mute, so there is deliberately no mute for anything
+here to reach for. `READY` is still a fader write, to a hold level short of
+target - not a mute and not silence. `CLOSE_NOW` is one write to -inf, the
+complete close, so the mute is never needed. `REPORT_READY` is the one
 exception that writes nothing at all - it corrects a belief, never the fader -
 which is still not a mute, since nothing is silenced by it either.
 """
@@ -118,20 +126,16 @@ class Command(StrEnum):
     RIDE_IN_COMPLETE = "ride-in-complete"
     #: StageMix has the DCA now. Every ramp starts from `commanded_level`, and
     #: that number is fiction the moment another interface can move the fader
-    #: (#12). A mode change, like ARM - no fader move of its own.
+    #: (#12). Makes the level unknown. A mode change, like ARM - no fader move
+    #: of its own.
     HANDOFF = "handoff"
-    #: Take-back answers: where the DCA actually is now that control is back.
-    #: UP never sends anything by itself - forcing a nonzero level with
-    #: nothing queued to justify it is exactly the surprise CLAUDE.md's
-    #: fail-safe principle forbids. DOWN always confirms silence for real,
-    #: because closing is always safe to do proactively.
-    TAKE_BACK_UP = "take-back-up"
-    TAKE_BACK_DOWN = "take-back-down"
-    #: A take-back answer's own fader command was confirmed delivered.
-    #: Reported by the shell, never tapped - like RIDE_IN_COMPLETE, it exists
-    #: so `queued` is only forgotten once the belief it depends on is
-    #: actually real, not merely attempted (#12).
-    TAKE_BACK_CONFIRMED = "take-back-confirmed"
+    #: One immediate packet to -inf. Absolute, so correct from any belief, which
+    #: is what makes it the one move always available (#107).
+    CLOSE_NOW = "close-now"
+    #: The operator reporting that the fader is already at the hold level.
+    #: Belief only, never a packet: READY has no fast form (see _readying), so
+    #: it is the one state that cannot be reached by driving to it (#107).
+    REPORT_READY = "report-ready"
 
 
 class FaderCommand(StrEnum):
@@ -140,13 +144,12 @@ class FaderCommand(StrEnum):
     #: a mute (#6).
     READY = "ready"
     FADE = "fade"
-    #: The take-back answers (#12). UP is belief only, never a packet: it
-    #: names the level `Dm7Client.assume` should trust without sending
-    #: anything. DOWN is one immediate packet to -inf, confirming silence for
-    #: real - never the 2 s fade, which would leave the band audible for two
-    #: more seconds if the belief it starts from turns out wrong anyway.
-    TAKE_BACK_UP = "take-back-up"
-    TAKE_BACK_DOWN = "take-back-down"
+    #: One immediate packet to -inf, confirming silence for real - never the
+    #: 2 s fade, which would ramp from a belief that may be fiction (#107).
+    CLOSE_NOW = "close-now"
+    #: Belief only, never a packet: it names the level `Dm7Client.assume`
+    #: should trust without sending anything (#107).
+    REPORT_READY = "report-ready"
 
 
 @dataclass(frozen=True)
@@ -188,15 +191,15 @@ class Machine:
     #: regardless of this flag (#6); it is kept there for the why line and so a
     #: failed ride can be retried.
     riding_in: bool = False
-    #: StageMix has the DCA. Every ramp depends on knowing where the fader
-    #: really is, which this box cannot while another interface might be
-    #: moving it (#12). Orthogonal to `state`, like `allow_detector`: the box
-    #: can be in any state and also not trust its own belief about the level.
-    handoff: bool = False
-    #: The one fader tap blocked while handed off, waiting on a take-back
-    #: answer. A new blocked tap silently replaces whatever was queued, the
-    #: same way a ride-in is already superseded by a fade elsewhere.
-    queued: Event | None = None
+    #: Whether `commanded_level` is worth ramping from. Every ramp starts there,
+    #: and it is only a belief: the DM7's OSC is write-only, so it can be wrong
+    #: from the moment the box boots, and again the moment another interface
+    #: (StageMix, #12) might be moving the fader. False at construction for
+    #: exactly that reason - a fresh `Dm7Client` believes -inf only because that
+    #: is a convenient number to start from (#107). Orthogonal to `state`, like
+    #: `allow_detector`. Made true by an absolute command, made false by
+    #: HANDOFF; a relative move changes neither way.
+    level_known: bool = False
 
 
 @dataclass(frozen=True)
@@ -207,31 +210,51 @@ class Outcome:
     refusal: str | None = None
     #: False when the event was legal but changed nothing.
     changed: bool = True
-    #: A take-back answer's own queued tap, now safe to run - only ever set by
-    #: TAKE_BACK_UP/TAKE_BACK_DOWN, and only when one was queued (#12). The
-    #: shell replays it through the ordinary command path, which is what makes
-    #: it ramp from the just-corrected belief without this module needing to
-    #: know any level, target or duration itself.
-    replay: Event | None = None
 
 
 def _unchanged(machine: Machine, refusal: str | None = None) -> Outcome:
     return Outcome(machine=machine, refusal=refusal, changed=False)
 
 
+#: Commands that only a person can give. READY is entered on a prediction that
+#: something is about to happen, and REPORT_READY says the fader is already at
+#: the hold level: neither is something a detector can know (#6, #107).
+_OPERATOR_ONLY = (Command.READY, Command.REPORT_READY)
+
+#: Why a bare ARM is refused while the level is unknown. Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+UNKNOWN_LEVEL_ARM = (
+    "the box does not know where the fader is, so arming would claim a closed DCA "
+    "it cannot vouch for; close it now, or open, to say where it is"
+)
+#: Why a detector-sourced CLOSE_NOW is refused. Not quoted in
+#: docs/troubleshooting.md: like the other detector refusals it is not a
+#: message the operator's page shows, since no detector exists before Phase 2.
+DETECTOR_CLOSE_IS_THE_FADE = "the detector closes only with the 2 s fade; the instant close is the operator's"
+#: Why a relative move is refused while the level is unknown. Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+UNKNOWN_LEVEL_MOVE = (
+    "the box does not know where the fader is, and this move ramps from that belief; close it now, or open, first"
+)
+#: Why REPORT_READY is refused once the level is known. Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+LEVEL_ALREADY_KNOWN = "the fader level is already known; ready rides there instead of assuming it"
+
+
 def step(machine: Machine, event: Event) -> Outcome:
     """Apply one event. Never raises: an illegal event is refused, not fatal."""
-    if event.command is Command.READY and event.source is Source.DETECTOR:
+    if event.command in _OPERATOR_ONLY and event.source is Source.DETECTOR:
         # Unconditional, and checked before the phase gate below: READY is
         # entered on a prediction that something is about to happen, which
         # only a watching human can judge (design.md 2, CLAUDE.md "never gate
         # on level alone"). That is not the Phase 1/2 line TRIGGER sits on -
         # a detector confirming sound is present is exactly its Phase 2 job,
         # but guessing that sound is about to start never becomes one (#6).
+        # REPORT_READY is the same kind of claim, made about the fader itself.
         return _unchanged(machine, "READY is operator-only; only a person can tell what is about to play")
     if machine.state is State.STANDING_DOWN and event.source is Source.DETECTOR:
         # Unconditional, whatever `allow_detector` says, and moved up here
-        # (#12) so it covers HANDOFF and the take-back answers too, not only
+        # (#12) so it covers HANDOFF and the level answers too, not only
         # the commands `_standing_down` itself dispatches: standing down is
         # what says the band is not in the stands, so there is nothing to
         # detect, and the detector does not get to change the mode.
@@ -243,48 +266,58 @@ def step(machine: Machine, event: Event) -> Outcome:
         )
     if event.command is Command.HANDOFF:
         # A mode change, like ARM: no fader move, legal from any state. A
-        # second HANDOFF while already handed off changes nothing.
-        if machine.handoff:
+        # second HANDOFF while the level is already unknown changes nothing.
+        if not machine.level_known:
             return _unchanged(machine)
-        return Outcome(machine=replace(_settled_for_handoff(machine), handoff=True, queued=None))
-    if event.command is Command.TAKE_BACK_UP:
-        return _take_back(machine, fader=FaderCommand.TAKE_BACK_UP)
-    if event.command is Command.TAKE_BACK_DOWN:
-        return _take_back(machine, fader=FaderCommand.TAKE_BACK_DOWN)
-    if event.command is Command.TAKE_BACK_CONFIRMED:
-        return _take_back_confirmed(machine)
-    if machine.handoff:
-        # Checked before dispatching by state, because both of these apply
-        # identically whatever `state` currently is (#12).
-        if event.command is Command.STAND_DOWN:
-            # Changes state only and sends nothing: there is no real fader
-            # move for RELEASING to be waiting on, so this goes straight to
-            # STANDING_DOWN from wherever it was, discarding anything queued -
-            # standing down means off duty, so a queued fader intention no
-            # longer applies. `handoff` itself outlives this: the box still
-            # does not know where the console really is.
-            return Outcome(
-                machine=replace(
-                    machine,
-                    state=State.STANDING_DOWN,
-                    queued=None,
-                    pending_stand_down=False,
-                    stalled=False,
-                    riding_in=False,
-                    armed_by_operator=False,
-                )
+        return Outcome(machine=replace(_settled_before_unknown(machine), level_known=False))
+    if event.command is Command.CLOSE_NOW and event.source is Source.DETECTOR:
+        # CLAUDE.md principle 3: the machine cannot see the conductor's arms
+        # come down, so every close it makes is reactive, and the 2 s fade is
+        # what makes that acceptable. An instant close is the operator's, who
+        # can; a detector that reached it would cut the band on a misread.
+        # Refused with its own reason, not READY's operator-only text.
+        return _unchanged(machine, DETECTOR_CLOSE_IS_THE_FADE)
+    if event.command is Command.CLOSE_NOW:
+        return _close_now(machine)
+    if event.command is Command.REPORT_READY:
+        return _report_ready(machine)
+    if not machine.level_known:
+        refused = _refused_while_unknown(machine, event)
+        if refused is not None:
+            return refused
+    return _HANDLERS[machine.state](machine, event)
+
+
+def _refused_while_unknown(machine: Machine, event: Event) -> Outcome | None:
+    """What becomes of an event while the box does not know where the fader is
+    (#107), or None when it goes through to the state's own handler. Only
+    called with the level unknown.
+
+    ARM is a mode change that sends nothing and calls the fader closed, which
+    it cannot vouch for. The relative moves ramp from the belief. STAND_DOWN is
+    never refused, and gets its own handling here because it must still change
+    state: no fade is sent, so nothing would ever fire FADE_COMPLETE."""
+    if event.command is Command.ARM:
+        return _unchanged(machine, UNKNOWN_LEVEL_ARM)
+    if event.command is Command.STAND_DOWN and machine.state is not State.STANDING_DOWN:
+        # Not when already standing down: `_standing_down` deliberately reports
+        # that as changing nothing, and this must not turn a no-op into a change.
+        return Outcome(
+            machine=replace(
+                machine,
+                state=State.STANDING_DOWN,
+                pending_stand_down=False,
+                stalled=False,
+                riding_in=False,
+                armed_by_operator=False,
             )
-        if _blocked_by_handoff(event):
-            # Queued, not refused: the reason still gets logged by the shell
-            # exactly as tapped, and the move itself runs once answered. A
-            # second blocked tap silently replaces the first.
-            return Outcome(machine=replace(machine, queued=event))
-
-    handler = _HANDLERS[machine.state]
-    return handler(machine, event)
+        )
+    if _needs_a_known_level(event):
+        return _unchanged(machine, UNKNOWN_LEVEL_MOVE)
+    return None
 
 
-def _settled_for_handoff(machine: Machine) -> Machine:
+def _settled_before_unknown(machine: Machine) -> Machine:
     """Presume whatever move is running has already landed, before handing
     off cancels it for real (#12). `state` describes what the operator wants,
     not where the fader physically is - handing off does not change that
@@ -300,11 +333,11 @@ def _settled_for_handoff(machine: Machine) -> Machine:
     return machine
 
 
-def _blocked_by_handoff(event: Event) -> bool:
+def _needs_a_known_level(event: Event) -> bool:
     """Whether this command is a ramp that depends on knowing the console's
     real level - the hazard #12 exists to prevent. A snap TRIGGER always
-    passes straight through, correct from any start; STAND_DOWN gets its own
-    handling above, since it must still change state."""
+    passes straight through, correct from any start; STAND_DOWN and ARM get
+    their own handling in `_refused_while_unknown`."""
     if event.command is Command.RELEASE:
         return True
     if event.command is Command.READY:
@@ -312,40 +345,53 @@ def _blocked_by_handoff(event: Event) -> bool:
     return event.command is Command.TRIGGER and event.gradual
 
 
-def _take_back(machine: Machine, *, fader: FaderCommand) -> Outcome:
-    """UP and DOWN share everything except which `FaderCommand` they emit.
+def _close_now(machine: Machine) -> Outcome:
+    """One immediate packet to -inf, correct from any belief and legal in every
+    state. Never the 2 s fade: the fade ramps from a number that may be fiction,
+    the one thing this whole feature exists to prevent. Gated by nothing - not
+    the state, not `level_known`, not a stall - so it is the one move always
+    available.
 
-    Neither clears `queued` here. UP never sends a packet, so it cannot fail,
-    but DOWN does, and clearing `queued` before knowing whether that packet
-    actually landed would silently drop a blocked tap the moment it failed -
-    exactly the surprise CLAUDE.md's fail-visible principle forbids. Only
-    TAKE_BACK_CONFIRMED, once the shell knows the packet was delivered, is
-    allowed to forget it (#12)."""
-    if not machine.handoff:
-        if machine.queued is not None:
-            # A previous take-back answer's own packet failed to send -
-            # `queued` survived because nothing has confirmed delivery yet.
-            # Retry by tapping the same answer again.
-            return Outcome(machine=machine, fader=fader, replay=machine.queued)
-        return _unchanged(machine)
-    state_after = machine.state
-    if fader is FaderCommand.TAKE_BACK_UP and state_after is State.READY:
-        # "Up" no longer distinguishes the hold level from target once
-        # StageMix may have moved the fader anywhere in between - commit to
-        # OPEN the same way an ordinary trigger would from READY (#12).
-        state_after = State.OPEN
+    Lands in a closed state, so `state` matches what was commanded: IDLE, or
+    STANDING DOWN if the box was standing down or a stand-down was pending."""
+    landing = State.STANDING_DOWN if machine.state is State.STANDING_DOWN or machine.pending_stand_down else State.IDLE
     return Outcome(
-        machine=replace(machine, state=state_after, handoff=False),
-        fader=fader,
-        replay=machine.queued,
+        machine=replace(
+            machine,
+            state=landing,
+            level_known=True,
+            pending_stand_down=False,
+            stalled=False,
+            riding_in=False,
+            armed_by_operator=False,
+        ),
+        fader=FaderCommand.CLOSE_NOW,
     )
 
 
-def _take_back_confirmed(machine: Machine) -> Outcome:
-    """The shell steps this directly, like RIDE_IN_COMPLETE - nothing was
-    tapped - once a take-back answer's own fader command is confirmed
-    delivered. Only now is it safe to forget the queued replay (#12)."""
-    return Outcome(machine=replace(machine, queued=None))
+def _report_ready(machine: Machine) -> Outcome:
+    """The operator says the fader is already at the hold level. READY has no
+    fast form, so this is the only way to READY from an unknown level: a belief
+    is corrected and nothing is sent.
+
+    Refused once the level is known: it would be a jump to READY with no fader
+    move, claiming a hold level the box knows the fader is not at. To mean it,
+    hand off first. From STANDING DOWN it arms the box exactly as READY does
+    (#6, #89)."""
+    if machine.level_known:
+        return _unchanged(machine, LEVEL_ALREADY_KNOWN)
+    return Outcome(
+        machine=replace(
+            machine,
+            state=State.READY,
+            level_known=True,
+            pending_stand_down=False,
+            stalled=False,
+            riding_in=False,
+            armed_by_operator=machine.state is State.STANDING_DOWN,
+        ),
+        fader=FaderCommand.REPORT_READY,
+    )
 
 
 def _standing_down(machine: Machine, event: Event) -> Outcome:
@@ -391,6 +437,14 @@ def _opening(machine: Machine, event: Event, *, armed_by_operator: bool = False)
             stalled=False,
             riding_in=event.gradual,
             armed_by_operator=armed_by_operator,
+            # Every open ends at `open_level`, absolute, so the fader's place is
+            # known from here whatever the box believed before (#107). Only
+            # that: `_closing` and `_readying` are relative and never set this.
+            # Known residual (#107): this is not a claim the packet was
+            # delivered. `step` is pure and cannot know; a send that failed
+            # still marks the level known, and only `stalled` (via MOVE_FAILED)
+            # says so, loudly. Un-knowing it is a separate change.
+            level_known=True,
         ),
         fader=FaderCommand.OPEN,
     )
@@ -473,8 +527,11 @@ def _open(machine: Machine, event: Event) -> Outcome:
         return _closing(machine, pending_stand_down=True)
     if event.command is Command.MOVE_FAILED:
         return _move_failed(machine)
-    if event.command is Command.TRIGGER and machine.stalled:
+    if event.command is Command.TRIGGER and (machine.stalled or not machine.level_known):
         # The open never got there. Send it again, at the speed now asked for.
+        # Or the box does not know where the fader is (#107): "already open" is
+        # then only a belief, and the snap is the one way to make it true. A
+        # gradual trigger never gets here unknown - `step` refuses it first.
         return _opening(machine, event)
     if event.command is Command.TRIGGER and machine.riding_in and not event.gradual:
         # The band is coming in now; snap the rest of the way.
@@ -525,10 +582,10 @@ _DESCRIPTIONS = {
 def describe(machine: Machine) -> str:
     """The plain-language why line for the UI (design.md 5.5)."""
     text = _DESCRIPTIONS[machine.state]
-    if machine.handoff:
-        text += " StageMix has the DCA; where it really is stays unknown until you say."
-        if machine.queued is not None:
-            text += " Your last tap is waiting on that answer."
+    if not machine.level_known:
+        # Says what is not known, never why: the machine cannot tell a handoff
+        # from a cold boot, and the log already records which it was.
+        text += " The box does not know where the fader really is; close it now, or open, to say where it is."
     if machine.armed_by_operator:
         text += " Armed by that: the box was standing down."
     if machine.stalled:

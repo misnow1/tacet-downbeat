@@ -246,7 +246,6 @@
     "target": -32768,
     "target_db": null
   },
-  "handoff": false,
   "log": {
     "error": null,
     "failures": 0,
@@ -259,7 +258,6 @@
     "healthy": true
   },
   "open_spans": [],
-  "queued": false,
   "recording": {
     "can_start": true,
     "confirmed": false,

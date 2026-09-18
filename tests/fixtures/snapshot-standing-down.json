@@ -241,12 +241,11 @@
     "db": null,
     "error": null,
     "healthy": true,
-    "level_known": true,
+    "level_known": false,
     "moving": false,
     "target": null,
     "target_db": null
   },
-  "handoff": false,
   "log": {
     "error": null,
     "failures": 0,
@@ -259,7 +258,6 @@
     "healthy": true
   },
   "open_spans": [],
-  "queued": false,
   "recording": {
     "can_start": true,
     "confirmed": false,
@@ -272,5 +270,5 @@
   "refusal": null,
   "stale_tap": null,
   "state": "standing-down",
-  "why": "Standing down. You can still drive the fader; an open arms the box. You are driving; the detector cannot move the fader."
+  "why": "Standing down. You can still drive the fader; an open arms the box. The box does not know where the fader really is; close it now, or open, to say where it is. You are driving; the detector cannot move the fader."
 }

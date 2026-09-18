@@ -194,12 +194,17 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("stood-down", "Stood down", Category.SESSION, button=False),
     _instant("stand-down-requested", "Stand down requested", Category.SESSION, button=False),
     _instant("stand-down-cancelled", "Stand down cancelled", Category.SESSION, button=False),
-    # StageMix control-authority timeline (#12). Written by the box when
-    # `handoff` starts or ends, the same way ARMED and STOOD_DOWN describe a
-    # state change rather than the tap that caused it - which take-back
-    # answer was given lives on that tap's own `commanded` entry instead.
+    # Where-is-the-fader timeline (#12, #107). Written by the box when it stops
+    # knowing where the fader is and when it starts again, the same way ARMED
+    # and STOOD_DOWN describe a state change rather than the tap that caused
+    # it - which move ended the not-knowing lives on that tap's own `commanded`
+    # entry instead. `handed-off` is written only by the operator's own
+    # hand-off to StageMix. `took-back` is written whenever the box starts
+    # knowing, which includes the first absolute tap after every cold boot, so
+    # its label does not say control was handed back. The keys are never
+    # renamed or removed: an older log has to keep reading.
     _instant("handed-off", "Handed off to StageMix", Category.SESSION, button=False),
-    _instant("took-back", "Took back control", Category.SESSION, button=False),
+    _instant("took-back", "Fader position confirmed", Category.SESSION, button=False),
     # The return prompt's negative answer: a pure confirmation that changes
     # nothing, tapped from the prompt slot rather than a button in a grid.
     _instant("still-mine", "Still mine (no handoff)", Category.SESSION, button=False),

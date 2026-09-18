@@ -12,7 +12,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, osc, reaper, web
+from tacet import dm7, osc, reaper, state, web
 from tests.disk import Disk
 
 
@@ -64,20 +64,77 @@ class TestPage(WebTestCase):
             self.assertNotIn(scheme, body)
 
     async def test_the_page_carries_the_handoff_controls(self):
-        # #12: the "StageMix has it" control, its confirm prompt, and the
-        # take-back answers the fader column asks for.
+        # #12: the "StageMix has it" control and its confirm prompt.
         body = await (await self.client.get("/")).text()
-        for element_id in (
-            "btn-handoff",
-            "handoff-confirm",
-            "btn-handoff-yes",
-            "btn-handoff-no",
-            "takeback",
-            "btn-take-back-up",
-            "btn-take-back-down",
-            "level-tag",
-        ):
+        for element_id in ("btn-handoff", "handoff-confirm", "btn-handoff-yes", "btn-handoff-no", "level-tag"):
             self.assertIn(f'id="{element_id}"', body)
+
+    async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
+        # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
+        # 12px gaps between its seven children (72) and the readout gap. At
+        # 96px that is 592 + 72 + 96 = 760px, which fits a 768px-tall landscape
+        # iPad. Raising it to fit the belief row (148px, 812px in all) makes
+        # the page scroll, the exact failure #5 was built to remove, so the
+        # belief row has to fit inside the 96px instead (#107).
+        body = await (await self.client.get("/")).text()
+        self.assertIn("#readout{flex:1 1 96px;min-height:96px;", body)
+        self.assertNotIn("148px", body)
+
+    async def test_the_readout_can_never_spill_onto_the_buttons_around_it(self):
+        # Worst case is more than 96px of content: overflow:hidden is only the
+        # backstop, and the two secondary lines are one line each with an
+        # ellipsis so they cannot grow past their 15px.
+        body = await (await self.client.get("/")).text()
+        readout = body.split("#readout{", 1)[1].split("}", 1)[0]
+        self.assertIn("overflow:hidden", readout)
+        for line in ("#col-refusal", "#readout #fader-error"):
+            rule = body.split(line + "{", 1)[1].split("}", 1)[0]
+            self.assertIn("text-overflow:ellipsis", rule, line)
+            self.assertIn("white-space:nowrap", rule, line)
+
+    async def test_only_the_refusal_copy_yields_and_the_console_fault_never_does(self):
+        # "Console unreachable" is shown nowhere else on the page, so it is not
+        # a duplicate and must not be the line that shrinks. The refusal is
+        # also in the header chip, so it is. The level line and the belief row
+        # never shrink either.
+        body = await (await self.client.get("/")).text()
+
+        def rule(selector: str) -> str:
+            return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+        self.assertIn("flex:0 0 auto", rule("#readout #fader-error"))
+        self.assertIn("flex:0 1 auto", rule("#col-refusal"))
+        self.assertIn("flex:none", rule("#readout .value"))
+        self.assertIn("flex:none", rule("#belief"))
+        self.assertIn("text-overflow:ellipsis", rule("#belief button"))
+
+    async def test_the_belief_row_is_last_in_the_readout_so_the_secondary_lines_yield_first(self):
+        body = await (await self.client.get("/")).text()
+        readout = body.split('<div id="readout">', 1)[1]
+        order = [readout.index(f'id="{name}"') for name in ("level", "fader-error", "col-refusal", "belief")]
+        self.assertEqual(order, sorted(order))
+
+    async def test_the_page_carries_the_belief_controls(self):
+        # #107: the two answers to "where is the fader", always on the page.
+        body = await (await self.client.get("/")).text()
+        for element_id in ("belief", "btn-close-now", "btn-report-ready"):
+            self.assertIn(f'id="{element_id}"', body)
+        # The labels are the page's own, never rewritten by the script.
+        self.assertIn(">Close now<", body)
+        self.assertIn(">It's at ready level<", body)
+
+    async def test_the_belief_controls_are_never_hidden_by_the_stylesheet(self):
+        # Nothing may appear, disappear or move on a belief change (#107): the
+        # row is in the readout gap for good, and the script only ever
+        # disables a button in place.
+        body = await (await self.client.get("/")).text()
+        self.assertNotIn("#belief{display:none", body)
+        self.assertNotIn('id="belief" style="display:none', body)
+
+    async def test_the_take_back_prompt_is_gone_from_the_page(self):
+        body = await (await self.client.get("/")).text()
+        for gone in ("takeback", "btn-take-back-up", "btn-take-back-down", "Take back control"):
+            self.assertNotIn(gone, body)
 
 
 class TestThePageHasWhereTapsReport(WebTestCase):
@@ -103,17 +160,28 @@ class TestStateEndpoint(WebTestCase):
 
 class TestCommands(WebTestCase):
     async def test_arm(self):
+        await self.client.post("/api/close-now")
         payload = await (await self.client.post("/api/arm")).json()
         self.assertEqual(payload["state"], "idle")
         self.assertIn("armed", self.entries())
 
+    async def test_arm_before_the_level_is_known_is_refused(self):
+        # The production default at cold boot (#107), through the real route.
+        payload = await (await self.client.post("/api/arm")).json()
+        self.assertEqual(payload["state"], "standing-down")
+        self.assertEqual(payload["refusal"], state.UNKNOWN_LEVEL_ARM)
+        self.assertNotIn("armed", self.entries())
+        self.assertEqual(self.console_sender.packets, [])
+
     async def test_trigger_opens_the_fader(self):
+        await self.client.post("/api/close-now")
         await self.client.post("/api/arm")
         payload = await (await self.client.post("/api/trigger")).json()
         self.assertEqual(payload["state"], "open")
         self.assertTrue(self.console_sender.packets)
 
     async def test_release_starts_a_fade(self):
+        await self.client.post("/api/close-now")
         await self.client.post("/api/arm")
         await self.client.post("/api/trigger")
         payload = await (await self.client.post("/api/release")).json()
@@ -121,6 +189,7 @@ class TestCommands(WebTestCase):
         await self.tacet.wait_for_fade()
 
     async def test_stand_down(self):
+        await self.client.post("/api/close-now")
         await self.client.post("/api/arm")
         payload = await (await self.client.post("/api/stand-down")).json()
         self.assertEqual(payload["state"], "standing-down")
@@ -141,41 +210,58 @@ class TestCommands(WebTestCase):
         return self.server.app
 
 
-class TestHandoff(WebTestCase):
-    """#12: the routes the page's handoff/take-back UI drives. The state
-    machine's own rules are `tests/test_state.py` and `tests/test_app.py`'s
-    job; this is only whether each is wired to a route at all."""
+class TestTheLevelIsKnownOrNot(WebTestCase):
+    """#107 (generalising #12): the routes the page's belief controls drive.
+    The state machine's own rules are `tests/test_state.py` and
+    `tests/test_app.py`'s job; this is only whether each is wired to a route
+    at all."""
 
-    async def test_handoff(self):
-        payload = await (await self.client.post("/api/handoff")).json()
-        self.assertTrue(payload["handoff"])
-        self.assertIn("handed-off", self.entries())
-
-    async def test_take_back_up(self):
-        await self.client.post("/api/arm")
-        await self.client.post("/api/handoff")
-        payload = await (await self.client.post("/api/take-back-up")).json()
-        self.assertFalse(payload["handoff"])
+    async def test_close_now(self):
+        payload = await (await self.client.post("/api/close-now")).json()
+        self.assertTrue(payload["fader"]["level_known"])
+        self.assertEqual(payload["fader"]["commanded"], dm7.MINUS_INF)
+        self.assertEqual(len(self.console_sender.packets), 1)
         self.assertIn("took-back", self.entries())
 
-    async def test_take_back_down(self):
-        await self.client.post("/api/arm")
-        await self.client.post("/api/handoff")
-        payload = await (await self.client.post("/api/take-back-down")).json()
-        self.assertFalse(payload["handoff"])
-        self.assertTrue(self.console_sender.packets)
+    async def test_report_ready(self):
+        payload = await (await self.client.post("/api/report-ready")).json()
+        self.assertEqual(payload["state"], "ready")
+        self.assertTrue(payload["fader"]["level_known"])
+        # A belief, never a packet.
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_report_ready_once_the_level_is_known_is_refused(self):
+        await self.client.post("/api/close-now")
+        payload = await (await self.client.post("/api/report-ready")).json()
+        self.assertEqual(payload["refusal"], state.LEVEL_ALREADY_KNOWN)
+        self.assertEqual(payload["state"], "standing-down")
+
+    async def test_handoff(self):
+        await self.client.post("/api/close-now")
+        payload = await (await self.client.post("/api/handoff")).json()
+        self.assertFalse(payload["fader"]["level_known"])
+        self.assertIn("handed-off", self.entries())
 
     async def test_still_mine(self):
         payload = await (await self.client.post("/api/still-mine")).json()
         self.assertEqual(payload["state"], "standing-down")
         self.assertIn("still-mine", self.entries())
 
-    async def test_a_queued_fader_tap_is_carried_on_the_snapshot(self):
-        await self.client.post("/api/arm")
-        await self.client.post("/api/handoff")
+    async def test_a_fade_that_needs_a_known_level_is_refused_on_the_snapshot(self):
         payload = await (await self.client.post("/api/annotate", json={"key": "out"})).json()
-        self.assertTrue(payload["state"]["queued"])
+        self.assertEqual(payload["state"]["refusal"], state.UNKNOWN_LEVEL_MOVE)
         self.assertFalse(payload["state"]["fader"]["level_known"])
+        self.assertNotIn("queued", payload["state"])
+
+    async def test_the_take_back_routes_are_gone(self):
+        # Mirrors `test_there_is_no_stop_route`: asserted against the router so
+        # they cannot creep back in. #107 replaced them with close-now and
+        # report-ready, and nothing may 404 that the page still calls.
+        paths = {getattr(route.resource, "canonical", "") for route in self.server.app.router.routes()}
+        for gone in ("/api/take-back-up", "/api/take-back-down"):
+            self.assertNotIn(gone, paths)
+        for present in ("/api/close-now", "/api/report-ready", "/api/handoff", "/api/still-mine"):
+            self.assertIn(present, paths)
 
 
 class TestAnnotation(WebTestCase):
@@ -211,12 +297,14 @@ class TestAnnotation(WebTestCase):
         self.assertNotIn("recording-started", self.entries())
 
     async def test_data_that_is_not_an_object_is_refused_before_the_fader_moves(self):
+        await self.client.post("/api/close-now")
         await self.client.post("/api/arm")
+        sent = len(self.console_sender.packets)
         response = await self.client.post("/api/annotate", json={"key": "up-drums", "data": "hello"})
         self.assertEqual(response.status, 400)
         state = await (await self.client.get("/api/state")).json()
         self.assertEqual(state["state"], "idle")
-        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(len(self.console_sender.packets), sent)
 
     async def test_nan_in_the_body_is_refused(self):
         # Python's JSON reader takes a bare NaN; the log must never hold one.
@@ -282,6 +370,7 @@ class TestFailures(WebTestCase):
         return web.create_app(self.tacet)
 
     async def test_an_annotation_that_was_not_saved_says_so(self):
+        await self.client.post("/api/close-now")
         await self.client.post("/api/arm")
         self.disk.full = True
         response = await self.client.post("/api/annotate", json={"key": "up-drums"})
@@ -318,6 +407,7 @@ class TestWebSocket(WebTestCase):
             self.assertEqual(payload["state"], "standing-down")
 
     async def test_changes_are_pushed(self):
+        await self.client.post("/api/close-now")
         async with self.client.ws_connect("/ws") as socket:
             await socket.receive()  # the opening keepalive
             await socket.receive()  # the initial snapshot
@@ -632,7 +722,8 @@ class TestTapsAreStampedOnTheWayIn(WebTestCase):
     async def test_every_command_route_reads_the_stamp(self):
         # Page clock 1000 s ahead of the box's, tapped 2 s before it arrived.
         body = self.stamp(at=5998.0, offset=1000.0, uncertainty=0.05)
-        for path in ("/api/arm", "/api/trigger", "/api/release", "/api/stand-down", "/api/record"):
+        paths = ("/api/close-now", "/api/arm", "/api/trigger", "/api/release", "/api/stand-down", "/api/record")
+        for path in paths:
             with self.subTest(path):
                 response = await self.client.post(path, json=body)
                 self.assertEqual(response.status, 200)
@@ -652,15 +743,24 @@ class TestTapsAreStampedOnTheWayIn(WebTestCase):
                 self.assertEqual(entry.data["tap"]["delay"], 0.5)
 
     async def test_a_tap_with_no_estimate_logs_when_it_arrived(self):
+        await self.client.post("/api/close-now")
         await self.client.post("/api/arm", json=self.stamp(at=123.0))
         tap = self.logged()[-1].data["tap"]
         self.assertEqual(tap, {"tapped": None, "received": 5000.0, "delay": None, "uncertainty": None})
 
     async def test_a_command_with_no_body_still_works(self):
         # curl, or a page cached from before the stamp.
+        await self.client.post("/api/close-now")
         response = await self.client.post("/api/arm")
         self.assertEqual(response.status, 200)
         self.assertIsNone(self.logged()[-1].data["tap"]["delay"])
+
+    async def test_report_ready_reads_the_stamp_too(self):
+        # It is the one route that cannot follow close-now in the loop above:
+        # once the level is known it is refused.
+        body = self.stamp(at=5998.0, offset=1000.0, uncertainty=0.05)
+        await self.client.post("/api/report-ready", json=body)
+        self.assertEqual(self.logged()[-1].data["tap"]["delay"], 2.0)
 
     async def test_a_malformed_stamp_is_a_client_error_and_does_nothing(self):
         response = await self.client.post("/api/arm", json={"tap": {"at": "soon"}})

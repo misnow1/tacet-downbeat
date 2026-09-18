@@ -335,8 +335,8 @@ function faderDb(db) {
 }
 
 // The age of the last thing actually sent to the console - a snap, a ramp
-// step, or a take-back's own confirming packet - in the box's own words
-// (#12). Shown whether or not the level is trusted: game 2 spent 76 minutes
+// step, or a close - in the box's own words (#12). Shown whether or not the
+// level is known: game 2 spent 76 minutes
 // with StageMix on the DCA and the page reading a confident number that had
 // not been true since 14:15, and the age is what would have said so. Seconds
 // close up, so a page that just tapped does not say "0 min ago"; minutes
@@ -408,9 +408,11 @@ function render(next) {
   // as a fader that is not moving. Null dB is -inf, never a missing reading.
   // Compared as console units, not dB: -inf has no number to compare with.
   const arrived = fader.target === null || fader.target === fader.commanded;
-  // StageMix has the DCA (#12): `commanded` is fiction until a take-back
-  // answer corrects it, and the number must say so rather than sit there
-  // looking confident - the game 2 hazard this whole feature exists for.
+  // The box does not know where the fader is (#107): at every cold boot, and
+  // again after a hand-off to StageMix (#12). `commanded` is only a belief
+  // until an absolute command says otherwise, and the number must say so
+  // rather than sit there looking confident - the game 2 hazard this whole
+  // feature exists for.
   const value = fader.level_known
     ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
     : "unknown";
@@ -421,19 +423,23 @@ function render(next) {
   levelTag.className = "tag " + (fader.level_known ? "commanded" : "unknown");
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
 
-  // The take-back prompt: only while a fader tap is queued behind an answer,
-  // and answered in the fader column (#12) rather than the prompt slot - it
-  // is timed against the music, unlike handing off itself.
-  $("takeback").style.display = next.handoff && next.queued ? "flex" : "none";
-  // A second handoff is a no-op on the box (state.step), so the button says
-  // as much rather than inviting a tap that does nothing.
+  // The two belief controls are always on the page and never hidden (#107):
+  // nothing here may appear, disappear or move on a belief change, only a
+  // button that has nothing to say stops being tappable, in place. Close now is
+  // absolute and always right, so it is never disabled. "It's at the ready
+  // level" is a report about a belief the box does not yet have, so it only
+  // means something while the level is unknown.
+  $("btn-report-ready").disabled = fader.level_known;
+  // Handing off makes the level unknown, so once it already is there is
+  // nothing left for the button to do, and it says as much rather than
+  // inviting a tap that does nothing.
   const handoffButton = $("btn-handoff");
-  handoffButton.disabled = next.handoff;
-  handoffButton.textContent = next.handoff ? "Handed off to StageMix" : "StageMix has it";
-  // Whatever this page's own prompt was asking is answered the moment
-  // `handoff` is true, however that happened - another browser's "yes", or
-  // this one's own tap already landing.
-  if (handoffPromptOpen && next.handoff) {
+  handoffButton.disabled = !fader.level_known;
+  handoffButton.textContent = fader.level_known ? "StageMix has it" : "The level is already unknown";
+  // Whatever this page's own prompt was asking is answered the moment the
+  // level is unknown, however that happened - another browser's "yes", or this
+  // one's own tap already landing.
+  if (handoffPromptOpen && !fader.level_known) {
     handoffPromptOpen = false;
     paintHandoffPrompt();
   }
@@ -489,7 +495,7 @@ for (const [id, path] of [["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stan
   node.onclick = () => { post(path, undefined, node); returnToMain(); };
 }
 
-// -- handing off to StageMix, and taking it back (#12) -----------------------
+// -- handing off to StageMix (#12) --------------------------------------------
 //
 // A mode change asks rather than firing on one tap (CLAUDE.md principle 4:
 // "announce, don't surprise"), using the prompt slot #19 will also draw on.
@@ -517,10 +523,11 @@ $("btn-handoff-no").onclick = () => {
   returnToMain();
 };
 
-// The take-back answers, unlike the handoff prompt above, are not asked for -
-// they only ever appear because a fader tap is already queued behind one, so
-// there is nothing left to confirm and no navigation to do.
-for (const [id, path] of [["btn-take-back-up", "/api/take-back-up"], ["btn-take-back-down", "/api/take-back-down"]]) {
+// The two answers to "where is the fader" (#107). Neither asks first: Close now
+// is one packet to -inf and is always safe, and It's at ready level moves
+// nothing at all. Not navigation either - both live in the fader column, which
+// is on screen whatever tab is showing.
+for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-ready", "/api/report-ready"]]) {
   const node = $(id);
   node.onclick = () => post(path, undefined, node);
 }

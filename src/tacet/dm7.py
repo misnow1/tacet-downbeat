@@ -363,11 +363,11 @@ class Dm7Client:
     def assume(self, level: int) -> None:
         """Correct the believed level without sending anything (#12).
 
-        For a take-back answer that should not itself move the fader: forcing
-        a nonzero level with nothing yet queued to justify it would be exactly
-        the surprise CLAUDE.md's fail-safe principle forbids. `last_sent_at`
-        is untouched - nothing was actually sent, so its age keeps counting
-        from whatever really happened last.
+        For the operator reporting where the fader already is (`REPORT_READY`,
+        #107): forcing a nonzero level they did not ask to be put there would
+        be exactly the surprise CLAUDE.md's fail-safe principle forbids.
+        `last_sent_at` is untouched - nothing was actually sent, so its age
+        keeps counting from whatever really happened last.
         """
         self._commanded = clamp(level)
 

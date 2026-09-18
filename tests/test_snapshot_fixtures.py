@@ -51,6 +51,16 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertEqual(faults["recording"]["liveness"], "lost")
         self.assertIsNotNone(faults["refusal"])
 
+    def test_only_the_cold_boot_page_does_not_know_where_the_fader_is(self):
+        # #107: the boot fixture IS the cold-boot page and stays honest about
+        # it; every state that got somewhere by arming was told the level.
+        states = {path.name: json.loads(text) for path, text in self.generated.items()}
+        for name, snapshot in states.items():
+            with self.subTest(fixture=name):
+                self.assertEqual(snapshot["fader"]["level_known"], name != "snapshot-standing-down.json")
+                self.assertNotIn("handoff", snapshot)
+                self.assertNotIn("queued", snapshot)
+
     def test_the_page_tests_load_the_fixtures_rather_than_a_copy(self):
         source = PAGE_TESTS.read_text(encoding="utf-8")
         self.assertIn(snapshots.PREFIX, source)
