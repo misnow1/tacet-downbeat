@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-09-18.** #5 is built (the pinned fader column, the fixed
+**Last updated 2026-09-19.** #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -22,7 +22,11 @@ follow-ups, deliberately left out of that PR: #116, #117 and #118, closed
 together here. Decisions on the remaining issues are recorded as comments on
 #9, #12 and #19, and on #5, #6 and #89 themselves; #107/#108/#109 carry their
 own decisions in their bodies, and #102's closing comment maps what became of
-each of its original items.
+each of its original items. A milestone-assignment pass (2026-09-19) gave the
+remaining open issues a milestone: #46, #47, #48, #49 and #51 (the P3 findings
+from the same baseline review that already put #42/#43/#44 in Game 4) and #73
+(console reachability check / ARP keepalive) joined Game 4. #68 and #56 stay
+unmilestoned - neither is tied to a specific game.
 
 ## Game 3 (2026-10-02)
 
@@ -53,7 +57,8 @@ Alongside, not in the build order above:
 
 - [#9](https://github.com/misnow1/tacet-downbeat/issues/9) Preset target levels. The safest of the operator page issues to defer: 0 dB is standard practice (design.md 4), and `+3` means nothing until the on-site ring-out. Still in the Game 3 milestone until the maintainer moves it.
 
-The Game 4 milestone holds the rest: #17, #21, #42, #43, #44, #66.
+The Game 4 milestone holds the rest: #17, #21, #42, #43, #44, #46, #47, #48,
+#49, #51, #66, #73.
 
 ## Keeping this current
 
