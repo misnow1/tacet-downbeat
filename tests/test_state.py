@@ -281,11 +281,18 @@ class TestAFailedMoveCanBeRetried(unittest.TestCase):
     def test_a_completed_fade_clears_the_stall(self):
         self.assertFalse(send(releasing(stalled=True), st.Command.FADE_COMPLETE).machine.stalled)
 
-    def test_a_failure_while_closed_changes_nothing(self):
+    def test_a_failure_while_closed_still_marks_the_machine_stalled(self):
+        # #116: MOVE_FAILED moved into `step` itself rather than each state's
+        # own handler, precisely because a failed CLOSE_NOW can land in IDLE or
+        # STANDING DOWN, and those handlers had no MOVE_FAILED branch of their
+        # own to set anything with. Hoisting it means these two states now set
+        # `stalled` too, where before they set nothing (a deliberate
+        # consequence, not a narrower per-state fix).
         for m in (machine(), armed()):
-            outcome = send(m, st.Command.MOVE_FAILED)
-            self.assertFalse(outcome.changed)
-            self.assertFalse(outcome.machine.stalled)
+            with self.subTest(state=m.state):
+                outcome = send(m, st.Command.MOVE_FAILED)
+                self.assertTrue(outcome.changed)
+                self.assertTrue(outcome.machine.stalled)
 
     def test_the_why_line_says_to_tap_again(self):
         text = st.describe(releasing(stalled=True))
@@ -561,9 +568,8 @@ class TestTheLevelIsNotKnownUntilSomethingAbsoluteSaysSo(unittest.TestCase):
 
     def test_the_only_fader_commands_a_detector_can_ever_cause_are_open_and_fade(self):
         # The constraint, asserted across every command and state once Phase 2
-        # is declared. HANDOFF from a detector can still flip `level_known`
-        # (a hole from #12, deliberately not fixed here), but it sends nothing,
-        # so it does not trip this.
+        # is declared. See test_a_detector_can_never_un_know_the_fader_level
+        # for the belief side of a detector-sourced command (#117).
         allowed = {None, st.FaderCommand.OPEN, st.FaderCommand.FADE}
         for command in st.Command:
             for gradual in (False, True):
@@ -605,14 +611,16 @@ class TestTheLevelIsNotKnownUntilSomethingAbsoluteSaysSo(unittest.TestCase):
         self.assertEqual(outcome.machine.state, st.State.STANDING_DOWN)
 
     def test_a_detector_cannot_hand_off_while_standing_down(self):
+        # Refused one gate earlier since #117: operator-only outranks the
+        # state, and the standing-down gate would have refused it too.
         outcome = send(machine(allow_detector=True, level_known=True), st.Command.HANDOFF, st.Source.DETECTOR)
         self.assertTrue(outcome.machine.level_known)
-        self.assertIn("standing down", outcome.refusal)
+        self.assertEqual(outcome.refusal, st.DETECTOR_CANNOT_HAND_OFF)
 
     def test_a_detector_cannot_hand_off_before_phase_two(self):
         outcome = send(opened(level_known=True), st.Command.HANDOFF, st.Source.DETECTOR)
         self.assertTrue(outcome.machine.level_known)
-        self.assertIsNotNone(outcome.refusal)
+        self.assertEqual(outcome.refusal, st.DETECTOR_CANNOT_HAND_OFF)
 
     def test_handing_off_mid_fade_presumes_it_landed(self):
         # #12: the in-flight fade is cancelled by the shell the moment
@@ -650,15 +658,92 @@ class TestTheLevelIsNotKnownUntilSomethingAbsoluteSaysSo(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(send(armed(level_known=True), command).machine.level_known)
 
-    def test_an_absolute_command_that_delivered_nothing_still_marks_the_level_known(self):
-        # A known residual, pinned rather than fixed (#107, follow-up filed
-        # separately): `step` is pure and cannot know whether the packet went
-        # out. The shell reports a failed send as MOVE_FAILED, which sets
-        # `stalled`, and that is loud - but it does not un-know the level.
+    def test_an_absolute_command_whose_send_delivered_nothing_un_knows_the_level(self):
+        # #116: `step` is pure and cannot know whether the packet went out, but
+        # the shell can, and reports a failed absolute send as an absolute
+        # MOVE_FAILED. What `step` still cannot see is a packet that left the
+        # box and was simply lost: the protocol has no acknowledgement (#18).
         opened_machine = send(unknown(st.State.IDLE), st.Command.TRIGGER).machine
-        after_failure = send(opened_machine, st.Command.MOVE_FAILED).machine
+        self.assertTrue(opened_machine.level_known)
+        after_failure = st.step(opened_machine, st.Event(st.Command.MOVE_FAILED, absolute=True)).machine
         self.assertTrue(after_failure.stalled)
-        self.assertTrue(after_failure.level_known)
+        self.assertFalse(after_failure.level_known)
+
+    def test_a_relative_move_whose_send_failed_keeps_the_level_known(self):
+        # The default `absolute=False`: a relative move never claimed to make
+        # the level known, so its failure must not un-know it either, or a
+        # fade that died partway could not be faded again (#27, #116).
+        for start in (releasing(level_known=True), opened(level_known=True, riding_in=True)):
+            with self.subTest(state=start.state):
+                after = st.step(start, st.Event(st.Command.MOVE_FAILED)).machine
+                self.assertTrue(after.stalled)
+                self.assertTrue(after.level_known)
+        after = st.step(releasing(level_known=True), st.Event(st.Command.MOVE_FAILED)).machine
+        self.assertEqual(send(after, st.Command.RELEASE).fader, st.FaderCommand.FADE)
+
+    def test_an_absolute_failure_stalls_and_un_knows_from_every_state(self):
+        # Covers the IDLE / STANDING DOWN hoist (#116): a failed instant close
+        # can land in either, and before this those handlers had no
+        # MOVE_FAILED branch of their own to set anything with.
+        for value in ALL_STATES:
+            with self.subTest(state=value):
+                start = st.Machine(state=value, level_known=True)
+                after = st.step(start, st.Event(st.Command.MOVE_FAILED, absolute=True)).machine
+                self.assertTrue(after.stalled)
+                self.assertFalse(after.level_known)
+
+    def test_a_close_now_that_failed_can_be_closed_again(self):
+        # "Close now is never gated by state or belief" (#116).
+        closed_from_unknown = send(unknown(st.State.IDLE), st.Command.CLOSE_NOW).machine
+        self.assertTrue(closed_from_unknown.level_known)
+        failed = st.step(closed_from_unknown, st.Event(st.Command.MOVE_FAILED, absolute=True)).machine
+        self.assertFalse(failed.level_known)
+        self.assertTrue(failed.stalled)
+        retried = send(failed, st.Command.CLOSE_NOW)
+        self.assertEqual(retried.fader, st.FaderCommand.CLOSE_NOW)
+        self.assertIsNone(retried.refusal)
+        self.assertTrue(retried.machine.level_known)
+
+
+#: Reported by the shell, never tapped: they describe a move this box itself
+#: made, so they never arrive from anywhere else and are not what the
+#: detector gates are about. MOVE_FAILED carries the belief with it (#116),
+#: which is why it is named here rather than quietly skipped.
+SHELL_REPORTS = (st.Command.MOVE_FAILED, st.Command.RIDE_IN_COMPLETE, st.Command.FADE_COMPLETE)
+
+
+class TestADetectorCannotTouchTheBelief(unittest.TestCase):
+    """#117: a detector can open the fader once Phase 2 is declared, but it
+    can never make the box stop knowing where the fader is - HANDOFF is
+    operator-only, and nothing else un-knows a level from a detector source
+    except MOVE_FAILED, which the shell reports about its own send and is a
+    known, accepted residual (#116's judgment call 4)."""
+
+    def test_a_detector_can_never_un_know_the_fader_level(self):
+        # The one direction asserted: a detector must never make the box
+        # *stop* knowing. The other direction is legitimate - a detector snap
+        # TRIGGER, once Phase 2 is declared, is an absolute move that really
+        # does put the fader at unity - so it is not asserted against here.
+        for command in st.Command:
+            if command in SHELL_REPORTS:
+                continue
+            for gradual in (False, True):
+                for value in ALL_STATES:
+                    with self.subTest(command=command, gradual=gradual, state=value):
+                        start = st.Machine(state=value, level_known=True, allow_detector=True)
+                        outcome = st.step(start, st.Event(command, source=st.Source.DETECTOR, gradual=gradual))
+                        self.assertTrue(outcome.machine.level_known)
+
+    def test_a_detector_hand_off_is_refused_even_once_phase_two_is_declared(self):
+        for value in ALL_STATES:
+            for known in (True, False):
+                with self.subTest(state=value, known=known):
+                    start = st.Machine(state=value, level_known=known, allow_detector=True)
+                    outcome = send(start, st.Command.HANDOFF, st.Source.DETECTOR)
+                    self.assertEqual(outcome.machine, start)
+                    self.assertFalse(outcome.changed)
+                    self.assertEqual(outcome.refusal, st.DETECTOR_CANNOT_HAND_OFF)
+                    self.assertNotIn("READY", outcome.refusal)
 
 
 class TestArmingNeedsAKnownLevel(unittest.TestCase):

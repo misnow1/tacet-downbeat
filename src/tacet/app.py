@@ -66,12 +66,17 @@ MOVE_LANDED = "move-landed"
 MOVE_FAILED = "move-failed"
 #: A fader command that arrived too late to execute (#16).
 STALE_TAP = "stale-tap"
-#: Written when the box stops knowing where the fader is (`HANDED_OFF`, only
-#: ever from the operator's own hand-off) and when it starts knowing again
-#: (`TOOK_BACK`) - the control-authority timeline `docs/design.md` describes
-#: (#12). Since #107 `TOOK_BACK` also marks the first absolute tap after a cold
-#: boot, which never handed anything off; the key is kept so older logs still
-#: read, and the log's own `handed-off` is what says a handoff really happened.
+#: `HANDED_OFF` is written for every accepted hand-off, including one made
+#: while the level already reads unknown (#118) - a box that restarted while
+#: StageMix had the DCA changes nothing, but the tap is still the operator
+#: saying so, and the entry is the only record of it. The level going unknown
+#: is no longer proof a hand-off happened, since a failed absolute send does
+#: it too (#116); that one writes `move-failed`, never `handed-off`.
+#: `TOOK_BACK` is written when the level starts being known again - the
+#: control-authority timeline `docs/design.md` describes (#12). Since #107 it
+#: also marks the first absolute tap after a cold boot, which never handed
+#: anything off; the key is kept so older logs still read, and the log's own
+#: `handed-off` is what says a handoff really happened.
 HANDED_OFF = "handed-off"
 TOOK_BACK = "took-back"
 #: The return prompt's negative answer: a pure confirmation, nothing changes.
@@ -125,11 +130,18 @@ def _stamped(data: Mapping[str, Any] | None) -> dict[str, Any] | None:
     return {**(data or {}), taps.TAP_FIELD: tap.as_data()}
 
 
-def session_entries(before: state.Machine, after: state.Machine) -> tuple[str, ...]:
-    """The session entries one transition earns, from the machines alone.
+def session_entries(
+    before: state.Machine, after: state.Machine, command: state.Command | None = None
+) -> tuple[str, ...]:
+    """The session entries one transition earns.
 
     Pure, so every path to and from STANDING DOWN is decided in one place
     rather than at each call site that happens to cause one.
+
+    `command` is what the machine accepted, when the caller knows it, and None
+    when it was refused or there is nothing to say. Almost everything here is
+    read from the two machines; the one thing they cannot show is a hand-off
+    that changed nothing, which is exactly the case #118 is about.
     """
     down = state.State.STANDING_DOWN
     entries: list[str] = []
@@ -141,7 +153,14 @@ def session_entries(before: state.Machine, after: state.Machine) -> tuple[str, .
         entries.append(STAND_DOWN_CANCELLED)
     if after.state is down and before.state is not down:
         entries.append(STOOD_DOWN)
-    if before.level_known and not after.level_known:
+    # A hand-off while the level is already unknown leaves the machine alone -
+    # the belief is already the right one - but it is still the operator saying
+    # StageMix has the DCA, and that entry is what Phase 1's control-authority
+    # labels are made of. After a restart under StageMix there is no diff to
+    # read it from, so the command itself says so (#118). Every accepted
+    # hand-off ends with the level unknown, so this and the diff never both
+    # fire for one event.
+    if (before.level_known and not after.level_known) or command is state.Command.HANDOFF:
         entries.append(HANDED_OFF)
     if after.level_known and not before.level_known:
         entries.append(TOOK_BACK)
@@ -343,7 +362,19 @@ class App:
                 ride_seconds=ride_seconds,
                 level_was_known=before.level_known,
             )
-        for key in session_entries(before, outcome.machine):
+        # `outcome.machine`, captured before `_move_fader` ran, not
+        # `self.machine`: a failed absolute move un-knows the level through
+        # `_move_failed` after this point (#116), and reading `self.machine`
+        # here would then see that as a hand-off and write a spurious
+        # `handed-off` for a move that never touched StageMix. (Known,
+        # accepted residual: a failed absolute command from an unknown level
+        # still writes `took-back` for the belief it briefly held, immediately
+        # followed by `move-failed`.)
+        # The command only when the machine accepted it: a refused hand-off -
+        # a detector's, since #117 - must not write the entry an operator's
+        # does (#118).
+        accepted = None if outcome.refusal is not None else command
+        for key in session_entries(before, outcome.machine, accepted):
             if key in _DUTY_ENTRIES:
                 self._duty_since = self._monotonic()
             self._record(
@@ -463,9 +494,9 @@ class App:
             project_seconds=self._playhead(),
         )
         if failed:
-            self._move_failed(target)
+            self._move_failed(target, absolute=_absolute(command, ride_seconds))
 
-    def _move_failed(self, target: int) -> None:
+    def _move_failed(self, target: int, *, absolute: bool) -> None:
         """A send failed partway through a move.
 
         The machine is told, so the command that started the move retries it
@@ -473,8 +504,14 @@ class App:
         because the `commanded` entry before this one describes a move that did
         not happen. Deliberately not a refusal: nothing was declined, and the
         why line already says what to do.
+
+        `absolute` is required and has no default, for the same reason
+        `_move_fader`'s `level_was_known` is: a new caller has to say it out
+        loud. An absolute move's failure also puts the belief back (#116) - the
+        machine marked the level known before this send was even attempted,
+        and it delivered nothing.
         """
-        self.machine = state.step(self.machine, state.Event(state.Command.MOVE_FAILED)).machine
+        self.machine = state.step(self.machine, state.Event(state.Command.MOVE_FAILED, absolute=absolute)).machine
         self._record(
             MOVE_FAILED,
             data={**self._move_end(target), "error": self._console.last_error},
@@ -535,7 +572,9 @@ class App:
             await self._console.ride_in(level, seconds=seconds)
         except TransportError:
             if self._move_task is this:
-                self._move_failed(level)
+                # A ride is relative; its failure leaves the belief where it
+                # was and #27's retry intact (#116).
+                self._move_failed(level, absolute=False)
             return
         except asyncio.CancelledError:
             return
@@ -597,7 +636,9 @@ class App:
             await self._console.fade_out(self._fade_seconds)
         except TransportError:
             if self._move_task is this:
-                self._move_failed(dm7.MINUS_INF)
+                # The fade is relative; its failure leaves the belief where it
+                # was and #27's retry intact (#116).
+                self._move_failed(dm7.MINUS_INF, absolute=False)
             return
         except asyncio.CancelledError:
             return
@@ -1099,3 +1140,16 @@ def _timing(timing: dm7.MoveTiming | None) -> dict[str, Any]:
 def _finite(value: float) -> float | None:
     """JSON has no -inf. A closed fader reads as null rather than a lie."""
     return None if value in (float("-inf"), float("inf")) else value
+
+
+def _absolute(command: state.FaderCommand, ride_seconds: float | None) -> bool:
+    """Whether this move puts the fader in one known place whatever the box
+    believed (design.md 5.3): the snap open, and the instant close. Those are
+    the moves that mark the level known, so those are the ones whose failure
+    un-knows it again (#116). A ridden open is relative - it ramps from the
+    belief, and `step` refuses it outright while the level is unknown - and so
+    are the fade and READY's ride. REPORT_READY writes no packet, so it has no
+    send to fail."""
+    if command is state.FaderCommand.CLOSE_NOW:
+        return True
+    return command is state.FaderCommand.OPEN and ride_seconds is None

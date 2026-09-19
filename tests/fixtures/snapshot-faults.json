@@ -245,7 +245,7 @@
     "db": null,
     "error": "no route to host",
     "healthy": false,
-    "level_known": true,
+    "level_known": false,
     "moving": false,
     "target": null,
     "target_db": null
@@ -275,5 +275,5 @@
   "refusal": "Reaper has stopped answering. Start the recording in Reaper.",
   "stale_tap": null,
   "state": "open",
-  "why": "Open at unity. The last fader move did not finish; tap it again to retry. You are driving; the detector cannot move the fader."
+  "why": "Open at unity. The box does not know where the fader really is - it can only say what it last asked for, never what the console did with it; close it now, or open, to say where it is. The last fader move did not finish; tap it again to retry. You are driving; the detector cannot move the fader."
 }

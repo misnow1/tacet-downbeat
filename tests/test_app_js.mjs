@@ -432,7 +432,10 @@ function levelSnapshot(known) {
   const { context, nodes } = browser();
   context.render(levelSnapshot(true));
   check("the confirm prompt starts closed", nodes.get("handoff-confirm").style.display, "none");
-  check("the button invites a handoff", nodes.get("btn-handoff").textContent, "StageMix has it");
+  // The script never rewrites this label (#118): it is the page's own
+  // markup, like the two belief buttons below it, so the stub's default
+  // stands in for whatever the page itself says.
+  check("the script leaves the button's own label alone", nodes.get("btn-handoff").textContent, "");
   check("and is not disabled", nodes.get("btn-handoff").disabled, false);
 }
 
@@ -467,32 +470,51 @@ function levelSnapshot(known) {
 
 {
   // Answered elsewhere - another browser's "yes", or this tap's own already
-  // having landed - the question this page was asking is stale.
+  // having landed - the question this page was asking is answered: it is the
+  // transition from known to unknown that closes it, not "unknown" on its own
+  // (#118), since a hand-off while it is already unknown is a real tap with
+  // nothing yet to answer it.
   const { context, nodes } = browser();
   context.render(levelSnapshot(true));
   nodes.get("btn-handoff").onclick();
   check("the prompt is open", nodes.get("handoff-confirm").style.display, "block");
   context.render(levelSnapshot(false));
-  check("a snapshot whose level is already unknown closes it", nodes.get("handoff-confirm").style.display, "none");
+  check("the known-to-unknown edge closes it", nodes.get("handoff-confirm").style.display, "none");
 }
 
 {
+  // A hand-off while the level already reads unknown is a real tap that has
+  // not been answered yet - the box may have restarted while StageMix had
+  // the DCA - so "unknown" on its own must not be read as the answer (#118).
   const { context, nodes } = browser();
   context.render(levelSnapshot(false));
-  check("once the level is unknown the button says so", nodes.get("btn-handoff").textContent, "The level is already unknown");
-  check("a second handoff is a no-op on the box, so the button is disabled",
-        nodes.get("btn-handoff").disabled, true);
-  context.render(levelSnapshot(true));
-  check("and it invites a handoff again once the level is known",
-        nodes.get("btn-handoff").textContent, "StageMix has it");
-  check("and is tappable again", nodes.get("btn-handoff").disabled, false);
+  nodes.get("btn-handoff").onclick();
+  check("the prompt opens", nodes.get("handoff-confirm").style.display, "block");
+  context.render(levelSnapshot(false));
+  check("staying unknown does not close a prompt that is still open",
+        nodes.get("handoff-confirm").style.display, "block");
 }
 
 {
-  // The cold-boot page is the box's own boot snapshot, and it does not know.
+  // The hand-off button is never disabled and never relabelled by the script
+  // at either belief (#118): a hand-off while the level already reads
+  // unknown is a real tap with a real log entry, so the button stays live.
+  const { context, nodes } = browser();
+  context.render(levelSnapshot(false));
+  check("unknown: never disabled", nodes.get("btn-handoff").disabled, false);
+  check("unknown: never relabelled", nodes.get("btn-handoff").textContent, "");
+  context.render(levelSnapshot(true));
+  check("known: never disabled", nodes.get("btn-handoff").disabled, false);
+  check("known: never relabelled", nodes.get("btn-handoff").textContent, "");
+}
+
+{
+  // The cold-boot page is the box's own boot snapshot, and it does not know -
+  // and is exactly the restart-under-StageMix page #118 is about, so the
+  // button stays live rather than saying there is nothing to hand off.
   const { context, nodes } = browser();
   context.render(snapshot());
-  check("at cold boot there is nothing to hand off", nodes.get("btn-handoff").disabled, true);
+  check("at cold boot the button is still live", nodes.get("btn-handoff").disabled, false);
 }
 
 // -- where is the fader: the two belief controls (#107) -----------------------

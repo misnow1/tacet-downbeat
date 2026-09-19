@@ -444,19 +444,20 @@ function render(next) {
   // level" is a report about a belief the box does not yet have, so it only
   // means something while the level is unknown.
   $("btn-report-ready").disabled = fader.level_known;
-  // Handing off makes the level unknown, so once it already is there is
-  // nothing left for the button to do, and it says as much rather than
-  // inviting a tap that does nothing.
-  const handoffButton = $("btn-handoff");
-  handoffButton.disabled = !fader.level_known;
-  handoffButton.textContent = fader.level_known ? "StageMix has it" : "The level is already unknown";
-  // Whatever this page's own prompt was asking is answered the moment the
-  // level is unknown, however that happened - another browser's "yes", or this
-  // one's own tap already landing.
-  if (handoffPromptOpen && !fader.level_known) {
+  // The hand-off button is never disabled and never relabelled here (#118).
+  // A hand-off while the level already reads unknown is a real tap with a real
+  // log entry - the box may have restarted while StageMix had the DCA, and
+  // that entry is the only record of it - so the label is the page's own
+  // markup, like the two belief buttons below it.
+  // Whatever this page's prompt was asking is answered when the level goes
+  // from known to unknown - another browser's "yes", or this one's own tap
+  // landing. The edge, not the state: since #118 "unknown" on its own no
+  // longer means the question has been answered.
+  if (handoffPromptOpen && lastLevelKnown === true && !fader.level_known) {
     handoffPromptOpen = false;
     paintHandoffPrompt();
   }
+  lastLevelKnown = fader.level_known;
 
   const rec = next.recording;
   const [recClass, recLabel] = recordingTag(rec.liveness, rec.known);
@@ -520,6 +521,9 @@ for (const [id, path] of [["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stan
 // "No" is `still-mine`: a pure log entry, answered from here rather than a
 // button in a grid, that changes nothing on the box.
 let handoffPromptOpen = false;
+// null until the first snapshot is painted, so nothing is treated as a
+// known-to-unknown transition on load (#118).
+let lastLevelKnown = null;
 
 function paintHandoffPrompt() {
   $("handoff-confirm").style.display = handoffPromptOpen ? "block" : "none";

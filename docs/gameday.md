@@ -231,7 +231,9 @@ there looking current while StageMix moves the real fader, which is exactly
 what happened for 76 minutes in game 2. When you take it back, tap **Close now**
 or an open, as above. The log's `handed-off` entry marks the hand-off; its
 `took-back` marks the moment the box knew again, which also happens at every
-boot.
+boot. If the box restarts while StageMix still has it, tap **StageMix has it**
+and confirm again - the reading already says `unknown` and nothing on the box
+changes, but the log gets the `handed-off` entry the review needs.
 
 ---
 
