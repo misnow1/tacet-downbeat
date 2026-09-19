@@ -694,9 +694,9 @@ class TestTheLevelIsNotKnownUntilSomethingAbsoluteSaysSo(unittest.TestCase):
 
     def test_a_close_now_that_failed_can_be_closed_again(self):
         # "Close now is never gated by state or belief" (#116).
-        opened_from_unknown = send(unknown(st.State.IDLE), st.Command.CLOSE_NOW).machine
-        self.assertTrue(opened_from_unknown.level_known)
-        failed = st.step(opened_from_unknown, st.Event(st.Command.MOVE_FAILED, absolute=True)).machine
+        closed_from_unknown = send(unknown(st.State.IDLE), st.Command.CLOSE_NOW).machine
+        self.assertTrue(closed_from_unknown.level_known)
+        failed = st.step(closed_from_unknown, st.Event(st.Command.MOVE_FAILED, absolute=True)).machine
         self.assertFalse(failed.level_known)
         self.assertTrue(failed.stalled)
         retried = send(failed, st.Command.CLOSE_NOW)

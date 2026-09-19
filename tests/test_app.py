@@ -578,8 +578,9 @@ class TestAStandDownIsLoggedWhenItLands(AppTestCase):
         self.assertNotIn(tacet_app.STOOD_DOWN, keys)
 
     async def test_a_stand_down_with_nothing_to_fade_lands_at_once(self):
-        # The open never went out, so the box's fader is still at -inf and the
-        # fade has no step to send. That is a landing, not a failure.
+        # The open's send failed, so the level is unknown (#116); a stand-down
+        # while unknown changes the duty state at once and sends nothing, so
+        # it lands without a fade to wait for.
         app = self.build(console_sender=FailingSender())
         await app.arm()
         await app.trigger()

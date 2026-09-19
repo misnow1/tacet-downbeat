@@ -303,7 +303,9 @@ What the flag gates is absolute against relative:
   has no acknowledgement (#18), so a packet that leaves the box and is simply
   lost is indistinguishable from one that landed, and the level then reads
   known when it is not. Nothing in this box can close that half; only console
-  feedback could.
+  feedback could. A failed absolute command still logs `took-back` for the
+  belief it briefly held, immediately followed by `move-failed`: read that
+  pair together, since the `took-back` alone did not survive its own packet.
 - A **relative** command ramps from the believed level: the 2 s fade, READY's
   ride to the hold level, and the slow open. Each is refused while the level is
   unknown, with the reason on the page. Refused, not queued - a tap held back
