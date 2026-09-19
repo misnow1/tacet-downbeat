@@ -10,7 +10,7 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, osc, reaper, state, taps
+from tacet import dm7, mirror, osc, prompts, reaper, state, taps
 from tests.disk import Disk
 from tests.test_annotations import Gate, Killed
 
@@ -446,6 +446,11 @@ def _after(*commands):
     return machines
 
 
+def _after_from(machine):
+    """Every machine one command from `machine`, to reach states beyond boot."""
+    return [state.step(machine, state.Event(command)).machine for command in state.Command]
+
+
 class TestSessionEntries(unittest.TestCase):
     """#50, the pure half: which session entries a transition earns.
 
@@ -510,6 +515,24 @@ class TestSessionEntries(unittest.TestCase):
         self.assertEqual(tacet_app.session_entries(boot, opened), (tacet_app.ARMED, tacet_app.TOOK_BACK))
         closed = state.step(boot, state.Event(self.C.CLOSE_NOW)).machine
         self.assertEqual(tacet_app.session_entries(boot, closed), (tacet_app.TOOK_BACK,))
+
+    def test_no_prompt_key_ever_comes_out_of_session_entries(self):
+        # #19: a prompt is a question about duty, not a duty state. Nothing in
+        # the machine's own transitions may write one; the shell does that.
+        prompt_keys = {
+            prompts.PROMPT_RAISED,
+            prompts.PROMPT_ACCEPTED,
+            prompts.PROMPT_DISMISSED,
+            prompts.PROMPT_RESOLVED,
+            prompts.PROMPT_WITHDRAWN,
+        }
+        starts = [state.Machine(level_known=known) for known in (True, False)]
+        starts += [after for start in list(starts) for after in _after_from(start)]
+        for before in starts:
+            for command in state.Command:
+                after = state.step(before, state.Event(command)).machine
+                with self.subTest(state=before.state, command=command):
+                    self.assertFalse(prompt_keys & set(tacet_app.session_entries(before, after)))
 
     def test_a_failed_move_earns_nothing(self):
         # move-failed is written by the shell, with the level the fader stopped at.
@@ -2428,3 +2451,758 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
         snapshot = app.snapshot()
         self.assertIsNone(snapshot["stale_tap"])
         self.assertIsNone(snapshot["refusal"])
+
+
+class PromptTestCase(AppTestCase):
+    """#19: the box asks whether to arm or stand down, and only the operator's
+    tap on the answer ever changes anything.
+
+    Named for the question, not the tap: `TestStaleFaderTapsAreNotExecuted.PROMPT`
+    already means "a tap that was on time".
+    """
+
+    STALE = late(taps.DEFAULT_STALE_TAP_SECONDS + 1.0)
+
+    def named(self, key):
+        return [entry for entry in self.entries() if entry.event == key]
+
+    def question(self, app):
+        return app.snapshot()["prompt"]
+
+    async def open_with_a_stand_down_question(self, app):
+        """Armed and open, band-exits-stands tapped: a stand-down prompt, seq 1."""
+        await app.arm()
+        await app.annotate("up-whistle")
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["kind"], "stand-down")
+
+    async def standing_down_with_an_arm_question(self, app):
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        self.assertEqual(self.question(app)["kind"], "arm")
+
+
+class TestPromptsFromAnnotations(PromptTestCase):
+    async def test_a_fresh_box_has_asked_nothing(self):
+        app = self.build()
+        self.assertIsNone(self.question(app))
+
+    async def test_band_exits_stands_raises_a_stand_down_prompt_and_logs_it(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app), {"seq": 1, "kind": "stand-down", "source": ann.BAND_EXITS_STANDS})
+        keys = self.keys()
+        # The reason the operator tapped comes first, then what the box asked.
+        self.assertLess(keys.index(ann.BAND_EXITS_STANDS), keys.index(prompts.PROMPT_RAISED))
+        (raised,) = self.named(prompts.PROMPT_RAISED)
+        self.assertEqual(
+            raised.data,
+            {"prompt": "stand-down", "seq": 1, "source": ann.BAND_EXITS_STANDS, "state": "idle"},
+        )
+
+    async def test_band_enters_stands_raises_an_arm_prompt(self):
+        app = self.build()
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        self.assertEqual(self.question(app), {"seq": 1, "kind": "arm", "source": ann.BAND_ENTERS_STANDS})
+        (raised,) = self.named(prompts.PROMPT_RAISED)
+        self.assertEqual(raised.data["state"], "standing-down")
+
+    async def test_halftime_exodus_span_start_raises_a_stand_down_prompt(self):
+        app = self.build()
+        await app.arm()
+        await app.start_span(ann.HALFTIME_EXODUS)
+        self.assertEqual(self.question(app), {"seq": 1, "kind": "stand-down", "source": ann.HALFTIME_EXODUS})
+        keys = self.keys()
+        self.assertLess(keys.index(ann.HALFTIME_EXODUS), keys.index(prompts.PROMPT_RAISED))
+
+    async def test_ending_the_halftime_exodus_span_raises_nothing(self):
+        # D6: only the start of the span asks.
+        app = self.build()
+        await app.arm()
+        span = await app.start_span(ann.HALFTIME_EXODUS)
+        assert span is not None
+        await app.dismiss_prompt(1)
+        await app.end_span(span)
+        self.assertIsNone(self.question(app))
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+
+    async def test_a_span_that_asks_nothing_asks_nothing(self):
+        app = self.build()
+        await app.arm()
+        await app.start_span("q1")
+        self.assertIsNone(self.question(app))
+        self.assertEqual(self.named(prompts.PROMPT_RAISED), [])
+
+    async def test_an_annotation_with_no_question_asks_nothing(self):
+        app = self.build()
+        await app.arm()
+        for key in ("touchdown", "note", "band-exits-stadium"):
+            await app.annotate(key)
+        self.assertIsNone(self.question(app))
+
+    async def test_a_prompt_that_already_matches_is_logged_resolved_and_never_raised(self):
+        app = self.build()
+        await app.annotate(ann.BAND_EXITS_STANDS)  # boot is STANDING DOWN
+        self.assertIsNone(self.question(app))
+        self.assertEqual(self.named(prompts.PROMPT_RAISED), [])
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual(
+            resolved.data,
+            {"prompt": "stand-down", "seq": None, "source": ann.BAND_EXITS_STANDS, "state": "standing-down"},
+        )
+
+    async def test_an_arm_prompt_that_already_matches_is_logged_resolved(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        self.assertIsNone(self.question(app))
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual(resolved.data["prompt"], "arm")
+        self.assertIsNone(resolved.data["seq"])
+
+    async def test_resolving_directly_does_not_burn_a_seq(self):
+        app = self.build()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["seq"], 1)
+
+    async def test_the_same_question_twice_is_one_prompt(self):
+        # D4. The annotation itself is still logged twice, as always.
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        await app.start_span(ann.HALFTIME_EXODUS)
+        self.assertEqual(self.question(app)["seq"], 1)
+        self.assertEqual(self.question(app)["source"], ann.BAND_EXITS_STANDS)
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+        self.assertEqual(self.keys().count(ann.BAND_EXITS_STANDS), 2)
+
+    async def test_a_question_the_operator_contradicts_withdraws_the_open_one(self):
+        # A Stand down question is open and the operator says the opposite:
+        # Arm is already true, so nothing is raised, and the contradicted
+        # question comes down instead of staying on the page and unterminated
+        # in the log. Nothing moves.
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        machine = app.machine
+        sent = len(self.console_sender.packets)
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        self.assertIsNone(self.question(app))
+        self.assertEqual(app.machine, machine)
+        self.assertEqual(len(self.console_sender.packets), sent)
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        (withdrawn,) = self.named(prompts.PROMPT_WITHDRAWN)
+        self.assertEqual((resolved.data["prompt"], resolved.data["seq"]), ("arm", None))
+        self.assertEqual(
+            withdrawn.data,
+            {"prompt": "stand-down", "seq": 1, "source": ann.BAND_EXITS_STANDS, "state": "open"},
+        )
+        self.assertNotIn("replaced_by", withdrawn.data)
+        # What happened to this tap first, then what it did to the question.
+        keys = self.keys()
+        self.assertLess(keys.index(prompts.PROMPT_RESOLVED), keys.index(prompts.PROMPT_WITHDRAWN))
+        # Nothing was raised in its place, and there was no answer.
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+        self.assertEqual(self.named(prompts.PROMPT_ACCEPTED), [])
+        self.assertEqual(self.named(prompts.PROMPT_DISMISSED), [])
+
+    async def test_a_mis_tapped_exit_taken_back_closes_the_question_and_leaves_the_fader_alone(self):
+        # The hallway case: band-exits-stands mid-drive by mistake, then
+        # band-enters-stands to correct it. The band is still playing; nothing
+        # about either tap touches the fader or the duty state.
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-whistle")
+        sent = self.console_sender.levels()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["kind"], "stand-down")
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        self.assertIsNone(self.question(app))
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertEqual(self.console_sender.levels(), sent)
+        self.assertEqual(self.keys().count(tacet_app.COMMANDED), 1)
+
+    async def test_the_other_way_round_an_arm_question_is_withdrawn_by_a_stand_down_tap(self):
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.start_span(ann.HALFTIME_EXODUS)
+        self.assertIsNone(self.question(app))
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        (withdrawn,) = self.named(prompts.PROMPT_WITHDRAWN)
+        self.assertEqual((withdrawn.data["prompt"], withdrawn.data["seq"]), ("arm", 1))
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual((resolved.data["prompt"], resolved.data["source"]), ("stand-down", ann.HALFTIME_EXODUS))
+
+    async def test_a_withdrawn_question_can_be_asked_again_and_takes_a_fresh_seq(self):
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["seq"], 2)
+
+    async def test_an_answer_to_a_withdrawn_question_does_nothing(self):
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        keys = self.keys()
+        await app.accept_prompt(1)
+        await app.dismiss_prompt(1)
+        self.assertEqual(self.keys(), keys)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def every_button_that_only_records(self, *, armed):
+        """Every recording-only button is tapped; the machine is exactly what
+        it was after each, no packet went out, and the log holds no fader move
+        or stand-down."""
+        recording_only = [event for event in ann.BUTTONS if event.action is None]
+        self.assertGreater(len(recording_only), 10)
+        app = self.build()
+        if armed:
+            await app.arm()
+        before = app.machine
+        sent = len(self.console_sender.packets)
+        for event in recording_only:
+            if event.kind is ann.Kind.SPAN:
+                await app.start_span(event.key)
+            else:
+                await app.annotate(event.key)
+            self.assertEqual(app.machine, before, event.key)
+        self.assertEqual(len(self.console_sender.packets), sent)
+        for key in (tacet_app.STOOD_DOWN, tacet_app.STAND_DOWN_REQUESTED, tacet_app.COMMANDED):
+            self.assertNotIn(key, self.keys(), key)
+        # Only the arm this test made itself.
+        self.assertEqual(self.keys().count(tacet_app.ARMED), 1 if armed else 0)
+
+    async def test_no_annotation_ever_changes_the_machine_by_itself_from_an_armed_box(self):
+        # The constraint (#19 "Out"; CLAUDE.md principle 4): a mis-tapped
+        # band-exits-stands mid-drive must not disable anything.
+        await self.every_button_that_only_records(armed=True)
+
+    async def test_no_annotation_ever_changes_the_machine_by_itself_from_a_standing_down_box(self):
+        await self.every_button_that_only_records(armed=False)
+
+    async def test_a_prompt_is_raised_even_when_the_log_is_refusing_writes(self):
+        # The question is state on the box, not something the log holds.
+        app = self.build()
+        await app.arm()
+        with mock.patch.object(self.log, "record", side_effect=ann.WriteError("log refused")):
+            await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["kind"], "stand-down")
+
+    async def test_a_span_start_the_log_refused_still_asks(self):
+        app = self.build()
+        await app.arm()
+        with mock.patch.object(self.log, "start_span", side_effect=ann.WriteError("log refused")):
+            self.assertIsNone(await app.start_span(ann.HALFTIME_EXODUS))
+        self.assertEqual(self.question(app)["source"], ann.HALFTIME_EXODUS)
+
+    async def test_the_entries_a_tap_earns_carry_its_stamp(self):
+        app = self.build()
+        await app.arm()
+        tap = late(0.25)
+        await app.annotate(ann.BAND_EXITS_STANDS, tap=tap)
+        (raised,) = self.named(prompts.PROMPT_RAISED)
+        self.assertEqual(raised.data[taps.TAP_FIELD], tap.as_data())
+
+    async def test_a_stale_annotation_tap_still_asks(self):
+        # Annotation-only taps are never refused (#16), and the question is
+        # only a question.
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS, tap=self.STALE)
+        self.assertEqual(self.question(app)["kind"], "stand-down")
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+    async def test_a_prompt_moves_no_fader(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-whistle")
+        sent = len(self.console_sender.packets)
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(len(self.console_sender.packets), sent)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+
+class TestAnsweringAPrompt(PromptTestCase):
+    async def test_accepting_stand_down_stands_the_box_down(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertIsNone(self.question(app))
+        keys = self.keys()
+        self.assertLess(keys.index(tacet_app.STOOD_DOWN), keys.index(prompts.PROMPT_ACCEPTED))
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertEqual(
+            accepted.data,
+            {
+                "prompt": "stand-down",
+                "seq": 1,
+                "source": ann.BAND_EXITS_STANDS,
+                "state": "standing-down",
+                "executed": True,
+                "refusal": None,
+                "stale": False,
+            },
+        )
+
+    async def test_accepting_writes_no_second_entry_for_the_same_answer(self):
+        # The prompt is cleared before the command runs, so the command's own
+        # settling does not also log it resolved.
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        await app.accept_prompt(1)
+        self.assertEqual(self.named(prompts.PROMPT_RESOLVED), [])
+        self.assertEqual(len(self.named(prompts.PROMPT_ACCEPTED)), 1)
+
+    async def test_accepting_stand_down_while_open_fades_rather_than_slamming(self):
+        app = self.build(fade=0.05)
+        await self.open_with_a_stand_down_question(app)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        self.assertTrue(app.machine.pending_stand_down)
+        self.assertIsNone(self.question(app))
+        self.assertNotIn(tacet_app.STOOD_DOWN, self.keys())
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        keys = self.keys()
+        self.assertLess(keys.index(tacet_app.STAND_DOWN_REQUESTED), keys.index(prompts.PROMPT_ACCEPTED))
+        self.assertLess(keys.index(prompts.PROMPT_ACCEPTED), keys.index(tacet_app.STOOD_DOWN))
+        self.assertEqual(self.console_sender.levels()[-1], dm7.MINUS_INF)
+        # Once, at the tap: landing does not log the answer again.
+        self.assertEqual(len(self.named(prompts.PROMPT_ACCEPTED)), 1)
+        self.assertEqual(self.named(prompts.PROMPT_RESOLVED), [])
+
+    async def test_accepting_stand_down_while_the_level_is_unknown_sends_nothing_and_stands_down(self):
+        # #107: STAND_DOWN is never refused, and sends nothing when the box
+        # does not know where the fader is.
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        await app.handoff()
+        self.assertFalse(app.machine.level_known)
+        sent = len(self.console_sender.packets)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(len(self.console_sender.packets), sent)
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertTrue(accepted.data["executed"])
+        self.assertIsNone(self.question(app))
+
+    async def test_accepting_arm_arms_and_sends_no_packet(self):
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertIsNone(self.question(app))
+        keys = self.keys()
+        self.assertLess(keys.index(tacet_app.ARMED), keys.index(prompts.PROMPT_ACCEPTED))
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertEqual((accepted.data["prompt"], accepted.data["executed"]), ("arm", True))
+        self.assertEqual(self.named(prompts.PROMPT_RESOLVED), [])
+
+    async def test_accepting_arm_while_the_level_is_unknown_is_refused_and_the_prompt_stays_open(self):
+        # D2. The box's own refusal shows; the question does not vanish, loop
+        # or get replaced, and nothing is sent to make the arm "work".
+        app = self.build(level_known=False)
+        await self.standing_down_with_an_arm_question(app)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(self.question(app), {"seq": 1, "kind": "arm", "source": ann.BAND_ENTERS_STANDS})
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_ARM)
+        self.assertEqual(self.console_sender.packets, [])
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertFalse(accepted.data["executed"])
+        self.assertEqual(accepted.data["refusal"], state.UNKNOWN_LEVEL_ARM)
+        self.assertEqual(self.named(prompts.PROMPT_RESOLVED), [])
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+
+    async def test_a_refused_accept_never_shows_the_page_a_prompt_that_is_gone(self):
+        # Every push while the box works the refusal out still carries the
+        # question: it must not vanish and come back.
+        app = self.build(level_known=False)
+        await self.standing_down_with_an_arm_question(app)
+        seen = []
+        app.on_change(lambda: seen.append(app.snapshot()["prompt"]))
+        await app.accept_prompt(1)
+        self.assertTrue(seen)
+        self.assertNotIn(None, seen)
+
+    async def test_a_refused_accept_can_be_answered_again_after_close_now(self):
+        app = self.build(level_known=False)
+        await self.standing_down_with_an_arm_question(app)
+        await app.accept_prompt(1)
+        await app.close_now()
+        self.assertEqual(self.question(app)["seq"], 1)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertIsNone(self.question(app))
+        accepted = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertEqual([entry.data["executed"] for entry in accepted], [False, True])
+        self.assertEqual([entry.data["seq"] for entry in accepted], [1, 1])
+
+    async def test_a_stale_accept_of_stand_down_is_not_executed_and_the_prompt_stays_open(self):
+        # #16: accepting Stand down is a fader tap, so it is stale-checked.
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        await app.accept_prompt(1, tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.question(app)["seq"], 1)
+        (stale,) = self.named(tacet_app.STALE_TAP)
+        self.assertEqual(stale.data["command"], "stand_down")
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertTrue(accepted.data["stale"])
+        self.assertFalse(accepted.data["executed"])
+        self.assertIn("not done", app.snapshot()["refusal"])
+        self.assertIsNotNone(app.snapshot()["stale_tap"])
+
+    async def test_a_stale_accept_of_arm_still_arms(self):
+        # #16's decision: arming is a mode change, not a fader tap, and moves
+        # nothing. Deliberately not stale-checked.
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.accept_prompt(1, tap=self.STALE)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        self.assertTrue(accepted.data["executed"])
+
+    async def test_an_old_stale_refusal_is_not_blamed_on_an_accept_that_was_not_stale_checked(self):
+        # `_stale` lingers until the next fader tap is judged; arming does not
+        # clear it. The answer's own entry must describe the answer.
+        app = self.build()
+        await app.trigger(tap=self.STALE)
+        self.assertIsNotNone(app.snapshot()["stale_tap"])
+        await self.standing_down_with_an_arm_question(app)
+        await app.accept_prompt(1)
+        (accepted,) = self.named(prompts.PROMPT_ACCEPTED)
+        # Never judged, which is not the same as judged on time.
+        self.assertIsNone(accepted.data["stale"])
+        self.assertTrue(accepted.data["executed"])
+
+    async def test_every_entry_an_answer_earns_carries_its_tap_stamp(self):
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        tap = late(0.3)
+        await app.accept_prompt(1, tap=tap)
+        for key in (tacet_app.ARMED, prompts.PROMPT_ACCEPTED):
+            (entry,) = self.named(key)
+            self.assertEqual(entry.data[taps.TAP_FIELD], tap.as_data(), key)
+
+    async def test_dismissing_logs_it_and_closes_the_prompt(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-whistle")
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        sent = len(self.console_sender.packets)
+        await app.dismiss_prompt(1)
+        self.assertIsNone(self.question(app))
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(len(self.console_sender.packets), sent)
+        (dismissed,) = self.named(prompts.PROMPT_DISMISSED)
+        self.assertEqual(
+            dismissed.data,
+            {"prompt": "stand-down", "seq": 1, "source": ann.BAND_EXITS_STANDS, "state": "open"},
+        )
+        self.assertEqual(self.named(prompts.PROMPT_ACCEPTED), [])
+
+    async def test_a_stale_dismissal_is_still_taken(self):
+        # "Not yet" changes nothing, so lateness cannot make it dangerous.
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.dismiss_prompt(1, tap=self.STALE)
+        self.assertIsNone(self.question(app))
+        self.assertEqual(len(self.named(prompts.PROMPT_DISMISSED)), 1)
+
+    async def test_a_dismissed_prompt_is_never_raised_again_by_itself(self):
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        await app.dismiss_prompt(1)
+        await app.release()
+        await app.wait_for_fade()
+        await app.trigger()
+        self.assertIsNone(self.question(app))
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+
+    async def test_tapping_the_annotation_again_raises_a_fresh_prompt(self):
+        # D5: "Not yet" is per raised prompt, not per kind or session.
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        await app.dismiss_prompt(1)
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["seq"], 2)
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 2)
+
+    async def test_an_answer_for_a_prompt_that_is_no_longer_open_does_nothing(self):
+        app = self.build()
+        await self.open_with_a_stand_down_question(app)
+        for answer in (app.accept_prompt, app.dismiss_prompt):
+            before_keys = self.keys()
+            before = app.machine
+            await answer(99)
+            self.assertEqual(self.keys(), before_keys)
+            self.assertEqual(app.machine, before)
+            self.assertEqual(self.question(app)["seq"], 1)
+
+    async def test_an_answer_when_nothing_is_open_does_nothing(self):
+        app = self.build()
+        await app.arm()
+        before_keys = self.keys()
+        await app.accept_prompt(1)
+        await app.dismiss_prompt(1)
+        self.assertEqual(self.keys(), before_keys)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+    async def test_a_late_answer_to_a_prompt_that_was_answered_does_nothing(self):
+        # Two browsers, or a tap that crossed the reply on stadium wifi.
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.accept_prompt(1)
+        await app.stand_down()
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertEqual(len(self.named(prompts.PROMPT_ACCEPTED)), 1)
+
+    async def test_an_open_arm_prompt_is_resolved_when_an_open_arms_the_box(self):
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertIsNone(self.question(app))
+        keys = self.keys()
+        self.assertLess(keys.index(tacet_app.ARMED), keys.index(prompts.PROMPT_RESOLVED))
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual(
+            resolved.data,
+            {"prompt": "arm", "seq": 1, "source": ann.BAND_ENTERS_STANDS, "state": "open"},
+        )
+        self.assertEqual(self.named(prompts.PROMPT_ACCEPTED), [])
+
+    async def test_an_open_arm_prompt_is_resolved_when_the_operator_arms_directly(self):
+        app = self.build()
+        await self.standing_down_with_an_arm_question(app)
+        await app.arm()
+        self.assertIsNone(self.question(app))
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual(resolved.data["seq"], 1)
+
+    async def test_an_open_stand_down_prompt_is_resolved_when_the_operator_stands_down_elsewhere(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        await app.stand_down()
+        self.assertIsNone(self.question(app))
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual((resolved.data["prompt"], resolved.data["seq"]), ("stand-down", 1))
+        self.assertEqual(self.named(prompts.PROMPT_ACCEPTED), [])
+
+    async def test_a_stand_down_asked_elsewhere_while_open_resolves_the_prompt_when_requested(self):
+        # A pending stand-down already answers the question (D3).
+        app = self.build(fade=0.05)
+        await self.open_with_a_stand_down_question(app)
+        await app.stand_down()
+        self.assertTrue(app.machine.pending_stand_down)
+        self.assertIsNone(self.question(app))
+        (resolved,) = self.named(prompts.PROMPT_RESOLVED)
+        self.assertEqual(resolved.data["seq"], 1)
+        await app.wait_for_fade()
+
+    async def test_the_hallway_test_the_prompt_does_not_take_the_tap(self):
+        # Tap Band exits stands, then Up on whistle blind within a second.
+        # The open runs; the question is still just a question.
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(self.question(app)["seq"], 1)
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        self.assertIn(tacet_app.COMMANDED, self.keys())
+        self.assertEqual(self.question(app), {"seq": 1, "kind": "stand-down", "source": ann.BAND_EXITS_STANDS})
+        self.assertEqual(self.named(prompts.PROMPT_ACCEPTED), [])
+        self.assertEqual(self.named(prompts.PROMPT_DISMISSED), [])
+
+    async def test_accepting_is_the_only_path_from_an_annotation_to_a_state_change(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate(ann.BAND_EXITS_STANDS)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        await app.accept_prompt(1)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+
+    async def test_a_game_days_worth_of_questions_reads_back_unambiguously(self):
+        app = self.build(fade=0.05)
+        await app.close_now()
+        await app.annotate(ann.BAND_ENTERS_STANDS)  # raised, seq 1
+        await app.accept_prompt(1)  # armed
+        await app.annotate("up-whistle")
+        await app.start_span(ann.HALFTIME_EXODUS)  # raised, seq 2
+        await app.accept_prompt(2)  # fades, stands down on landing
+        await app.wait_for_fade()
+        await app.annotate(ann.BAND_ENTERS_STANDS)  # raised, seq 3
+        await app.dismiss_prompt(3)  # "not yet"
+        await app.annotate("up-whistle")  # arms by opening
+        await app.annotate(ann.BAND_EXITS_STANDS)  # raised, seq 4
+        await app.accept_prompt(4)
+        await app.wait_for_fade()
+        await app.annotate(ann.BAND_EXITS_STANDS)  # already so: resolved directly
+        prompt_keys = {
+            prompts.PROMPT_RAISED,
+            prompts.PROMPT_ACCEPTED,
+            prompts.PROMPT_DISMISSED,
+            prompts.PROMPT_RESOLVED,
+            prompts.PROMPT_WITHDRAWN,
+        }
+        story = [(e.event, e.data["prompt"], e.data["seq"]) for e in self.entries() if e.event in prompt_keys]
+        self.assertEqual(
+            story,
+            [
+                (prompts.PROMPT_RAISED, "arm", 1),
+                (prompts.PROMPT_ACCEPTED, "arm", 1),
+                (prompts.PROMPT_RAISED, "stand-down", 2),
+                (prompts.PROMPT_ACCEPTED, "stand-down", 2),
+                (prompts.PROMPT_RAISED, "arm", 3),
+                (prompts.PROMPT_DISMISSED, "arm", 3),
+                (prompts.PROMPT_RAISED, "stand-down", 4),
+                (prompts.PROMPT_ACCEPTED, "stand-down", 4),
+                (prompts.PROMPT_RESOLVED, "stand-down", None),
+            ],
+        )
+        self.assertIsNone(self.question(app))
+
+    async def test_a_mis_tapped_exit_that_was_taken_back_reads_back_unambiguously(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-whistle")
+        await app.annotate(ann.BAND_EXITS_STANDS)  # raised, seq 1
+        await app.annotate(ann.BAND_ENTERS_STANDS)  # resolved directly; seq 1 withdrawn
+        prompt_keys = {
+            prompts.PROMPT_RAISED,
+            prompts.PROMPT_ACCEPTED,
+            prompts.PROMPT_DISMISSED,
+            prompts.PROMPT_RESOLVED,
+            prompts.PROMPT_WITHDRAWN,
+        }
+        story = [(e.event, e.data["prompt"], e.data["seq"]) for e in self.entries() if e.event in prompt_keys]
+        self.assertEqual(
+            story,
+            [
+                (prompts.PROMPT_RAISED, "stand-down", 1),
+                (prompts.PROMPT_RESOLVED, "arm", None),
+                (prompts.PROMPT_WITHDRAWN, "stand-down", 1),
+            ],
+        )
+
+    async def test_a_prompt_survives_the_fade_of_an_unrelated_move(self):
+        app = self.build(fade=0.05)
+        await self.open_with_a_stand_down_question(app)
+        await app.release()
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(self.question(app)["seq"], 1)
+
+
+class TestTheDutyClock(AppTestCase):
+    """#19: the page will say ARMED 10:42 or STOOD DOWN 12:51, so the box
+    says when, on its own monotonic clock: the one `snapshot()["at"]` is on.
+    Never a wall time, and never invented after a restart."""
+
+    START = 1000.0
+
+    def setUp(self):
+        super().setUp()
+        self.clock = [self.START]
+
+    def build(self, **options):
+        return super().build(monotonic=lambda: self.clock[0], **options)
+
+    async def test_a_fresh_box_has_no_duty_time(self):
+        app = self.build()
+        self.assertEqual(app.snapshot()["duty"], {"armed": False, "since": None})
+
+    async def test_arming_records_when_on_the_boxs_own_clock(self):
+        app = self.build()
+        self.clock[0] += 50.0
+        await app.arm()
+        self.assertEqual(app.snapshot()["duty"], {"armed": True, "since": self.START + 50.0})
+        self.assertEqual(app.snapshot()["at"], self.START + 50.0)
+
+    async def test_standing_down_records_when(self):
+        app = self.build()
+        await app.arm()
+        self.clock[0] += 500.0
+        await app.stand_down()
+        self.assertEqual(app.snapshot()["duty"], {"armed": False, "since": self.START + 500.0})
+
+    async def test_the_time_does_not_move_while_nothing_changes(self):
+        app = self.build()
+        await app.arm()
+        self.clock[0] += 100.0
+        await app.trigger()
+        self.clock[0] += 100.0
+        await app.release()
+        await app.wait_for_fade()
+        self.clock[0] += 100.0
+        self.assertEqual(app.snapshot()["duty"], {"armed": True, "since": self.START})
+
+    async def test_it_moves_only_when_the_duty_entry_is_written(self):
+        # An arm that changes nothing, and a stand-down that is refused as
+        # stale, write no duty entry and so do not touch the clock.
+        app = self.build()
+        await app.arm()
+        self.clock[0] += 10.0
+        await app.arm()
+        await app.trigger()
+        await app.stand_down(tap=late(taps.DEFAULT_STALE_TAP_SECONDS + 1.0))
+        self.assertEqual(app.snapshot()["duty"], {"armed": True, "since": self.START})
+
+    async def test_a_stand_down_while_open_sets_it_when_the_fade_lands(self):
+        # Matching `stood-down`, which is written at the landing (#50).
+        app = self.build(fade=0.05)
+        await app.arm()
+        await app.trigger()
+        self.clock[0] += 200.0
+        await app.stand_down()
+        self.assertEqual(app.snapshot()["duty"], {"armed": True, "since": self.START})
+        self.clock[0] += 3.0
+        await app.wait_for_fade()
+        self.assertEqual(app.snapshot()["duty"], {"armed": False, "since": self.START + 203.0})
+
+    async def test_an_open_from_cold_boot_arms_and_says_when(self):
+        app = self.build(level_known=False)
+        self.clock[0] += 7.0
+        await app.annotate("up-whistle")
+        self.assertEqual(app.snapshot()["duty"], {"armed": True, "since": self.START + 7.0})
+
+    async def test_a_close_while_standing_down_says_nothing_about_duty(self):
+        app = self.build(level_known=False)
+        await app.close_now()
+        self.assertEqual(app.snapshot()["duty"], {"armed": False, "since": None})
+
+    async def test_a_box_that_restarts_has_no_duty_history_and_does_not_invent_one(self):
+        first = self.build()
+        await first.arm()
+        self.assertIsNotNone(first.snapshot()["duty"]["since"])
+        # A restart is a new App: whatever the log says, the box has not
+        # watched a stand-down or an arm happen.
+        second = tacet_app.App(
+            console=self.console,
+            log=self.log,
+            machine=state.Machine(state=state.State.IDLE, level_known=True),
+            monotonic=lambda: self.clock[0],
+        )
+        self.assertEqual(second.snapshot()["duty"], {"armed": True, "since": None})
+
+    async def test_a_pending_stand_down_still_reads_as_armed(self):
+        app = self.build(fade=0.05)
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        self.assertTrue(app.snapshot()["duty"]["armed"])
+        await app.wait_for_fade()
+        self.assertFalse(app.snapshot()["duty"]["armed"])

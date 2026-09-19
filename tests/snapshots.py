@@ -131,6 +131,17 @@ async def releasing(root: Path) -> dict[str, Any]:
     return snapshot
 
 
+async def prompt_open(root: Path) -> dict[str, Any]:
+    """The box has asked: the band left the stands mid-game, and a Stand down
+    question is on the page, unanswered. Produced the way the box produces it -
+    an operator tap on `band-exits-stands` - never assembled by hand (#19)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.annotate(ann.BAND_EXITS_STANDS)
+    return box.app.snapshot()
+
+
 async def faults(root: Path) -> dict[str, Any]:
     """Everything the page has a way of saying is wrong, at once."""
     box = _build(root, console=_Unreachable(), machine=_known())
@@ -150,6 +161,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
     "releasing": releasing,
+    "prompt": prompt_open,
     "faults": faults,
 }
 

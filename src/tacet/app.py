@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, state, taps
+from . import dm7, prompts, state, taps
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, record_refusal
 
@@ -78,6 +78,9 @@ TOOK_BACK = "took-back"
 #: Still worth a log entry, since it is a positive record that the operator
 #: was asked and confirmed nothing moved.
 STILL_MINE = "still-mine"
+#: The entries that say the box changed duty. The status the page shows,
+#: ARMED or STOOD DOWN, is timed from whichever of them was written last.
+_DUTY_ENTRIES = frozenset({ARMED, STOOD_DOWN})
 
 #: What the page says about a fader tap that arrived too late. Quoted in
 #: docs/troubleshooting.md, where a test holds it.
@@ -176,6 +179,23 @@ class App:
         #: loudly: the operator tapped, nothing happened, and they have to
         #: decide again (#16).
         self._stale: dict[str, float] | None = None
+        #: The arm / stand-down question on the page, if there is one (#19).
+        #: Not part of the machine: a question about duty state, never a duty
+        #: state, and asking it moves nothing.
+        self._prompt: prompts.OpenPrompt | None = None
+        #: The last seq a prompt took. Advanced only when one is raised, so a
+        #: question that resolves directly or repeats does not burn one.
+        self._prompt_seq = 0
+        #: The seq of the prompt an accept is running the command for, or None.
+        #: While set, `_settle_prompt` leaves that prompt alone: the accept
+        #: decides whether it stays, and a refused accept must not show the
+        #: page a prompt that vanished and came back.
+        self._answering: int | None = None
+        #: When the box last armed or stood down, on `_monotonic` - the clock
+        #: `snapshot()["at"]` is on, so the page can convert it once. None
+        #: until this run of the box has seen one: a restart has no duty
+        #: history, and the box never invents one.
+        self._duty_since: float | None = None
 
         self._move_task: asyncio.Task[None] | None = None
         #: Where the move in flight is heading, or None when nothing is
@@ -324,11 +344,14 @@ class App:
                 level_was_known=before.level_known,
             )
         for key in session_entries(before, outcome.machine):
+            if key in _DUTY_ENTRIES:
+                self._duty_since = self._monotonic()
             self._record(
                 key,
                 data={"state": self.machine.state.value},
                 project_seconds=self._playhead(),
             )
+        self._settle_prompt()
         self._notify()
         return outcome
 
@@ -665,6 +688,9 @@ class App:
         # operator saw what they saw, and a log that only kept the accepted
         # taps would misrepresent the night.
         entry = self._record(event_key, data=data, project_seconds=self._playhead())
+        # After the reason is written, and after the move above if there was
+        # one: the question is asked about the machine as this tap left it.
+        self._ask_prompt(event_key)
         self._notify()
         return entry
 
@@ -674,11 +700,14 @@ class App:
         so, and the button offers to start it again."""
         ann.operator_event(event_key)
         span_id: str | None
-        try:
-            with _tapped(tap):
+        with _tapped(tap):
+            try:
                 span_id = self._log.start_span(event_key, data=_stamped(None), project_seconds=self._playhead())
-        except ann.WriteError:
-            span_id = None  # see _record
+            except ann.WriteError:
+                span_id = None  # see _record
+            # Asked whether or not the log kept the start: the question is
+            # state on the box, not something the log holds.
+            self._ask_prompt(event_key)
         self._notify()
         return span_id
 
@@ -694,6 +723,109 @@ class App:
             entry = None  # see _record
         self._notify()
         return entry
+
+    # -- the arm / stand-down question (#19) -------------------------------
+
+    def _ask_prompt(self, source: str) -> None:
+        """Ask the question `source` raises, if it raises one. Writes log
+        entries and sets `_prompt`; nothing else. In particular it never runs a
+        command: the answer is the operator's tap on `accept_prompt`."""
+        seq = self._prompt_seq + 1
+        decision = prompts.ask(self._prompt, source=source, machine=self.machine, seq=seq)
+        if decision.prompt is not None and decision.prompt.seq == seq:
+            self._prompt_seq = seq
+        self._apply_prompt(decision)
+
+    def _settle_prompt(self) -> None:
+        """Close the open prompt, logged as resolved, if the machine has moved
+        to what it asks for. Called once per command, which covers every path
+        that changes duty; the stalled and riding-in steps the box takes on its
+        own touch nothing a prompt reads."""
+        current = self._prompt
+        if current is not None and current.seq == self._answering:
+            return
+        self._apply_prompt(prompts.settle(current, self.machine))
+
+    def _apply_prompt(self, decision: prompts.Decision) -> None:
+        for note in decision.notes:
+            self._record(note.key, data=_prompt_data(note, self.machine), project_seconds=self._playhead())
+        self._prompt = decision.prompt
+
+    async def accept_prompt(self, seq: int, *, tap: taps.TapTiming | None = None) -> None:
+        """The operator says yes to the open prompt `seq`.
+
+        Runs the ordinary command - `stand_down` (stale-checked, fading an
+        open fader) or `arm` (deliberately not, #16) - and then writes the
+        answer, the way `annotate` moves first and gives the reason after. The
+        prompt closes only if the command did something. A refusal, whether
+        the box does not know the fader level (arming is refused then, #107)
+        or the tap was late (#16), leaves the same prompt open under the same
+        seq, with the refusal on the page, so the operator can fix it and
+        answer again. Nothing is sent to make an accept work.
+
+        An answer for a prompt that is not open, or was withdrawn or replaced,
+        is a race - two browsers, or a tap that crossed a reply on stadium wifi
+        - and is ignored, unlogged: acting on it could stand the box down long
+        after the question stopped applying. So is an answer that arrives while
+        another is being answered.
+
+        Why the prompt is not simply cleared before the command runs:
+        `_command` notifies, and the hub snapshots synchronously, so clearing
+        first would push `prompt: null` and then push it back on a refused
+        accept. Instead `_answering` holds the settle off, and the cost is that
+        the one push made inside the command shows the new duty state with the
+        question still open. Do not simplify it back."""
+        with _tapped(tap):
+            open_ = self._prompt
+            if open_ is None or open_.seq != seq or self._answering is not None:
+                return
+            self._answering = seq
+            try:
+                if open_.prompt is prompts.Prompt.STAND_DOWN:
+                    outcome = await self.stand_down(tap=tap)
+                else:
+                    outcome = await self.arm(tap=tap)
+            finally:
+                self._answering = None
+            self._record(
+                prompts.PROMPT_ACCEPTED,
+                data={
+                    **_prompt_data(_answer_note(prompts.PROMPT_ACCEPTED, open_), self.machine),
+                    "executed": outcome.changed,
+                    "refusal": outcome.refusal,
+                    # Only stand_down judges the tap, and it does so afresh
+                    # each time. An arm is never judged, so it says null -
+                    # `_stale` after one is whatever an earlier fader tap left,
+                    # and is no news about this answer.
+                    "stale": self._stale is not None if open_.prompt is prompts.Prompt.STAND_DOWN else None,
+                },
+                project_seconds=self._playhead(),
+            )
+            if outcome.changed:
+                if self._prompt is open_:
+                    self._prompt = None
+            else:
+                # Still open, unless it turns out to be moot as well.
+                self._settle_prompt()
+            self._notify()
+
+    async def dismiss_prompt(self, seq: int, *, tap: taps.TapTiming | None = None) -> None:
+        """The operator says "not yet": logged, and the prompt closed.
+
+        It does not come back by itself; tapping the event again raises a
+        fresh one. Never refused, and never stale-checked: it changes nothing,
+        so nothing about it can be dangerous."""
+        with _tapped(tap):
+            open_ = self._prompt
+            if open_ is None or open_.seq != seq or self._answering is not None:
+                return
+            self._record(
+                prompts.PROMPT_DISMISSED,
+                data=_prompt_data(_answer_note(prompts.PROMPT_DISMISSED, open_), self.machine),
+                project_seconds=self._playhead(),
+            )
+            self._prompt = None
+            self._notify()
 
     def _record(
         self,
@@ -829,6 +961,19 @@ class App:
             # the refusal loudly while this is set (#16).
             "stale_tap": self._stale,
             "detector_enabled": self.machine.allow_detector,
+            # The arm / stand-down question, or None (#19). Only what it is:
+            # the words are the page's, and it carries no copy.
+            "prompt": None
+            if self._prompt is None
+            else {"seq": self._prompt.seq, "kind": self._prompt.prompt.value, "source": self._prompt.source},
+            # Whether the box is on duty, and since when on the box's own
+            # monotonic clock - the one `at` is on, so the page converts it
+            # once. Null after a restart, which has no duty history. Fixed at
+            # the change, not an age, so it does not churn the snapshot.
+            "duty": {
+                "armed": self.machine.state is not state.State.STANDING_DOWN,
+                "since": self._duty_since,
+            },
             "fader": {
                 "commanded": self._console.commanded_level,
                 "db": _finite(self._console.commanded_db),
@@ -912,6 +1057,23 @@ class App:
     def _notify(self) -> None:
         for listener in self._listeners:
             listener()
+
+
+def _prompt_data(note: prompts.Note, machine: state.Machine) -> dict[str, Any]:
+    """The entry a prompt note becomes. Flat, so it fits the log."""
+    data: dict[str, Any] = {
+        "prompt": note.prompt.value,
+        "seq": note.seq,
+        "source": note.source,
+        "state": machine.state.value,
+    }
+    if note.replaced_by is not None:
+        data["replaced_by"] = note.replaced_by
+    return data
+
+
+def _answer_note(key: str, answered: prompts.OpenPrompt) -> prompts.Note:
+    return prompts.Note(key=key, prompt=answered.prompt, seq=answered.seq, source=answered.source)
 
 
 def _running_loop() -> asyncio.AbstractEventLoop | None:

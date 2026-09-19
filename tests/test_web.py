@@ -12,7 +12,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, osc, reaper, state, web
+from tacet import dm7, osc, prompts, reaper, state, web
 from tests.disk import Disk
 
 
@@ -371,6 +371,106 @@ class TestAnnotation(WebTestCase):
     async def test_ending_an_unknown_span_is_a_client_error(self):
         response = await self.client.post("/api/span/end", json={"span_id": "q1-999"})
         self.assertEqual(response.status, 400)
+
+
+class TestPromptRoutes(WebTestCase):
+    """#19: the answers to the arm / stand-down question. Whether a prompt is
+    raised, and what an answer does, is `tests/test_app.py`'s job; this is only
+    whether each is wired to a route, and what a bad request looks like."""
+
+    async def stand_down_question(self):
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        payload = await (await self.client.post("/api/annotate", json={"key": ann.BAND_EXITS_STANDS})).json()
+        self.assertEqual(payload["state"]["prompt"]["kind"], "stand-down")
+        return payload["state"]["prompt"]["seq"]
+
+    async def test_accepting_a_stand_down_prompt_stands_the_box_down(self):
+        seq = await self.stand_down_question()
+        response = await self.client.post("/api/prompt/accept", json={"seq": seq})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertEqual(payload["state"], "standing-down")
+        self.assertIsNone(payload["prompt"])
+        self.assertIn(prompts.PROMPT_ACCEPTED, self.entries())
+
+    async def test_dismissing_through_the_route_logs_it_and_changes_nothing(self):
+        seq = await self.stand_down_question()
+        sent = len(self.console_sender.packets)
+        payload = await (await self.client.post("/api/prompt/dismiss", json={"seq": seq})).json()
+        self.assertEqual(payload["state"], "idle")
+        self.assertIsNone(payload["prompt"])
+        self.assertIn(prompts.PROMPT_DISMISSED, self.entries())
+        self.assertNotIn(prompts.PROMPT_ACCEPTED, self.entries())
+        self.assertEqual(len(self.console_sender.packets), sent)
+
+    async def test_an_answer_without_a_seq_is_a_bad_request(self):
+        await self.stand_down_question()
+        for path in ("/api/prompt/accept", "/api/prompt/dismiss"):
+            with self.subTest(path=path):
+                response = await self.client.post(path, json={})
+                self.assertEqual(response.status, 400)
+                self.assertEqual((await response.json())["error"], "'seq' is required")
+        self.assertEqual(self.tacet.machine.state, state.State.IDLE)
+
+    async def test_an_answer_with_a_seq_that_is_not_an_integer_is_a_bad_request(self):
+        await self.stand_down_question()
+        # A bool is an int to Python and not to the page: rejected explicitly.
+        for bad in ("1", 1.5, True, None, [1]):
+            for path in ("/api/prompt/accept", "/api/prompt/dismiss"):
+                with self.subTest(path=path, seq=bad):
+                    response = await self.client.post(path, json={"seq": bad})
+                    self.assertEqual(response.status, 400)
+                    # Present, so not "required": it is the wrong kind of thing.
+                    self.assertEqual((await response.json())["error"], f"'seq' must be a whole number, got {bad!r}")
+        self.assertEqual(self.tacet.machine.state, state.State.IDLE)
+        self.assertEqual(self.tacet.snapshot()["prompt"]["seq"], 1)
+
+    async def test_an_answer_that_is_not_json_is_a_bad_request(self):
+        response = await self.client.post(
+            "/api/prompt/accept", data="{not json", headers={"Content-Type": "application/json"}
+        )
+        self.assertEqual(response.status, 400)
+
+    async def test_an_answer_for_a_prompt_that_moved_on_changes_nothing_and_is_not_an_error(self):
+        seq = await self.stand_down_question()
+        before = self.entries()
+        for path in ("/api/prompt/accept", "/api/prompt/dismiss"):
+            with self.subTest(path=path):
+                response = await self.client.post(path, json={"seq": seq + 1})
+                self.assertEqual(response.status, 200)
+                payload = await response.json()
+                self.assertEqual(payload["state"], "idle")
+                self.assertEqual(payload["prompt"]["seq"], seq)
+        self.assertEqual(self.entries(), before)
+
+    async def test_an_answer_with_no_prompt_open_is_not_an_error(self):
+        response = await self.client.post("/api/prompt/accept", json={"seq": 1})
+        self.assertEqual(response.status, 200)
+        self.assertIsNone((await response.json())["prompt"])
+
+    async def test_the_snapshot_carries_the_prompt_and_the_duty_clock(self):
+        payload = await (await self.client.get("/api/state")).json()
+        self.assertIsNone(payload["prompt"])
+        self.assertEqual(payload["duty"], {"armed": False, "since": None})
+        await self.stand_down_question()
+        payload = await (await self.client.get("/api/state")).json()
+        self.assertEqual(payload["prompt"], {"seq": 1, "kind": "stand-down", "source": ann.BAND_EXITS_STANDS})
+        self.assertTrue(payload["duty"]["armed"])
+        self.assertIsInstance(payload["duty"]["since"], float)
+
+    async def test_both_answer_routes_are_registered(self):
+        paths = {getattr(route.resource, "canonical", "") for route in self.server.app.router.routes()}
+        for present in ("/api/prompt/accept", "/api/prompt/dismiss"):
+            self.assertIn(present, paths)
+
+    async def test_an_answer_reads_the_tap_stamp_too(self):
+        seq = await self.stand_down_question()
+        body = {"seq": seq, "tap": {"at": 5.0, "offset": 0.0, "uncertainty": 0.05}}
+        await self.client.post("/api/prompt/dismiss", json=body)
+        self.log.flush()
+        dismissed = [e for e in ann.read_entries(self.root / "game.jsonl") if e.event == prompts.PROMPT_DISMISSED]
+        self.assertIn("tap", dismissed[0].data)
 
 
 class RefusingSender:

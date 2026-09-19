@@ -303,6 +303,35 @@ async def _span_end(request: web.Request) -> web.Response:
     return web.json_response({"state": app.snapshot()})
 
 
+def _prompt_seq(payload: Mapping[str, Any]) -> int:
+    """Which prompt an answer is for. A bool is an int to Python and not to the
+    page, so it is refused explicitly rather than read as 1."""
+    if "seq" not in payload:
+        raise _bad_request("'seq' is required")
+    seq = payload["seq"]
+    if isinstance(seq, bool) or not isinstance(seq, int):
+        raise _bad_request(f"'seq' must be a whole number, got {seq!r}")
+    return seq
+
+
+def _prompt_route(name: str) -> Any:
+    """An answer to the arm / stand-down question (#19). A `seq` that is not the
+    open prompt's is not an error: it is the ordinary race between two
+    browsers, or an answer that crossed a replacement, and the box does nothing
+    and says where things stand."""
+
+    async def handler(request: web.Request) -> web.Response:
+        app = request.app[_HUB].app
+        received = app.now()
+        payload = await _body(request)
+        seq = _prompt_seq(payload)
+        tap = _tap(payload, received)
+        await getattr(app, name)(seq, tap=tap)
+        return web.json_response(app.snapshot())
+
+    return handler
+
+
 async def _keepalive(socket: web.WebSocketResponse, *, interval: float = KEEPALIVE_INTERVAL) -> None:
     """Say "still here" on a socket the box has nothing to report on."""
     while True:
@@ -418,6 +447,10 @@ def create_app(
             web.post("/api/annotate", _annotate),
             web.post("/api/span/start", _span_start),
             web.post("/api/span/end", _span_end),
+            # The arm / stand-down question (#19): one route for each answer,
+            # like /api/handoff and /api/still-mine.
+            web.post("/api/prompt/accept", _prompt_route("accept_prompt")),
+            web.post("/api/prompt/dismiss", _prompt_route("dismiss_prompt")),
             web.get("/ws", _websocket),
         ]
     )
