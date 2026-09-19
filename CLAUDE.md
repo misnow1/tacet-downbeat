@@ -121,6 +121,10 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
   and opens, and says so; a fade there just fades. What it gates is the
   detector, which is refused in this state whatever `allow_detector` says. A
   forgotten arm must not cost a downbeat.
+- **The box does not know where the fader is** until an absolute command says
+  so - at boot and after a StageMix hand-off alike. A snap open and the instant
+  close are correct from any belief and make it known; anything that ramps from
+  the believed level is refused until then (#107). See design.md 5.3.
 - Triggers that open: drumline **unison onset**, conductor **whistle**, or a
   broad simultaneous ensemble entrance.
 - Whistle is not the primary trigger. When the whole band starts together the
