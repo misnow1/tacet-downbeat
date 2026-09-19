@@ -50,14 +50,23 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertFalse(faults["log"]["healthy"])
         self.assertEqual(faults["recording"]["liveness"], "lost")
         self.assertIsNotNone(faults["refusal"])
+        # The console is unreachable and the snap open delivered nothing, so
+        # the page must not also show a confident number (#116).
+        self.assertFalse(faults["fader"]["level_known"])
 
-    def test_only_the_cold_boot_page_does_not_know_where_the_fader_is(self):
+    #: The fixtures whose page does not know where the fader is: the cold-boot
+    #: page, which has told the console nothing, and the faults page, whose
+    #: snap open never left the box (#116).
+    UNKNOWN_LEVEL = frozenset({"snapshot-standing-down.json", "snapshot-faults.json"})
+
+    def test_only_a_page_that_never_delivered_a_level_says_it_does_not_know(self):
         # #107: the boot fixture IS the cold-boot page and stays honest about
-        # it; every state that got somewhere by arming was told the level.
+        # it; every state that got somewhere by arming was told the level -
+        # unless, since #116, the delivery that would have told it failed.
         states = {path.name: json.loads(text) for path, text in self.generated.items()}
         for name, snapshot in states.items():
             with self.subTest(fixture=name):
-                self.assertEqual(snapshot["fader"]["level_known"], name != "snapshot-standing-down.json")
+                self.assertEqual(snapshot["fader"]["level_known"], name not in self.UNKNOWN_LEVEL)
                 self.assertNotIn("handoff", snapshot)
                 self.assertNotIn("queued", snapshot)
 

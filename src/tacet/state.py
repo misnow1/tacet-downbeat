@@ -46,9 +46,12 @@
     makes true. STAND_DOWN is never refused; it goes straight to STANDING DOWN
     and sends nothing. REPORT_READY is the one way to READY from an unknown
     level: READY has no fast form, so it cannot be driven to, only reported.
-    HANDOFF makes the level unknown again. A snap TRIGGER from STANDING DOWN
-    while unknown still arms and opens: STANDING DOWN never blocks the
-    operator (#89), and an open is absolute.
+    HANDOFF makes the level unknown again, and only the operator can say it:
+    the detector hears the band, it cannot see an iPad in somebody's hands
+    (#117). An absolute command whose own send delivered nothing un-knows the
+    level right back - the belief it briefly held was never earned (#116). A
+    snap TRIGGER from STANDING DOWN while unknown still arms and opens:
+    STANDING DOWN never blocks the operator (#89), and an open is absolute.
 
 Pure: `step` takes a machine and an event and returns a new machine plus what
 the shell should do about it. No sockets, no clock, no fader. That keeps every
@@ -163,6 +166,14 @@ class Event:
     #: needs to know that a slower one is under way, so a fast one can take
     #: over (#45).
     gradual: bool = False
+    #: Set on MOVE_FAILED when the move that failed was absolute - a snap open
+    #: or the instant close - and so had already marked the level known before
+    #: the shell tried to send anything (#116). Only the shell knows what it
+    #: managed to send; `step` is pure and cannot. Ignored on every other
+    #: command. False by default, which is the safe direction: a relative
+    #: move's failure must never un-know a level, or a fade that died partway
+    #: could not be faded again (#27).
+    absolute: bool = False
 
 
 @dataclass(frozen=True)
@@ -198,7 +209,8 @@ class Machine:
     #: exactly that reason - a fresh `Dm7Client` believes -inf only because that
     #: is a convenient number to start from (#107). Orthogonal to `state`, like
     #: `allow_detector`. Made true by an absolute command, made false by
-    #: HANDOFF; a relative move changes neither way.
+    #: HANDOFF, and false again when an absolute command's own send delivered
+    #: nothing (#116); a relative move changes neither way.
     level_known: bool = False
 
 
@@ -216,10 +228,26 @@ def _unchanged(machine: Machine, refusal: str | None = None) -> Outcome:
     return Outcome(machine=machine, refusal=refusal, changed=False)
 
 
-#: Commands that only a person can give. READY is entered on a prediction that
-#: something is about to happen, and REPORT_READY says the fader is already at
-#: the hold level: neither is something a detector can know (#6, #107).
-_OPERATOR_ONLY = (Command.READY, Command.REPORT_READY)
+#: Why a detector-sourced READY or REPORT_READY is refused. Not quoted in
+#: docs/troubleshooting.md: like the other detector refusals it never reaches
+#: the operator's page, since no detector exists before Phase 2.
+DETECTOR_CANNOT_PREDICT = "READY is operator-only; only a person can tell what is about to play"
+#: Why a detector-sourced HANDOFF is refused (#117). Its own reason rather than
+#: READY's: a wrong reason for a different wrong command is worse than none.
+DETECTOR_CANNOT_HAND_OFF = "handing the DCA over is operator-only; only a person can tell that StageMix has it"
+
+#: Commands only a person can give, each with why. READY is entered on a
+#: prediction that something is about to happen and REPORT_READY says the fader
+#: is already at the hold level: neither is something a detector can know (#6,
+#: #107). HANDOFF is the operator saying another interface has the DCA (#117) -
+#: a claim about the room, not about the audio, and the dangerous one of the
+#: three: it un-knows the level, which refuses every ramp and ARM until a
+#: person says where the fader is.
+_OPERATOR_ONLY: dict[Command, str] = {
+    Command.READY: DETECTOR_CANNOT_PREDICT,
+    Command.REPORT_READY: DETECTOR_CANNOT_PREDICT,
+    Command.HANDOFF: DETECTOR_CANNOT_HAND_OFF,
+}
 
 #: Why a bare ARM is refused while the level is unknown. Quoted in
 #: docs/troubleshooting.md, where a test holds it.
@@ -243,15 +271,18 @@ LEVEL_ALREADY_KNOWN = "the fader level is already known; ready rides there inste
 
 def step(machine: Machine, event: Event) -> Outcome:
     """Apply one event. Never raises: an illegal event is refused, not fatal."""
-    if event.command in _OPERATOR_ONLY and event.source is Source.DETECTOR:
+    operator_only = _OPERATOR_ONLY.get(event.command)
+    if operator_only is not None and event.source is Source.DETECTOR:
         # Unconditional, and checked before the phase gate below: READY is
         # entered on a prediction that something is about to happen, which
         # only a watching human can judge (design.md 2, CLAUDE.md "never gate
         # on level alone"). That is not the Phase 1/2 line TRIGGER sits on -
         # a detector confirming sound is present is exactly its Phase 2 job,
         # but guessing that sound is about to start never becomes one (#6).
-        # REPORT_READY is the same kind of claim, made about the fader itself.
-        return _unchanged(machine, "READY is operator-only; only a person can tell what is about to play")
+        # REPORT_READY is the same kind of claim, made about the fader itself,
+        # and HANDOFF is a claim about who is holding it (#117): the detector
+        # hears the band, it cannot see an iPad in somebody's hands.
+        return _unchanged(machine, operator_only)
     if machine.state is State.STANDING_DOWN and event.source is Source.DETECTOR:
         # Unconditional, whatever `allow_detector` says, and moved up here
         # (#12) so it covers HANDOFF and the level answers too, not only
@@ -264,6 +295,12 @@ def step(machine: Machine, event: Event) -> Outcome:
             machine,
             "detector input is ignored until phase 2 is declared; the operator is driving",
         )
+    if event.command is Command.MOVE_FAILED:
+        # One place, not one per state: the shell reports it, every state means
+        # the same thing by it, and an absolute command can fail in a state
+        # whose handler had no move of its own to fail - the instant close
+        # lands in IDLE or STANDING DOWN (#116).
+        return _move_failed(machine, event)
     if event.command is Command.HANDOFF:
         # A mode change, like ARM: no fader move, legal from any state. A
         # second HANDOFF while the level is already unknown changes nothing.
@@ -418,13 +455,31 @@ def _standing_down(machine: Machine, event: Event) -> Outcome:
         # would have the box arm itself on the way into the fade and stand
         # itself down again as it lands, in the log and on the page.
         return Outcome(machine=machine, fader=FaderCommand.FADE)
-    # FADE_COMPLETE and RIDE_IN_COMPLETE are already true of a closed fader,
-    # and MOVE_FAILED has no move here to have failed.
+    # FADE_COMPLETE and RIDE_IN_COMPLETE are already true of a closed fader.
     return _unchanged(machine)
 
 
-def _move_failed(machine: Machine) -> Outcome:
-    return Outcome(machine=replace(machine, stalled=True, riding_in=False))
+def _move_failed(machine: Machine, event: Event) -> Outcome:
+    """A send failed partway through a move, so the fader stopped short of
+    where the state says it is going. `stalled` is what lets the command that
+    started the move retry it rather than be ignored as already done (#27).
+
+    An absolute move that failed also puts the belief back (#116). `step` is
+    pure: a snap open or an instant close marks the level known the moment it
+    is applied, before the shell has tried to send anything, and a send that
+    came back having delivered nothing never earned that. Only absolute - a
+    relative move never claimed to make the level known, and un-knowing there
+    would refuse the very retry #27 exists for. What cannot be seen from here
+    is a packet that left the box and was simply lost: the protocol has no
+    acknowledgement (#18, design.md 5.3)."""
+    return Outcome(
+        machine=replace(
+            machine,
+            stalled=True,
+            riding_in=False,
+            level_known=machine.level_known and not event.absolute,
+        )
+    )
 
 
 def _opening(machine: Machine, event: Event, *, armed_by_operator: bool = False) -> Outcome:
@@ -440,10 +495,11 @@ def _opening(machine: Machine, event: Event, *, armed_by_operator: bool = False)
             # Every open ends at `open_level`, absolute, so the fader's place is
             # known from here whatever the box believed before (#107). Only
             # that: `_closing` and `_readying` are relative and never set this.
-            # Known residual (#107): this is not a claim the packet was
-            # delivered. `step` is pure and cannot know; a send that failed
-            # still marks the level known, and only `stalled` (via MOVE_FAILED)
-            # says so, loudly. Un-knowing it is a separate change.
+            # This is not a claim the packet was delivered - `step` is pure and
+            # cannot know that - but the belief no longer just sits there
+            # looking confident: if the send delivers nothing, the shell says
+            # so with an absolute MOVE_FAILED and the belief goes back with it
+            # (#116).
             level_known=True,
         ),
         fader=FaderCommand.OPEN,
@@ -507,8 +563,6 @@ def _ready(machine: Machine, event: Event) -> Outcome:
         # Same caution as a stand-down from OPEN, and for the same reason: the
         # fader is up and the box cannot be sure the band has not started (#6).
         return _closing(machine, pending_stand_down=True)
-    if event.command is Command.MOVE_FAILED:
-        return _move_failed(machine)
     if event.command is Command.READY and machine.stalled:
         # The ride to the hold level never got there. Send it again.
         return _readying(machine)
@@ -525,8 +579,6 @@ def _open(machine: Machine, event: Event) -> Outcome:
     if event.command is Command.STAND_DOWN:
         # Fade out and stand down when it lands, rather than slamming shut.
         return _closing(machine, pending_stand_down=True)
-    if event.command is Command.MOVE_FAILED:
-        return _move_failed(machine)
     if event.command is Command.TRIGGER and (machine.stalled or not machine.level_known):
         # The open never got there. Send it again, at the speed now asked for.
         # Or the box does not know where the fader is (#107): "already open" is
@@ -552,8 +604,6 @@ def _releasing(machine: Machine, event: Event) -> Outcome:
         return Outcome(machine=replace(machine, state=landing, pending_stand_down=False, stalled=False))
     if event.command is Command.STAND_DOWN:
         return Outcome(machine=replace(machine, pending_stand_down=True))
-    if event.command is Command.MOVE_FAILED:
-        return _move_failed(machine)
     if event.command is Command.RELEASE and machine.stalled:
         # The fade died partway. Fade again, from wherever it stopped.
         return Outcome(machine=replace(machine, stalled=False), fader=FaderCommand.FADE)

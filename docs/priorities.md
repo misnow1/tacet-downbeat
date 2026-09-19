@@ -15,12 +15,14 @@ A same-day design conversation then reworked the model #102 was scoped
 against: the box's distrust of its own fader belief generalizes to cold boot,
 not just a StageMix handoff, and the underlying invariant is absolute-vs-relative
 fader commands rather than "handed off or not." #102 was superseded by #107,
-which is now done in two PRs - the state machine and shell, then the operator
-page - leaving #108 and #109 as two small, independent UI fixes from the same
-conversation. Decisions on the remaining issues are recorded as comments on #9,
-#12 and #19, and on #5, #6 and #89 themselves; #107/#108/#109 carry their own
-decisions in their bodies, and #102's closing comment maps what became of each
-of its original items.
+which is now done in two PRs - the state machine and shell (#114), then the
+operator page (#115) - leaving #108 and #109 as two small, independent UI
+fixes from the same conversation. The #114 review itself filed three more
+follow-ups, deliberately left out of that PR: #116, #117 and #118, closed
+together here. Decisions on the remaining issues are recorded as comments on
+#9, #12 and #19, and on #5, #6 and #89 themselves; #107/#108/#109 carry their
+own decisions in their bodies, and #102's closing comment maps what became of
+each of its original items.
 
 ## Game 3 (2026-10-02)
 
@@ -45,6 +47,7 @@ Alongside, not in the build order above:
 - [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the fader-belief mechanism in operator terms. Unblocked: #107 has landed, so it describes what shipped. What it documents is `level_known` and absolute-vs-relative, not handoff/take-back - there is no take-back pair any more, and design.md 5.3 now carries the short version for it to build on.
 - [#108](https://github.com/misnow1/tacet-downbeat/issues/108) Move the StageMix handoff confirmation next to its button. Small UI fix from the same 2026-09-17 conversation as #107; independent of it.
 - [#109](https://github.com/misnow1/tacet-downbeat/issues/109) Stop returning to Main after every tap in the More tab. Same conversation, same independence; revisit if it turns out to be the wrong call once used in a game.
+- ~~[#116](https://github.com/misnow1/tacet-downbeat/issues/116)/[#117](https://github.com/misnow1/tacet-downbeat/issues/117)/[#118](https://github.com/misnow1/tacet-downbeat/issues/118)~~ Done, together. #116: an absolute command whose send failed now un-knows the level again, instead of marking it known on a packet that never landed. #117: HANDOFF is now operator-only, so a detector can never un-know the level once Phase 2 is declared. #118: a hand-off always earns its `handed-off` entry, even when the level already reads unknown - the record a restart under StageMix could not otherwise leave.
 
 ## Proposed for Game 4
 

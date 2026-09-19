@@ -132,7 +132,11 @@ async def releasing(root: Path) -> dict[str, Any]:
 
 
 async def faults(root: Path) -> dict[str, Any]:
-    """Everything the page has a way of saying is wrong, at once."""
+    """Everything the page has a way of saying is wrong, at once.
+
+    The snap open's send never left the box, and it was absolute, so the
+    level goes back to unknown (#116): this fixture's fader reads unknown too,
+    for real, not just at cold boot."""
     box = _build(root, console=_Unreachable(), machine=_known())
     await box.app.arm()
     box.reaper_says("/record", 1.0)

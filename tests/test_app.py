@@ -516,6 +516,17 @@ class TestSessionEntries(unittest.TestCase):
         entries = self.entries_for(self.C.ARM, self.C.TRIGGER, self.C.STAND_DOWN, self.C.MOVE_FAILED)
         self.assertEqual(entries, ())
 
+    def test_a_handoff_that_changed_nothing_still_earns_its_entry(self):
+        unknown = state.Machine(level_known=False)
+        known = state.Machine(level_known=True)
+        self.assertEqual(tacet_app.session_entries(unknown, unknown, self.C.HANDOFF), (tacet_app.HANDED_OFF,))
+        # None is what _command passes for a refused event, and for everything
+        # the machines can speak for themselves (#117, #118).
+        self.assertEqual(tacet_app.session_entries(unknown, unknown), ())
+        self.assertEqual(tacet_app.session_entries(unknown, unknown, self.C.STAND_DOWN), ())
+        # Never twice for one event: the diff and the command agree.
+        self.assertEqual(tacet_app.session_entries(known, unknown, self.C.HANDOFF), (tacet_app.HANDED_OFF,))
+
 
 class TestAStandDownIsLoggedWhenItLands(AppTestCase):
     """#50: `stood-down` used to be written at the tap, before the fade.
@@ -802,10 +813,14 @@ class TestFailures(AppTestCase):
         app = self.build(console_sender=FailingSender())
         await app.arm()
         await app.trigger()
+        # The open's send failed, and it was absolute, so the level goes back
+        # to unknown (#116). A stand-down while unknown is never refused, but
+        # it is also never a fade waiting on a console that is not answering:
+        # it changes the duty state at once and sends nothing, so it lands
+        # straight in STANDING DOWN rather than requesting one.
         await app.stand_down()
-        # Taken and recorded. Not `stood-down`: the fade to get there cannot
-        # reach a console that is not answering, so it never lands (#50).
-        self.assertIn(tacet_app.STAND_DOWN_REQUESTED, self.keys())
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertIn(tacet_app.STOOD_DOWN, self.keys())
 
 
 class TestASenderErrorOfAnyKindIsAFailedMove(AppTestCase):
@@ -937,6 +952,22 @@ class TestAFailedMoveCanBeRetried(AppTestCase):
     async def test_the_page_says_to_tap_again(self):
         app, _ = await self.fail_a_fade_partway(FlakySender())
         self.assertIn("did not finish", app.snapshot()["why"])
+
+    async def test_a_relative_move_that_failed_does_not_un_know_the_level(self):
+        # #116: a fade is relative, so its failure must not un-know the
+        # level - or the retry this whole class is about would itself be
+        # refused for want of a known level.
+        app, _ = await self.fail_a_fade_partway(FlakySender())
+        self.assertTrue(app.machine.level_known)
+
+    async def test_a_failed_ride_in_does_not_un_know_the_level_either(self):
+        sender = FlakySender(fail_after=2)
+        app = self.build(console_sender=sender, steady=True)
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertTrue(app.machine.stalled)
+        self.assertTrue(app.machine.level_known)
 
 
 class TestRecordIsNotAStopButton(AppTestCase):
@@ -1873,11 +1904,19 @@ class TestFaderPositionTrust(AppTestCase):
         self.assertEqual(len(self.console_sender.packets), sent)
         self.assertIn(tacet_app.HANDED_OFF, self.keys())
 
-    async def test_a_second_handoff_is_not_logged_again(self):
+    async def test_a_second_handoff_is_logged_again_and_changes_nothing(self):
+        # #118: the box cannot tell a double tap from a restart under
+        # StageMix, and the operator confirmed both times - same reasoning as
+        # `still-mine`. The second tap changes nothing on the box, but it is
+        # still the record Phase 1's control-authority labels are made of.
         app = self.build()
         await app.handoff()
+        after_first = app.machine
+        sent = len(self.console_sender.packets)
         await app.handoff()
-        self.assertEqual(self.keys().count(tacet_app.HANDED_OFF), 1)
+        self.assertEqual(self.keys().count(tacet_app.HANDED_OFF), 2)
+        self.assertEqual(app.machine, after_first)
+        self.assertEqual(len(self.console_sender.packets), sent)
 
     async def test_handoff_is_legal_while_standing_down(self):
         app = self.build()
@@ -2010,6 +2049,43 @@ class TestFaderPositionTrust(AppTestCase):
         await app.close_now()
         self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
 
+    async def test_a_failed_close_now_leaves_the_level_unknown_and_close_now_still_works(self):
+        # #116: close now is never gated by state or belief, including a
+        # belief the box itself just un-knew.
+        sender = FlakySender(fail_after=0)
+        app = self.build(console_sender=sender, level_known=False)
+        await app.close_now()
+        self.assertFalse(app.machine.level_known)
+        self.assertTrue(app.machine.stalled)
+        sender.heal()
+        await app.close_now()
+        self.assertTrue(app.machine.level_known)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_failed_absolute_move_is_never_logged_as_a_hand_off(self):
+        # The #116 x #118 composition hazard: `session_entries` must read the
+        # outcome from before `_move_fader` ran, or a failed absolute move
+        # would look exactly like a hand-off.
+        app = self.build(console_sender=FailingSender(), level_known=True)
+        await app.arm()
+        await app.trigger()
+        self.assertFalse(app.machine.level_known)
+        self.assertNotIn(tacet_app.HANDED_OFF, self.keys())
+        self.assertIn(tacet_app.MOVE_FAILED, self.keys())
+
+    async def test_a_handoff_after_a_restart_under_stagemix_is_logged(self):
+        # #118's headline case: the box restarted while StageMix had the DCA,
+        # so the level already reads unknown and the hand-off changes nothing
+        # on the box - but the tap is the only record of it.
+        app = self.build(level_known=False)
+        before = app.machine
+        outcome = await app.handoff()
+        self.assertIsNone(outcome.refusal)
+        self.assertEqual(app.machine, before)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertFalse(app.snapshot()["fader"]["level_known"])
+        self.assertIn(tacet_app.HANDED_OFF, self.keys())
+
     async def test_report_ready_sends_no_packet_and_assumes_the_hold_level(self):
         app = self.build(level_known=False)
         outcome = await app.report_ready()
@@ -2084,17 +2160,18 @@ class TestFaderPositionTrust(AppTestCase):
         self.assertIn("does not know where the fader", why)
         self.assertNotIn("stagemix", why)
 
-    async def test_an_absolute_command_whose_packet_failed_still_marks_the_level_known(self):
-        # A known residual, pinned rather than fixed (#107). `step` is pure and
-        # cannot know whether the packet went out, and `Dm7Client.send_level`
-        # does not update its belief when the send raises. It is loud while it
-        # lasts - the console reads unreachable and the machine stalled - but
-        # the level is marked known. A follow-up issue tracks un-knowing it.
+    async def test_an_absolute_command_whose_packet_failed_un_knows_the_level(self):
+        # #116: the open is absolute, so `step` marks the level known the
+        # moment it is applied - but a send that came back having delivered
+        # nothing never earned that, and the belief goes back with it. What
+        # cannot be seen from here is a packet that left the box and was
+        # simply lost: the protocol has no acknowledgement (#18).
         app = self.build(console_sender=FailingSender(), level_known=False)
         await app.trigger()
-        self.assertTrue(app.machine.level_known)
+        self.assertFalse(app.machine.level_known)
         self.assertTrue(app.machine.stalled)
         self.assertFalse(app.snapshot()["fader"]["healthy"])
+        self.assertFalse(app.snapshot()["fader"]["level_known"])
 
     async def test_the_snapshot_carries_the_age_of_the_last_command(self):
         # Built directly rather than through `build()`: the console and the

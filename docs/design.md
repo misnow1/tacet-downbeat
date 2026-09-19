@@ -284,7 +284,11 @@ same fact reached twice: at boot, where nothing has been written yet and the
 -inf the client starts from is only a convenient number; and after the operator
 hands the DCA to StageMix, where another interface can move it. `tacet.state`
 tracks one flag, `level_known`, and deliberately does not record which of the
-two it was - the annotation log's `handed-off` entry does that.
+two it was - the annotation log's `handed-off` entry does that. Handing off is
+the operator's word: it is refused from a detector whatever `allow_detector`
+says (#117), since it is a claim about who is holding the fader, not about the
+audio, and the detector hears the band, it cannot see an iPad in somebody's
+hands.
 
 What the flag gates is absolute against relative:
 
@@ -293,7 +297,13 @@ What the flag gates is absolute against relative:
   Neither waits on the belief, and both make the level known. The instant close
   is available in every state; a snap open is too, except when the box already
   knows the fader is open and nothing is pending, where it would only repeat
-  what is true.
+  what is true. An absolute command whose send failed puts the belief back: the
+  shell reports the failure, the level reads unknown again, and the stall says
+  to tap it again (#116). That is only the half the box can see. The protocol
+  has no acknowledgement (#18), so a packet that leaves the box and is simply
+  lost is indistinguishable from one that landed, and the level then reads
+  known when it is not. Nothing in this box can close that half; only console
+  feedback could.
 - A **relative** command ramps from the believed level: the 2 s fade, READY's
   ride to the hold level, and the slow open. Each is refused while the level is
   unknown, with the reason on the page. Refused, not queued - a tap held back
@@ -311,20 +321,11 @@ there is no snap to the hold level, only a ride - so from an unknown level it
 can only be reported, never driven to. That is what "It's at ready level" is on
 the page: a belief correction that writes no packet.
 
-Known limits, as of #107:
-
-- An absolute command whose packet never reached the console still marks the
-  level known. The state machine is pure and cannot know what was delivered,
-  and the protocol has no acknowledgement to tell it. A send that fails
-  locally is loud - the page says the console is unreachable, and after a failed
-  open the why line offers the retry - but it does not put the belief back,
-  and a packet that is sent and simply lost is not noticed at all.
-- A detector-sourced hand-off is still accepted once `allow_detector` is set
-  (anywhere but STANDING DOWN, where the detector is refused outright). It
-  sends nothing, and no detector exists yet.
-- After a restart while StageMix really has the DCA, the level is already
-  unknown, so the hand-off cannot be recorded. The box's state is right; only
-  the log entry is lost.
+After a restart while StageMix really has the DCA, the level is already
+unknown, so the hand-off changes nothing on the box - but the tap still writes
+its `handed-off` entry, which is the record Phase 1's control-authority labels
+need (#118). The box's state was already right; only the log entry would
+otherwise have been lost.
 
 If the console turns out to report the fader (#18), "who has control" and "is
 the position known" become two independent facts, and this collapses to the
