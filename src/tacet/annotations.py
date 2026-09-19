@@ -183,6 +183,15 @@ def _span(key: str, label: str, category: Category, *, button: bool = True) -> E
 #: which is the exact failure the warning exists to prevent.
 ANCHOR_EVENT = "recording-started"
 
+#: The three taps the box answers with a question (#19): the band entering the
+#: stands asks whether to arm, the band leaving them - or the halftime exodus
+#: starting - asks whether to stand down. Named once, like `ANCHOR_EVENT`, so
+#: `tacet.prompts` and the vocabulary below cannot spell them two ways. None of
+#: them moves anything: they record, and the box only asks.
+BAND_ENTERS_STANDS = "band-enters-stands"
+BAND_EXITS_STANDS = "band-exits-stands"
+HALFTIME_EXODUS = "halftime-exodus"
+
 #: The event vocabulary. Extend it freely - unknown-unknowns are the point
 #: (design.md 5.6). Keys are stable and machine-facing; labels are what the
 #: operator sees on a button and may be reworded without breaking old logs.
@@ -208,10 +217,27 @@ VOCABULARY: tuple[EventType, ...] = (
     # The return prompt's negative answer: a pure confirmation that changes
     # nothing, tapped from the prompt slot rather than a button in a grid.
     _instant("still-mine", "Still mine (no handoff)", Category.SESSION, button=False),
+    # The arm / stand-down question (#19), written by the box and never tapped.
+    # A prompt has five keys rather than one with an outcome field because each
+    # instant becomes a Reaper marker named after its key (`SYS|<key>`), and a
+    # timeline full of identically named markers cannot be read at a glance.
+    # `prompt-withdrawn` exists so a `prompt-raised` with no terminator can be
+    # told from one that was still open when the game ended. It covers two
+    # ways a question comes down unanswered: the operator said the opposite
+    # (a Stand down question, then band-enters-stands), and a newer question
+    # took its place - not reachable while the two kinds are complementary, and
+    # kept so a third kind can never silently drop an open prompt. Only in that
+    # second case does the entry carry `replaced_by`. Like every key, these are
+    # never renamed or removed.
+    _instant("prompt-raised", "Prompt raised", Category.SESSION, button=False),
+    _instant("prompt-accepted", "Prompt accepted", Category.SESSION, button=False),
+    _instant("prompt-dismissed", "Prompt dismissed (not yet)", Category.SESSION, button=False),
+    _instant("prompt-resolved", "Prompt already true", Category.SESSION, button=False),
+    _instant("prompt-withdrawn", "Prompt withdrawn", Category.SESSION, button=False),
     # Band, from design.md 5.6
     _instant("band-enters-stadium", "Band enters stadium", Category.BAND),
-    _instant("band-enters-stands", "Band enters stands", Category.BAND),
-    _instant("band-exits-stands", "Band exits stands", Category.BAND),
+    _instant(BAND_ENTERS_STANDS, "Band enters stands", Category.BAND),
+    _instant(BAND_EXITS_STANDS, "Band exits stands", Category.BAND),
     _instant("band-exits-stadium", "Band exits stadium", Category.BAND),
     _instant("other-band-on-field", "Other band on field", Category.BAND),
     _instant("other-band-off-field", "Other band off field", Category.BAND),
@@ -249,7 +275,7 @@ VOCABULARY: tuple[EventType, ...] = (
     _span("q3", "Q3", Category.GAME),
     _span("q4", "Q4", Category.GAME),
     _span("halftime", "Halftime", Category.GAME),
-    _span("halftime-exodus", "Halftime exodus", Category.GAME),
+    _span(HALFTIME_EXODUS, "Halftime exodus", Category.GAME),
     _span("last-two-minutes", "Last two minutes", Category.GAME),
     # Timeouts are not one thing. The band plays through most of them, but not
     # an injury timeout (design.md 2, "Practical reading"), so a log that calls

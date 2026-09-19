@@ -1,5 +1,5 @@
 {
-  "at": 5000.0,
+  "at": 5000.02,
   "buttons": [
     {
       "action": null,
@@ -235,17 +235,17 @@
   ],
   "detector_enabled": false,
   "duty": {
-    "armed": false,
-    "since": null
+    "armed": true,
+    "since": 5000.0
   },
   "fader": {
-    "age": null,
-    "commanded": -32768,
+    "age": 0.0,
+    "commanded": 0,
     "confirmed": false,
-    "db": null,
+    "db": 0.0,
     "error": null,
     "healthy": true,
-    "level_known": false,
+    "level_known": true,
     "moving": false,
     "target": null,
     "target_db": null
@@ -262,7 +262,11 @@
     "healthy": true
   },
   "open_spans": [],
-  "prompt": null,
+  "prompt": {
+    "kind": "stand-down",
+    "seq": 1,
+    "source": "band-exits-stands"
+  },
   "recording": {
     "can_start": true,
     "confirmed": false,
@@ -274,6 +278,6 @@
   },
   "refusal": null,
   "stale_tap": null,
-  "state": "standing-down",
-  "why": "Standing down. You can still drive the fader; an open arms the box. The box does not know where the fader really is - it can only say what it last asked for, never what the console did with it; close it now, or open, to say where it is. You are driving; the detector cannot move the fader."
+  "state": "open",
+  "why": "Open at unity. You are driving; the detector cannot move the fader."
 }

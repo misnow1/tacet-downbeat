@@ -234,6 +234,10 @@
     }
   ],
   "detector_enabled": false,
+  "duty": {
+    "armed": true,
+    "since": 5000.0
+  },
   "fader": {
     "age": 0.0,
     "commanded": 0,
@@ -258,6 +262,7 @@
     "healthy": true
   },
   "open_spans": [],
+  "prompt": null,
   "recording": {
     "can_start": true,
     "confirmed": false,
