@@ -142,6 +142,19 @@ async def prompt_open(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+async def prompt_arm_refused(root: Path) -> dict[str, Any]:
+    """Cold boot: the box does not know where the fader is (#107). The operator
+    taps `band-enters-stands`, raising the Arm question, and accepts it - which
+    the box refuses, since arming would claim a closed DCA it cannot vouch for.
+    The question stays open under the same seq, with the refusal on the page,
+    rather than vanishing on a tap that changed nothing (#19)."""
+    box = _build(root, console=_Sender())
+    await box.app.annotate(ann.BAND_ENTERS_STANDS)
+    seq = box.app.snapshot()["prompt"]["seq"]
+    await box.app.accept_prompt(seq)
+    return box.app.snapshot()
+
+
 async def faults(root: Path) -> dict[str, Any]:
     """Everything the page has a way of saying is wrong, at once.
 
@@ -166,6 +179,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "open-recording": open_recording,
     "releasing": releasing,
     "prompt": prompt_open,
+    "prompt-arm": prompt_arm_refused,
     "faults": faults,
 }
 

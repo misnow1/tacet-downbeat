@@ -226,6 +226,16 @@ It says nothing about the console. Nothing can - OSC is write-only, and a packet
 sent into a black hole succeeds (design.md 5.3). `Console unreachable` appears
 only when the box's own send fails.
 
+**The duty chip (`ARMED 10:42` / `STOOD DOWN 12:51`), first in the strip, is
+on the box's own monotonic clock** (#19), the same one `at` and every log
+timestamp are on - the page converts it to local time with the same round-trip
+estimate a tap's clock offset uses, so it can be a few seconds off before that
+estimate has settled and is otherwise as accurate as the box's own clock is.
+It carries no time at all, just the word, after a restart: the box's duty
+clock starts at that restart and genuinely has no history before it, and
+inventing a time - the boot time, say - would be exactly the confident-but-
+wrong number CLAUDE.md's fail-visible principle forbids.
+
 **The fader line is what the box expects, never what the console reports.** It
 is tagged **commanded** for that reason and the tag never changes: the DM7's OSC
 is write-only, so nothing here is ever a readback, and an iPad move made in

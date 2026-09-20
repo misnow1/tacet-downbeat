@@ -1,0 +1,283 @@
+{
+  "at": 5000.0,
+  "buttons": [
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "band-enters-stadium",
+      "kind": "instant",
+      "label": "Band enters stadium"
+    },
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "band-enters-stands",
+      "kind": "instant",
+      "label": "Band enters stands"
+    },
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "band-exits-stands",
+      "kind": "instant",
+      "label": "Band exits stands"
+    },
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "band-exits-stadium",
+      "kind": "instant",
+      "label": "Band exits stadium"
+    },
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "other-band-on-field",
+      "kind": "instant",
+      "label": "Other band on field"
+    },
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "other-band-off-field",
+      "kind": "instant",
+      "label": "Other band off field"
+    },
+    {
+      "action": null,
+      "category": "BAND",
+      "key": "drumline-cadence",
+      "kind": "instant",
+      "label": "Drumline cadence started"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "touchdown",
+      "kind": "instant",
+      "label": "Touchdown"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "field-goal",
+      "kind": "instant",
+      "label": "Field goal"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "first-down",
+      "kind": "instant",
+      "label": "First down"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "defensive-stop",
+      "kind": "instant",
+      "label": "Defensive stop"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "q1",
+      "kind": "span",
+      "label": "Q1"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "q2",
+      "kind": "span",
+      "label": "Q2"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "q3",
+      "kind": "span",
+      "label": "Q3"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "q4",
+      "kind": "span",
+      "label": "Q4"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "halftime",
+      "kind": "span",
+      "label": "Halftime"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "halftime-exodus",
+      "kind": "span",
+      "label": "Halftime exodus"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "last-two-minutes",
+      "kind": "span",
+      "label": "Last two minutes"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "timeout-home",
+      "kind": "span",
+      "label": "Timeout: home"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "timeout-away",
+      "kind": "span",
+      "label": "Timeout: away"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "timeout-media",
+      "kind": "span",
+      "label": "Timeout: media"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "timeout-official",
+      "kind": "span",
+      "label": "Timeout: officials"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "timeout-injury",
+      "kind": "span",
+      "label": "Timeout: injury"
+    },
+    {
+      "action": null,
+      "category": "GAME",
+      "key": "timeout",
+      "kind": "span",
+      "label": "Timeout: unspecified"
+    },
+    {
+      "action": "ready",
+      "category": "FDR",
+      "key": "up-ready",
+      "kind": "instant",
+      "label": "Ready (band likely)"
+    },
+    {
+      "action": "open",
+      "category": "FDR",
+      "key": "up-whistle",
+      "kind": "instant",
+      "label": "Up on whistle"
+    },
+    {
+      "action": "open",
+      "category": "FDR",
+      "key": "up-drums",
+      "kind": "instant",
+      "label": "Up on drums"
+    },
+    {
+      "action": "open-slow",
+      "category": "FDR",
+      "key": "up-slow",
+      "kind": "instant",
+      "label": "Up slow, missed the start"
+    },
+    {
+      "action": "release",
+      "category": "FDR",
+      "key": "out",
+      "kind": "instant",
+      "label": "Faded out"
+    },
+    {
+      "action": "release",
+      "category": "FDR",
+      "key": "score-reversed",
+      "kind": "instant",
+      "label": "Score reversed"
+    },
+    {
+      "action": null,
+      "category": "DET",
+      "key": "false-open",
+      "kind": "instant",
+      "label": "Detector wrong: false open"
+    },
+    {
+      "action": null,
+      "category": "DET",
+      "key": "missed-entrance",
+      "kind": "instant",
+      "label": "Detector wrong: missed entrance"
+    },
+    {
+      "action": null,
+      "category": "NOTE",
+      "key": "note",
+      "kind": "instant",
+      "label": "Note"
+    }
+  ],
+  "detector_enabled": false,
+  "duty": {
+    "armed": false,
+    "since": null
+  },
+  "fader": {
+    "age": null,
+    "commanded": -32768,
+    "confirmed": false,
+    "db": null,
+    "error": null,
+    "healthy": true,
+    "level_known": false,
+    "moving": false,
+    "target": null,
+    "target_db": null
+  },
+  "log": {
+    "error": null,
+    "failures": 0,
+    "healthy": true,
+    "path": "/games/game.jsonl"
+  },
+  "mirror": {
+    "error": null,
+    "failures": 0,
+    "healthy": true
+  },
+  "open_spans": [],
+  "prompt": {
+    "kind": "arm",
+    "seq": 1,
+    "source": "band-enters-stands"
+  },
+  "recording": {
+    "can_start": true,
+    "confirmed": false,
+    "healthy": true,
+    "known": false,
+    "liveness": "unknown",
+    "position": null,
+    "recording": false
+  },
+  "refusal": "the box does not know where the fader is, so arming would claim a closed DCA it cannot vouch for; close it now, or open, to say where it is",
+  "stale_tap": null,
+  "state": "standing-down",
+  "why": "Standing down. You can still drive the fader; an open arms the box. The box does not know where the fader really is - it can only say what it last asked for, never what the console did with it; close it now, or open, to say where it is. You are driving; the detector cannot move the fader."
+}

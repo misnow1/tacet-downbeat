@@ -402,6 +402,11 @@ function render(next) {
   snapshot = next;
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
+  // #19: ARMED / STOOD DOWN and since when, on the box's own clock. Guarded
+  // like renderFaderHalf and orphanSpans below: a box rolled back to before
+  // #19 sends no `duty` at all, and that must not throw and stop the whole
+  // render - only leave the chip showing whatever it last did.
+  if (next.duty) $("duty").textContent = dutyChip(next.duty, boxOffset(next));
   // A fader tap that arrived too late was not done. Nothing moved, so nothing
   // else on the page changes to say so, and the operator has to decide again
   // (#16).
@@ -455,9 +460,12 @@ function render(next) {
   // longer means the question has been answered.
   if (handoffPromptOpen && lastLevelKnown === true && !fader.level_known) {
     handoffPromptOpen = false;
-    paintHandoffPrompt();
   }
   lastLevelKnown = fader.level_known;
+  // Unconditional, so the #19 question also repaints on every ordinary
+  // snapshot - a level or kind change can change its copy without its seq
+  // changing at all - and not only on the known-to-unknown edge just above.
+  paintSlot();
 
   const rec = next.recording;
   const [recClass, recLabel] = recordingTag(rec.liveness, rec.known);
@@ -529,18 +537,151 @@ function paintHandoffPrompt() {
   $("handoff-confirm").style.display = handoffPromptOpen ? "block" : "none";
 }
 
-$("btn-handoff").onclick = () => { handoffPromptOpen = true; paintHandoffPrompt(); };
+// -- the arm / stand-down question (#19) -------------------------------------
+//
+// The box raises this from `band-exits-stands`, the start of
+// `halftime-exodus`, or `band-enters-stands` (tacet.prompts); the page only
+// renders what it is told and answers with one tap. It shares the #prompt
+// slot with the hand-off confirmation above, through `paintSlot`, which the
+// hand-off handlers above call instead of `paintHandoffPrompt` directly - see
+// every `paintSlot()` call site for why.
+
+// How long an answer is ignored after the question appears on screen, so a
+// tap already in flight toward some other button cannot land on a question
+// that has just popped into the same slot (CLAUDE.md principle 4: announce,
+// don't surprise - the corollary is that the first instant after the
+// announcement is not yet a considered answer).
+const PROMPT_GUARD_MS = 700;
+
+// The box carries no copy of its own (`tacet.prompts` is deliberately clock-
+// and word-free); this is the page's translation, keyed on `prompt.kind`. The
+// unknown-level stand-down sentence is confirmed wording, not a guess: the
+// send really is a no-op at an unknown level (design.md 5.3), and saying so
+// is what keeps the operator from expecting a fade that will not happen.
+const PROMPT_COPY = {
+  "stand-down": {
+    known: "Band left the stands. Stand down? Fades the band out if it is up.",
+    unknown: "Band left the stands. Stand down? Moves nothing while the fader position is unknown.",
+    accept: "Stand down",
+  },
+  "arm": {
+    known: "Band in the stands. Arm? Moves nothing.",
+    unknown: "Band in the stands. Arm? Moves nothing.",
+    accept: "Arm",
+  },
+};
+
+// Pure: what to show for a question of this `kind`, or null for a kind this
+// page does not recognise - a newer box asking a question this page predates.
+// Rendering nothing is the safe failure; a half-built panel is not.
+function promptCopy(kind, levelKnown) {
+  const copy = PROMPT_COPY[kind];
+  if (!copy) return null;
+  return {question: levelKnown ? copy.known : copy.unknown, accept: copy.accept};
+}
+
+// Pure: whether an answer tapped `at` is acted on, given the question was
+// shown `shownAt`. `shownAt` is null before any question has been shown.
+function answerable(shownAt, at) {
+  return shownAt !== null && (at - shownAt) * 1000 >= PROMPT_GUARD_MS;
+}
+
+// The open question's seq, and when this page put it on screen - page-side
+// state, the same shape as `handoffPromptOpen` and `lastLevelKnown` above.
+// Cleared whenever there is nothing to show, so a stale seq can never answer
+// a question that is not the one on screen.
+let promptSeq = null;
+let promptShownAt = null;
+
+// The #prompt slot has one occupant at a time. The hand-off confirmation
+// takes it first - the operator opened that one deliberately and is looking
+// at it, and a question popping in underneath would steal the tap meant for
+// "Yes, hand off". `paintPrompt` treats a currently-open hand-off exactly like
+// "nothing to ask": the guard clears, so the question reappears, freshly
+// armed, the moment the hand-off confirmation is answered and this runs again.
+function paintSlot() {
+  paintHandoffPrompt();
+  paintPrompt();
+}
+
+function paintPrompt() {
+  const prompt = handoffPromptOpen ? null : (snapshot && snapshot.prompt);
+  const copy = prompt ? promptCopy(prompt.kind, snapshot.fader.level_known) : null;
+  if (!copy) {
+    promptSeq = null;
+    promptShownAt = null;
+    $("prompt-panel").style.display = "none";
+    return;
+  }
+  if (prompt.seq !== promptSeq) {
+    promptSeq = prompt.seq;
+    promptShownAt = now();
+  }
+  $("prompt-question").textContent = copy.question;
+  $("btn-prompt-accept").textContent = copy.accept;
+  $("prompt-panel").style.display = "block";
+}
+
+// A guarded tap is a silent no-op: no toast, nothing shown, because it is not
+// a refusal the box made, only a tap this page declined to send yet.
+function answerPrompt(path, node) {
+  if (promptSeq === null || !answerable(promptShownAt, now())) return;
+  post(path, {seq: promptSeq}, node);
+}
+
+$("btn-prompt-accept").onclick = () => answerPrompt("/api/prompt/accept", $("btn-prompt-accept"));
+$("btn-prompt-dismiss").onclick = () => answerPrompt("/api/prompt/dismiss", $("btn-prompt-dismiss"));
+
+// -- the duty chip (#19) ------------------------------------------------------
+//
+// ARMED / STOOD DOWN plus the time of the last change, in the strip (#5), on
+// the box's own monotonic clock like every other timestamp it sends - so it
+// is converted through the same round-trip estimate as a tap (`tapStamp`
+// above), falling back to this snapshot's own age when there is no estimate
+// yet.
+
+// Pure: `boxSeconds` on the box's clock, converted to the page's local
+// HH:MM, or "" if either half is missing - a restarted box's null `since` in
+// particular, which must never show an invented or a boot time.
+function clockTime(boxSeconds, offset) {
+  if (boxSeconds === null || offset === null) return "";
+  const local = new Date((boxSeconds + offset) * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return pad(local.getHours()) + ":" + pad(local.getMinutes());
+}
+
+// Pure: the chip's text for this duty state.
+function dutyChip(duty, offset) {
+  const word = duty.armed ? "ARMED" : "STOOD DOWN";
+  const time = clockTime(duty.since, offset);
+  return time ? word + " " + time : word;
+}
+
+// The best clock offset available for one snapshot: the round-trip estimate
+// (#11) if a keepalive has already been timed, else this snapshot's own age
+// against the page's clock - what a tap falls back to before the first
+// estimate exists. Null, like isOlder's own guard on `next.at` above, when
+// there is no estimate and `snap.at` is not a usable number either - so a
+// malformed `at` renders a blank chip rather than the NaN:NaN a confident-
+// looking wrong time would be.
+function boxOffset(snap) {
+  const estimate = clockEstimate(clockSamples);
+  if (estimate) return estimate.offset;
+  return typeof snap.at === "number" ? now() - snap.at : null;
+}
+
+$("btn-handoff").onclick = () => { handoffPromptOpen = true; paintSlot(); };
 
 $("btn-handoff-yes").onclick = () => {
   handoffPromptOpen = false;
-  paintHandoffPrompt();
+  paintSlot();
   post("/api/handoff", undefined, $("btn-handoff-yes"));
   returnToMain();
 };
 
 $("btn-handoff-no").onclick = () => {
   handoffPromptOpen = false;
-  paintHandoffPrompt();
+  paintSlot();
   post("/api/still-mine", undefined, $("btn-handoff-no"));
   returnToMain();
 };
@@ -770,7 +911,7 @@ document.addEventListener("visibilitychange", () => {
 fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
 paintTabs();
-paintHandoffPrompt();
+paintSlot();
 setInterval(paintLink, LINK_TICK_MS);
 connect();
 holdWake();

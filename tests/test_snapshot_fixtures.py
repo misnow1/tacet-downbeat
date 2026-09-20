@@ -48,6 +48,13 @@ class TestSnapshotFixtures(unittest.TestCase):
         prompt = states["snapshot-prompt.json"]
         self.assertEqual(prompt["state"], "open")
         self.assertEqual(prompt["prompt"], {"seq": 1, "kind": "stand-down", "source": "band-exits-stands"})
+        prompt_arm = states["snapshot-prompt-arm.json"]
+        self.assertEqual(prompt_arm["state"], "standing-down")
+        self.assertEqual(prompt_arm["prompt"], {"seq": 1, "kind": "arm", "source": "band-enters-stands"})
+        self.assertIsNotNone(prompt_arm["refusal"])
+        self.assertFalse(prompt_arm["fader"]["level_known"])
+        self.assertFalse(prompt_arm["duty"]["armed"])
+        self.assertIsNone(prompt_arm["duty"]["since"])
         faults = states["snapshot-faults.json"]
         self.assertFalse(faults["fader"]["healthy"])
         self.assertFalse(faults["log"]["healthy"])
@@ -58,9 +65,10 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertFalse(faults["fader"]["level_known"])
 
     #: The fixtures whose page does not know where the fader is: the cold-boot
-    #: page, which has told the console nothing, and the faults page, whose
-    #: snap open never left the box (#116).
-    UNKNOWN_LEVEL = frozenset({"snapshot-standing-down.json", "snapshot-faults.json"})
+    #: page, which has told the console nothing, the faults page, whose snap
+    #: open never left the box (#116), and the refused-arm page, which is a
+    #: cold boot too (#19).
+    UNKNOWN_LEVEL = frozenset({"snapshot-standing-down.json", "snapshot-faults.json", "snapshot-prompt-arm.json"})
 
     def test_only_a_page_that_never_delivered_a_level_says_it_does_not_know(self):
         # #107: the boot fixture IS the cold-boot page and stays honest about
@@ -82,7 +90,7 @@ class TestSnapshotFixtures(unittest.TestCase):
                 self.assertIn("prompt", snapshot)
                 self.assertEqual(set(snapshot["duty"]), {"armed", "since"})
                 self.assertEqual(snapshot["duty"]["armed"], snapshot["state"] != "standing-down")
-                asking = path.name == "snapshot-prompt.json"
+                asking = path.name in {"snapshot-prompt.json", "snapshot-prompt-arm.json"}
                 self.assertEqual(snapshot["prompt"] is not None, asking)
 
     def test_the_page_tests_load_the_fixtures_rather_than_a_copy(self):

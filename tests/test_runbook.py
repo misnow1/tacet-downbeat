@@ -173,6 +173,37 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
         self.assertIn(f"`{found[1]}`", runbook)
 
+    def test_the_runbook_quotes_the_arm_stand_down_question_copy(self) -> None:
+        # #19: the page's own translation of the box's prompt kinds (PROMPT_COPY
+        # in app.js), read out of there rather than typed twice, the same
+        # discipline as RAMPING_BLOCKED above.
+        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+        found = re.search(r"const PROMPT_COPY = \{(.*?)\n\};", script, re.DOTALL)
+        self.assertIsNotNone(found, "app.js no longer defines PROMPT_COPY")
+        assert found is not None
+        # Values only - not the "stand-down" / "arm" keys, which are not copy.
+        sentences = re.findall(r'(?:known|unknown|accept):\s*"([^"]+)"', found[1])
+        self.assertTrue(sentences)
+        runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
+        for sentence in sentences:
+            with self.subTest(sentence=sentence[:40]):
+                self.assertIn(sentence, runbook)
+        self.assertIn("Not yet", runbook)
+
+    def test_the_runbook_and_troubleshooting_use_the_duty_chip_words(self) -> None:
+        # #19: ARMED / STOOD DOWN, read out of dutyChip in app.js rather than
+        # typed twice.
+        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+        found = re.search(r'duty\.armed \? "([^"]+)" : "([^"]+)"', script)
+        self.assertIsNotNone(found, "app.js no longer builds the duty chip this way")
+        assert found is not None
+        armed, stood_down = found[1], found[2]
+        for doc in ("gameday.md", "troubleshooting.md"):
+            text = (DOCS / doc).read_text(encoding="utf-8")
+            with self.subTest(doc=doc):
+                self.assertIn(armed, text)
+                self.assertIn(stood_down, text)
+
     def test_no_doc_still_bolds_an_older_wording_of_the_ready_report(self) -> None:
         # Presence is not enough: the stale label sat in a second paragraph
         # while the table row was right. Every bold "It's at ..." in the two

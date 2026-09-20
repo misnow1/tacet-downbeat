@@ -516,6 +516,15 @@ background:var(--line);margin-right:6px}
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 #strip > div[data-expanded="1"]{white-space:normal;overflow:visible;text-overflow:clip;
 font-size:13px}
+/* #19: the duty chip. Always shown, and never one of the tap-to-expand chips
+   above - it has nothing to expand into, so it gets `cursor:default` rather
+   than the `cursor:pointer` `#strip > div` sets for those. The `#strip >`
+   here, not just `#duty`, is what actually wins that fight: an id alone is
+   lower specificity than `#strip > div`'s id-plus-type, and would silently
+   lose. Colour is deliberately neutral - this page already spends colour on
+   fader direction (see the open/release buttons below), and ARMED is not
+   "open". */
+#strip > #duty{color:var(--dim);cursor:default}
 #refusal{color:#ffb4a9;display:none}
 #refusal.loud{color:#fff;background:var(--warn);font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach
@@ -523,8 +532,28 @@ font-size:13px}
 #tap{display:none}
 #tap.failed{display:block;color:#fff;background:var(--warn)}
 #tap.untimed{display:block;color:#ffca7a}
-/* #19's prompt slot: fixed height, blank until RTD-driven prompts exist. */
+/* #12's hand-off confirmation and #19's arm / stand-down question share this
+   one slot - one at a time, see paintSlot in app.js - so it stays a fixed
+   height whichever of them is showing, and nothing below it ever moves. */
 #prompt{min-height:88px;padding:0 16px;display:flex;align-items:center}
+/* #19's question panel. Shares .panel with the hand-off confirmation above it
+   but needs its own budget: a hand-off is rare enough to tolerate the slot
+   growing for a moment, while this question recurs every quarter change and
+   has to fit the fixed 88px like #readout does. Ignoring .panel's own
+   border+padding (1+12 top, 1+12 bottom = 26px), against the longest of the
+   four sentences in PROMPT_COPY:
+     question line   28   13px font, 14px line-height, up to two lines,
+                          clipped by max-height rather than left to wrap
+                          further
+     gap             6    the flex gap between the question and the answers
+     answer row      28   12px font, 14px line-height, 6px padding top and
+                          bottom, 1px border top and bottom
+   26 + 28 + 6 + 28 = 88, exactly the slot budget. Unverified against the real
+   sentences on a real screen; see docs/handoff.md 3. */
+#prompt-panel{display:flex;flex-direction:column;gap:6px;width:100%}
+#prompt-question{font-size:13px;line-height:14px;max-height:28px;overflow:hidden}
+#prompt-answers{display:flex;gap:8px}
+#prompt-answers button{flex:1;padding:6px 10px;font-size:12px;line-height:14px}
 /* Recording is a status check worth glancing at regardless of which tab is
    open, and it used to crowd MORE's last row of buttons when it lived there. */
 #recording-status{margin:0 16px 12px}
@@ -678,6 +707,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <div id="why"></div>
 </header>
 <div id="strip">
+  <div id="duty"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>
@@ -687,12 +717,24 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <!-- Announce, don't surprise (CLAUDE.md principle 4): handing off is a mode
        change, so it asks before it happens rather than firing on one tap. "No"
        is `still-mine` (#12) - a pure log entry, answered from here rather than
-       a button in a grid, that changes nothing. -->
+       a button in a grid, that changes nothing. Shares this slot with #19's
+       question below - one at a time, see paintSlot in app.js. -->
   <div class="panel" id="handoff-confirm" style="display:none">
     <div>Hand off to StageMix? The commanded level will read as unknown until you say where it really is.</div>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button id="btn-handoff-yes">Yes, hand off</button>
       <button id="btn-handoff-no">No, still mine</button>
+    </div>
+  </div>
+  <!-- #19: the arm / stand-down question the box raises from
+       band-exits-stands, the start of halftime-exodus, or band-enters-stands.
+       The accept button's label is filled in by script, per the question's
+       kind; it ships empty because nothing has answered that yet. -->
+  <div class="panel" id="prompt-panel" style="display:none">
+    <div id="prompt-question"></div>
+    <div id="prompt-answers">
+      <button id="btn-prompt-dismiss">Not yet</button>
+      <button id="btn-prompt-accept"></button>
     </div>
   </div>
 </div>
