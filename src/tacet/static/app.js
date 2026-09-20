@@ -402,8 +402,11 @@ function render(next) {
   snapshot = next;
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
-  // #19: ARMED / STOOD DOWN and since when, on the box's own clock.
-  $("duty").textContent = dutyChip(next.duty, boxOffset(next));
+  // #19: ARMED / STOOD DOWN and since when, on the box's own clock. Guarded
+  // like renderFaderHalf and orphanSpans below: a box rolled back to before
+  // #19 sends no `duty` at all, and that must not throw and stop the whole
+  // render - only leave the chip showing whatever it last did.
+  if (next.duty) $("duty").textContent = dutyChip(next.duty, boxOffset(next));
   // A fader tap that arrived too late was not done. Nothing moved, so nothing
   // else on the page changes to say so, and the operator has to decide again
   // (#16).
@@ -657,10 +660,14 @@ function dutyChip(duty, offset) {
 // The best clock offset available for one snapshot: the round-trip estimate
 // (#11) if a keepalive has already been timed, else this snapshot's own age
 // against the page's clock - what a tap falls back to before the first
-// estimate exists.
+// estimate exists. Null, like isOlder's own guard on `next.at` above, when
+// there is no estimate and `snap.at` is not a usable number either - so a
+// malformed `at` renders a blank chip rather than the NaN:NaN a confident-
+// looking wrong time would be.
 function boxOffset(snap) {
   const estimate = clockEstimate(clockSamples);
-  return estimate ? estimate.offset : now() - snap.at;
+  if (estimate) return estimate.offset;
+  return typeof snap.at === "number" ? now() - snap.at : null;
 }
 
 $("btn-handoff").onclick = () => { handoffPromptOpen = true; paintSlot(); };

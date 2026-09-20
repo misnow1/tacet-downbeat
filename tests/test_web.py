@@ -211,10 +211,24 @@ class TestPage(WebTestCase):
             self.assertNotIn("position:absolute", rule, selector)
 
     async def test_the_prompt_panel_css_budget_is_documented(self):
-        # Mirrors the #readout budget comment: border/padding/line-heights
-        # summing to at most the 88px slot, against one line of the decided
-        # copy (CLAUDE.md's no-magic-numbers standard).
+        # Mirrors test_the_note_cannot_grow_the_readout: pins the actual CSS
+        # declarations the 88px sum is built from, not just the comment's own
+        # arithmetic text - a line-height, a max-height, a gap or a button's
+        # padding could each drift without failing a test that only checks
+        # the prose.
         body = await (await self.client.get("/")).text()
+
+        def rule(selector: str) -> str:
+            return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+        self.assertIn("padding:12px 14px", rule(".panel"))  # the 26px panel overhead
+        self.assertIn("gap:6px", rule("#prompt-panel"))
+        self.assertIn("line-height:14px", rule("#prompt-question"))
+        self.assertIn("max-height:28px", rule("#prompt-question"))
+        self.assertIn("padding:6px 10px", rule("#prompt-answers button"))
+        self.assertIn("line-height:14px", rule("#prompt-answers button"))
+        # Secondary: the comment's own arithmetic, kept honest against the
+        # declarations above rather than pinned on its own.
         self.assertIn("26 + 28 + 6 + 28 = 88", body)
 
     async def test_the_duty_chip_is_first_in_the_strip_and_never_hidden(self):

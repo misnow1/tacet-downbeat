@@ -606,15 +606,32 @@ check(
   "STOOD DOWN",
 );
 {
+  // #19's own worked example, matching the real armed time in game 2
+  // (docs/game-2.md:111: "The box was armed at 10:42:49").
   const at = oracleClock(2026, 9, 19, 10, 42);
-  check("dutyChip: armed with a time, CLAUDE.md's own example", dutyChip({ armed: true, since: at.epoch }, 0), "ARMED " + at.text);
+  check("dutyChip: armed with a time, #19's own example", dutyChip({ armed: true, since: at.epoch }, 0), "ARMED " + at.text);
 }
 {
+  // #19's own worked example for the stood-down half.
   const at = oracleClock(2026, 9, 19, 12, 51);
   check(
-    "dutyChip: stood down with a time, CLAUDE.md's other example",
+    "dutyChip: stood down with a time, #19's other example",
     dutyChip({ armed: false, since: at.epoch }, 0),
     "STOOD DOWN " + at.text,
+  );
+}
+{
+  // #19: boxOffset falls back to null, not NaN, when there is neither a
+  // round-trip estimate nor a usable `at` to measure this snapshot's age
+  // against - a malformed snapshot must render a blank chip, never a
+  // confident-looking "ARMED NaN:NaN".
+  const { context } = browser();
+  check("boxOffset: a non-numeric at with no estimate is null", context.boxOffset({ at: "not-a-number" }), null);
+  check("boxOffset: a missing at with no estimate is null", context.boxOffset({}), null);
+  check(
+    "boxOffset: and dutyChip renders that as a blank time, not NaN:NaN",
+    dutyChip({ armed: true, since: 100 }, context.boxOffset({ at: "not-a-number" })),
+    "ARMED",
   );
 }
 
@@ -814,6 +831,24 @@ for (const name of Object.keys(SNAPSHOTS)) {
     nodes.get("state").textContent,
     SNAPSHOTS[name].state.replace(/-/g, " ").toUpperCase(),
   );
+}
+
+{
+  // #19: a box rolled back to before this feature sends no `duty` field at
+  // all. Dereferencing it unguarded would throw inside render() and silently
+  // stop repainting the whole page - the same hazard orphanSpans and
+  // renderFaderHalf are already written to avoid for their own fields.
+  const { context, nodes } = browser();
+  const without = structuredClone(SNAPSHOTS["standing-down"]);
+  delete without.duty;
+  let error = null;
+  try {
+    context.render(without);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no duty field does not throw", error, null);
+  check("and the rest of the page still renders", nodes.get("state").textContent, "STANDING DOWN");
 }
 
 {

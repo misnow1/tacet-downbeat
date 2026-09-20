@@ -396,9 +396,17 @@ Minimum during-game requirements:
 - **Duty state, always visible.** Whether the box is armed or standing down,
   and since when, whatever tab is showing and whether or not a question is
   open (#19). It is a status chip in the fixed strip alongside the link
-  counter, on the box's own clock like every other timestamp it sends, and it
-  carries no time at all after a restart rather than inventing one - the same
-  fail-visible discipline as the fader belief in §5.3.
+  counter. On the wire it is the box's own monotonic clock, like every other
+  timestamp it sends, but the box's monotonic reading has no time-of-day
+  meaning on its own - it is seconds since some arbitrary start, not seconds
+  since midnight - so the page converts it to a local time before it is shown,
+  the same round-trip estimate a tap's clock offset uses. That conversion is
+  also why fixtures built against it stay deterministic: the box never has to
+  know what time of day it is, only how long ago something happened, and the
+  box's own idea of time-of-day - which does not exist - never has a chance to
+  reach the screen. It carries no time at all after a restart rather than
+  inventing one - the same fail-visible discipline as the fader belief in
+  §5.3.
 - **The arm / stand-down question.** Principle 4 - announce, don't surprise -
   applied to duty state as well as to the hand-off in §5.3: the box does not
   decide to arm or stand down for the operator, it asks, from the same
@@ -699,8 +707,11 @@ fader command, so raising one can never itself move the DCA or change duty -
 only the operator's own accept tap does that, running the ordinary Arm or
 Stand down command with its own refusals (§5.3's unknown-level Arm refusal
 applies here exactly as it does to the bare button; Stand down is never
-refused). A question whose answer would be a no-op - already armed and asked
-to arm again - is never raised at all. The page adds a 700ms tap guard, keyed
+refused *for want of a known level* - but its accept is stale-checked like
+any other fader tap (§5.5, #16), and a late one is refused the same way a
+late tap on the fader column would be). A question whose answer would be a
+no-op - already armed and asked to arm again - is never raised at all. The
+page adds a 700ms tap guard, keyed
 on the question's own sequence number, so a tap already on its way toward
 some other button on the fixed layout (§5.5) cannot land on a question that
 has just appeared in its place.

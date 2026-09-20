@@ -271,19 +271,26 @@ Worth checking:
   unknown to confirmed. That also double-checks the address map from step 1.
 - Span buttons (quarters, halftime exodus) should highlight while open and
   clear when tapped again.
-- **#19's question copy fits the 88px prompt slot.** Tap `band-exits-stands`
-  and `band-enters-stands` and eyeball the panel against `#prompt`'s fixed
-  height on the real screen; the budget in web.py's CSS comment is arithmetic
-  against a guessed font metric, never rendered and measured. If it clips or
-  grows the slot, the fix is smaller type or shorter copy, not a taller slot -
-  see the budget comment for what it would cost.
+- **#19's question copy fits the 88px prompt slot.** The box boots STANDING
+  DOWN, where `band-exits-stands` raises nothing - standing down is already
+  true, so there is no question to ask. Tap `band-enters-stands` first (the
+  Arm question, which does raise from boot) and eyeball that; then either
+  accept it or arm from MORE, and tap `band-exits-stands` to see the Stand
+  down question too. Eyeball each against `#prompt`'s fixed height on the real
+  screen; the budget in web.py's CSS comment is arithmetic against a guessed
+  font metric, never rendered and measured. If either clips or grows the slot,
+  the fix is smaller type or shorter copy, not a taller slot - see the budget
+  comment for what it would cost.
 - **The duty chip's effect on the 44px strip when a banner is also up.**
   `#duty` is a fixed first child of `#strip`, which wraps; whether a long
   refusal or the link banner pushes the chip onto a second line, and whether
   that reads fine at arm's length, is also unrendered arithmetic until now.
-- **The hallway test #19 exists for:** tap **Band exits stands**, then tap
-  **Up on whistle** blind, within about a second, the way an operator would
-  who is watching the field and not the screen. The open must still run at
+- **The hallway test #19 exists for:** arm first (accept the Arm question, or
+  **Arm** in MORE) - `band-exits-stands` raises nothing from a boot that is
+  already STANDING DOWN, and the point of this test is the guard, not a
+  missing question. Then tap **Band exits stands**, then tap **Up on
+  whistle** blind, within about a second, the way an operator would who is
+  watching the field and not the screen. The open must still run at
   once - the question's 700ms guard must not eat, delay or compete for that
   tap - and the prompt panel popping into the strip must not have moved
   anything the thumb was already headed for. This is the scenario the guard

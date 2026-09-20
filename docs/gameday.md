@@ -152,7 +152,7 @@ One tap answers it either way - **Not yet** to leave things as they are, or
 tap. **Not yet** does not come back on its own; if you change your mind, tap
 the same annotation again to raise it fresh. The status strip always shows the
 current duty state and since when, whether or not a question is open:
-`ARMED 10:42` or `STOOD DOWN 12:51`, in 24-hour time on the box's own clock, or
+`ARMED 10:42` or `STOOD DOWN 12:51`, in 24-hour time, on this device's clock, or
 just the word with no time after a restart, which has no duty history yet.
 
 The question does not appear if the box's answer would be a no-op - already
@@ -167,9 +167,9 @@ popped into the same place; a tap inside that window is silently ignored, not
 refused - nothing to see, tap again once you mean it.
 
 **While the fader position is unknown**, accepting **Arm** is refused (#107):
-arming would claim a closed DCA the box cannot vouch for. The question stays
-open under the same seq - it does not vanish and it is not replaced - with
-the refusal on the strip. Tap **Close now** (or an open, if the band is
+arming would claim a closed DCA the box cannot vouch for. It is the same
+question, still on screen - not replaced by a new one - with the refusal on
+the strip. Tap **Close now** (or an open, if the band is
 already playing), then tap **Arm** again on the same question. **Stand down**
 is never refused this way; at an unknown level it sends nothing and stands
 down at once, which the unknown-level copy above says up front.
@@ -177,6 +177,12 @@ down at once, which the unknown-level copy above says up front.
 **If more than one browser is open** - the iPad and a laptop, say - they all
 see the same question and whichever one answers it first is the answer: the
 others' copy of it closes too, the same as any other snapshot.
+
+**Arm** and **Stand down** in MORE still do the same thing directly, without
+waiting to be asked: **Arm** goes straight to `IDLE`, **Stand down** fades an
+open fader and then stands down. Use them if you get ahead of a question, or
+if none was raised because nothing tapped `band-enters-stands` or
+`band-exits-stands` to raise one.
 
 **Standing down never blocks you.** The fader column works in every state: if
 the band strikes up before you have armed, tap the open you wanted and the box
