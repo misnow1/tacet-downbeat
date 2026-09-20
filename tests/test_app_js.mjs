@@ -445,6 +445,7 @@ function levelSnapshot(known) {
   const { context, nodes, posted } = browser();
   context.render(levelSnapshot(true));
   posted.length = 0; // the page's own /api/state fetch on load
+  nodes.get("tab-btn-more").onclick();
   nodes.get("btn-handoff").onclick();
   check("tapping it opens the prompt rather than acting at once", nodes.get("handoff-confirm").style.display, "block");
   check("opening the prompt sends nothing", posted.length, 0);
@@ -452,7 +453,8 @@ function levelSnapshot(known) {
   nodes.get("btn-handoff-yes").onclick();
   check("yes hands off", posted[0].path, "/api/handoff");
   check("and closes the prompt", nodes.get("handoff-confirm").style.display, "none");
-  check("and returns to MAIN", nodes.get("tab-main").style.display, "");
+  check("and stays on MORE (#109)", nodes.get("tab-more").style.display, "");
+  check("MAIN stays hidden", nodes.get("tab-main").style.display, "none");
 }
 
 {
@@ -461,11 +463,14 @@ function levelSnapshot(known) {
   const { context, nodes, posted } = browser();
   context.render(levelSnapshot(true));
   posted.length = 0;
+  nodes.get("tab-btn-more").onclick();
   nodes.get("btn-handoff").onclick();
   nodes.get("btn-handoff-no").onclick();
   check("no logs still-mine instead", posted[0].path, "/api/still-mine");
   check("and never hands off", posted.some((p) => p.path === "/api/handoff"), false);
   check("and closes the prompt too", nodes.get("handoff-confirm").style.display, "none");
+  check("and stays on MORE too (#109)", nodes.get("tab-more").style.display, "");
+  check("MAIN stays hidden here as well", nodes.get("tab-main").style.display, "none");
 }
 
 {
@@ -1820,28 +1825,50 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 }
 
 {
-  // A tap in MORE is navigation, not a mode change: it returns to MAIN once
-  // answered for, without switching tabs having rebuilt anything under it.
+  // A tap in MORE leaves the operator on MORE (#109): the tab moves only when
+  // they tap a tab button. Nothing is rebuilt to do it either.
   const { context, nodes, created } = browser();
   context.render(SNAPSHOTS["standing-down"]);
   nodes.get("tab-btn-more").onclick();
   const before = created.filter((node) => node.tag === "button").length;
   const falseOpen = created.find((node) => node.dataset.key === "false-open");
   falseOpen.onclick();
-  check("MORE returns to MAIN once its tap is answered for", nodes.get("tab-main").style.display, "");
-  check("nothing was rebuilt to do it", created.filter((node) => node.tag === "button").length, before);
+  check("a MORE tap stays on MORE", nodes.get("tab-more").style.display, "");
+  check("and MAIN stays hidden", nodes.get("tab-main").style.display, "none");
+  check("MORE's tab button stays marked on", nodes.get("tab-btn-more").classList.contains("on"), true);
+  check("the left panel stays tinted", nodes.get("left").classList.contains("more"), true);
+  check("nothing was rebuilt", created.filter((node) => node.tag === "button").length, before);
 }
 
 {
-  // Note is the one exception: its prompt() is still open when this runs, so
-  // switching tabs out from under it would close a dialog the operator has
-  // not finished with.
+  // Note stays on MORE like every other button. What is special about it is
+  // only its prompt() data, not navigation.
   const { context, nodes, created } = browser({ prompt: () => "left tackle is limping" });
   context.render(SNAPSHOTS["standing-down"]);
   nodes.get("tab-btn-more").onclick();
   const note = created.find((node) => node.dataset.key === "note");
   note.onclick();
-  check("note does not return to MAIN", nodes.get("tab-more").style.display, "");
+  check("note stays on MORE", nodes.get("tab-more").style.display, "");
+}
+
+{
+  // The Control row (Arm / Stand down / Record) lives in MORE too, and a tap
+  // there is no more navigation than any other (#109).
+  const controls = [
+    ["btn-arm", "/api/arm"],
+    ["btn-stand-down", "/api/stand-down"],
+    ["btn-record", "/api/record"],
+  ];
+  for (const [id, path] of controls) {
+    const { context, nodes, posted } = browser();
+    context.render(SNAPSHOTS["standing-down"]);
+    nodes.get("tab-btn-more").onclick();
+    posted.length = 0;
+    nodes.get(id).onclick();
+    check(`${id} stays on MORE`, nodes.get("tab-more").style.display, "");
+    check(`${id} leaves MAIN hidden`, nodes.get("tab-main").style.display, "none");
+    check(`${id} really posts ${path}`, posted.some((p) => p.path === path), true);
+  }
 }
 
 // -- the fader column is split around the readout gap, in order (#5) --------
