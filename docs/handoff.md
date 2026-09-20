@@ -286,7 +286,8 @@ Worth checking:
   No panel appears directly beneath the Control buttons, that opening it does
   not move the fader column, and that it does not push the Control row off
   screen. Then tap **Main** without answering and check it is gone and sent
-  nothing.
+  nothing: the level keeps reading its number rather than `unknown`, and no
+  `handed-off` entry appears in the log.
 - **The duty chip's effect on the 44px strip when a banner is also up.**
   `#duty` is a fixed first child of `#strip`, which wraps; whether a long
   refusal or the link banner pushes the chip onto a second line, and whether

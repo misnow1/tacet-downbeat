@@ -538,9 +538,8 @@ font-size:13px}
 #prompt{min-height:88px;padding:0 16px;display:flex;align-items:center}
 /* #19's question panel. Built on .panel but with its own budget: this
    question recurs every quarter change and has to fit the fixed 88px like
-   #readout does. Ignoring .panel's own
-   border+padding (1+12 top, 1+12 bottom = 26px), against the longest of the
-   four sentences in PROMPT_COPY:
+   #readout does. Ignoring .panel's own border+padding (1+12 top, 1+12
+   bottom = 26px), against the longest of the four sentences in PROMPT_COPY:
      question line   28   13px font, 14px line-height, up to two lines,
                           clipped by max-height rather than left to wrap
                           further
@@ -553,9 +552,6 @@ font-size:13px}
 #prompt-question{font-size:13px;line-height:14px;max-height:28px;overflow:hidden}
 #prompt-answers{display:flex;gap:8px}
 #prompt-answers button{flex:1;padding:6px 10px;font-size:12px;line-height:14px}
-/* The Control grid's own gap is 8px; the same here puts the confirmation the
-   same distance below the row as the buttons sit from each other. */
-#handoff-confirm{margin-top:8px}
 /* Recording is a status check worth glancing at regardless of which tab is
    open, and it used to crowd MORE's last row of buttons when it lived there. */
 #recording-status{margin:0 16px 12px}
@@ -587,6 +583,9 @@ h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em
 margin:4px 0 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .grid button{padding:14px 10px;font-size:14px;font-weight:500}
+/* The Control grid's own gap is 8px; the same here puts the confirmation the
+   same distance below the row as the buttons sit from each other. */
+#handoff-confirm{margin-top:8px}
 /* Spans are a different kind of control from instants and must not look like
    them: one tap of these opens a region and the next one closes it. Not
    scoped to .grid: the fader column's buttons carry the same data attributes

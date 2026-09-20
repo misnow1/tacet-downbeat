@@ -278,7 +278,10 @@ function paintTabs() {
 // stand-down question (`paintPrompt`). Nothing has been sent at that point, so
 // cancelling changes nothing on the console, and re-opening is one tap on the
 // button right there in MORE. `paintSlot` is a function declaration below, so
-// it is callable from here whatever the order they are defined in.
+// it is callable from here whatever the order they are defined in;
+// `handoffPromptOpen` is a `let` declared further down, so selectTab must not
+// be called during script evaluation (it would hit the temporal dead zone),
+// only from handlers.
 function selectTab(tab) {
   activeTab = tab;
   handoffPromptOpen = false;
