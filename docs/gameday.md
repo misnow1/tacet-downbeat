@@ -237,12 +237,12 @@ this one is a different key.
 **Everything else lives in MAIN and MORE**, beside the fader column, and
 records only, moving nothing. MAIN holds the game clock, scoring and timeouts,
 with no scrolling. MORE holds band movement, the other band, the drumline,
-Note, and Arm / Stand down / Start recording / StageMix has it - a tap there
-returns to MAIN once it is answered for, except Note, which stays open until
-you finish typing. Buttons marked `(start)` are spans: tap once to open the
-region, again to close it. They read `(end)` while open. A span left open by an
-earlier run whose button has since gone appears under **OPEN FROM AN EARLIER
-RUN**, at the bottom of MORE, with one button to end it.
+Note, and Arm / Stand down / Start recording / StageMix has it. A tap in MORE
+leaves you on MORE; tap **Main** when you want it back. Buttons marked
+`(start)` are spans: tap once to open the region, again to close it. They read
+`(end)` while open. A span left open by an earlier run whose button has since
+gone appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
+button to end it.
 
 **The fader line is what the box commanded, never what the console reports**,
 with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
