@@ -271,6 +271,24 @@ Worth checking:
   unknown to confirmed. That also double-checks the address map from step 1.
 - Span buttons (quarters, halftime exodus) should highlight while open and
   clear when tapped again.
+- **#19's question copy fits the 88px prompt slot.** Tap `band-exits-stands`
+  and `band-enters-stands` and eyeball the panel against `#prompt`'s fixed
+  height on the real screen; the budget in web.py's CSS comment is arithmetic
+  against a guessed font metric, never rendered and measured. If it clips or
+  grows the slot, the fix is smaller type or shorter copy, not a taller slot -
+  see the budget comment for what it would cost.
+- **The duty chip's effect on the 44px strip when a banner is also up.**
+  `#duty` is a fixed first child of `#strip`, which wraps; whether a long
+  refusal or the link banner pushes the chip onto a second line, and whether
+  that reads fine at arm's length, is also unrendered arithmetic until now.
+- **The hallway test #19 exists for:** tap **Band exits stands**, then tap
+  **Up on whistle** blind, within about a second, the way an operator would
+  who is watching the field and not the screen. The open must still run at
+  once - the question's 700ms guard must not eat, delay or compete for that
+  tap - and the prompt panel popping into the strip must not have moved
+  anything the thumb was already headed for. This is the scenario the guard
+  and the fixed slot both exist to survive; a stub can assert the timing, but
+  not whether a real thumb finds the right button under it.
 
 ## Session B — press box with the DM7
 

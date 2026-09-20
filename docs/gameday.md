@@ -132,13 +132,51 @@ reads right. Starting early costs nothing; see
 deliberately, in Reaper, after the game. The record button also refuses a
 second press.
 
-**Arm and stand down** follow the band, not the clock:
+**Arm and stand down** follow the band, not the clock. The box asks rather than
+deciding for you (CLAUDE.md principle 4: announce, don't surprise): tapping
+**Band exits stands**, or starting **Halftime exodus**, raises a **Stand
+down?** question in the prompt slot at the top of the left panel; tapping
+**Band enters stands** raises **Arm?**. Ending Halftime exodus asks nothing -
+the band never plays during it, and only its start says anything about duty.
 
-| When | Tap |
+The exact wording:
+
+| When | Question |
 |---|---|
-| The band is in the stands | **Arm**. The state goes to `IDLE`. While the fader reads `unknown` the box refuses it and says why - tap **Close now** first (pre-flight step 3) |
-| The band leaves the stands - halftime exodus, end of the game | **Stand down**. If the fader is up it fades first, then stands down |
-| The band is back in the stands after halftime | **Arm** again |
+| Stand down, fader position known | *Band left the stands. Stand down? Fades the band out if it is up.* |
+| Stand down, fader position unknown | *Band left the stands. Stand down? Moves nothing while the fader position is unknown.* |
+| Arm, either belief | *Band in the stands. Arm? Moves nothing.* |
+
+One tap answers it either way - **Not yet** to leave things as they are, or
+**Stand down** / **Arm** to accept - and the answer is logged whichever one you
+tap. **Not yet** does not come back on its own; if you change your mind, tap
+the same annotation again to raise it fresh. The status strip always shows the
+current duty state and since when, whether or not a question is open:
+`ARMED 10:42` or `STOOD DOWN 12:51`, in 24-hour time on the box's own clock, or
+just the word with no time after a restart, which has no duty history yet.
+
+The question does not appear if the box's answer would be a no-op - already
+armed and asked to arm again, say. There is nothing to ask in that case, so
+nothing is asked.
+
+**The question never blocks the fader column.** It lives in its own fixed slot
+above the tabs, never inside the fader column, and never pushes anything
+below it. Taps on it are guarded for 700ms after it appears, so a tap already
+on its way toward some other button cannot land on a question that has just
+popped into the same place; a tap inside that window is silently ignored, not
+refused - nothing to see, tap again once you mean it.
+
+**While the fader position is unknown**, accepting **Arm** is refused (#107):
+arming would claim a closed DCA the box cannot vouch for. The question stays
+open under the same seq - it does not vanish and it is not replaced - with
+the refusal on the strip. Tap **Close now** (or an open, if the band is
+already playing), then tap **Arm** again on the same question. **Stand down**
+is never refused this way; at an unknown level it sends nothing and stands
+down at once, which the unknown-level copy above says up front.
+
+**If more than one browser is open** - the iPad and a laptop, say - they all
+see the same question and whichever one answers it first is the answer: the
+others' copy of it closes too, the same as any other snapshot.
 
 **Standing down never blocks you.** The fader column works in every state: if
 the band strikes up before you have armed, tap the open you wanted and the box

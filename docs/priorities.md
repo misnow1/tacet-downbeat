@@ -26,7 +26,9 @@ each of its original items. A milestone-assignment pass (2026-09-19) gave the
 remaining open issues a milestone: #46, #47, #48, #49 and #51 (the P3 findings
 from the same baseline review that already put #42/#43/#44 in Game 4) and #73
 (console reachability check / ARP keepalive) joined Game 4. #68 and #56 stay
-unmilestoned - neither is tied to a specific game.
+unmilestoned - neither is tied to a specific game. #19 is now done too, in two
+PRs - the box owns the arm / stand-down question (#121), then the operator
+page and the docs that describe it (this PR).
 
 ## Game 3 (2026-10-02)
 
@@ -41,7 +43,7 @@ In build order. Each step says why it comes where it does.
 | ~~5~~ | ~~[#12](https://github.com/misnow1/tacet-downbeat/issues/12) StageMix handoff and take-back~~ | Closed, but incompletely - see #101 and #102 below. Was meant to remove the only known path to a full-level blast: a ramp from a level the box only believes in |
 | ~~6~~ | ~~[#101](https://github.com/misnow1/tacet-downbeat/issues/101) Take-back state/queue bugs~~ | Done. `TAKE_BACK_UP` from a handed-off READY now commits to OPEN, and a queued move survives a failed confirming packet through to a retry (`TAKE_BACK_CONFIRMED`, mirroring `RIDE_IN_COMPLETE`) |
 | ~~7~~ | ~~[#107](https://github.com/misnow1/tacet-downbeat/issues/107) Generalize fader-position trust (level_known)~~ | Done, in two PRs. Superseded #102. The same hazard #12 was for - a ramp from a level the box only believes in - generalized to cold boot as well as StageMix handoff, with the invariant restated as absolute against relative |
-| 8 | [#19](https://github.com/misnow1/tacet-downbeat/issues/19) Prompt arm / stand down from band annotations | Independent of #12 - built on #5's prompt slot, not the fader column. Small, and keeps Phase 1's duty labels right from game 3 on |
+| ~~8~~ | ~~[#19](https://github.com/misnow1/tacet-downbeat/issues/19) Prompt arm / stand down from band annotations~~ | Done, in two PRs - the box owns the question (#121), then the page and the docs. Independent of #12 - built on #5's prompt slot, not the fader column |
 
 Alongside, not in the build order above:
 
