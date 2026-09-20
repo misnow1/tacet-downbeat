@@ -181,8 +181,8 @@ others' copy of it closes too, the same as any other snapshot.
 **Arm** and **Stand down** in MORE still do the same thing directly, without
 waiting to be asked: **Arm** goes straight to `IDLE`, **Stand down** fades an
 open fader and then stands down. Use them if you get ahead of a question, or
-if none was raised because nothing tapped `band-enters-stands` or
-`band-exits-stands` to raise one.
+if none was raised because nothing tapped **Band enters stands** or
+**Band exits stands** to raise one.
 
 **Standing down never blocks you.** The fader column works in every state: if
 the band strikes up before you have armed, tap the open you wanted and the box

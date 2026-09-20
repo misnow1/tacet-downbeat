@@ -708,7 +708,7 @@ only the operator's own accept tap does that, running the ordinary Arm or
 Stand down command with its own refusals (§5.3's unknown-level Arm refusal
 applies here exactly as it does to the bare button; Stand down is never
 refused *for want of a known level* - but its accept is stale-checked like
-any other fader tap (§5.5, #16), and a late one is refused the same way a
+any other fader tap (§5.6, #16), and a late one is refused the same way a
 late tap on the fader column would be). A question whose answer would be a
 no-op - already armed and asked to arm again - is never raised at all. The
 page adds a 700ms tap guard, keyed
