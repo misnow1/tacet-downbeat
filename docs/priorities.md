@@ -30,7 +30,9 @@ unmilestoned - neither is tied to a specific game. #19 is now done too, in two
 PRs - the box owns the arm / stand-down question (#121), then the operator
 page and the docs that describe it (#125). #109 is done too: a tap in
 MORE now leaves the operator on MORE, and the tab moves only when they tap a
-tab button.
+tab button. #108 is done as well: the StageMix hand-off confirmation now
+renders under its button in MORE, and switching tabs cancels an unanswered
+one, so it can never suppress #19's question.
 
 ## Game 3 (2026-10-02)
 
@@ -53,7 +55,7 @@ Alongside, not in the build order above:
 - [#15](https://github.com/misnow1/tacet-downbeat/issues/15) design.md: pre-open and cannon hard cases, now also READY (#6) as a fader-up-no-band span Phase 1 has to be able to exclude. Documentation; any time.
 - [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. Research; if the console turns out to report the fader, #12 (and #107) get simpler, so worth an early look.
 - [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the fader-belief mechanism in operator terms. Unblocked: #107 has landed, so it describes what shipped. What it documents is `level_known` and absolute-vs-relative, not handoff/take-back - there is no take-back pair any more, and design.md 5.3 now carries the short version for it to build on.
-- [#108](https://github.com/misnow1/tacet-downbeat/issues/108) Move the StageMix handoff confirmation next to its button. Small UI fix from the same 2026-09-17 conversation as #107; independent of it.
+- ~~[#108](https://github.com/misnow1/tacet-downbeat/issues/108)~~ Done. The StageMix hand-off Yes / No confirmation now renders directly under the button in MORE instead of the top slot. Beyond the issue's wording, and decided in its comments: switching tabs cancels an unanswered confirmation and sends nothing, so an invisible one can never suppress #19's arm / stand-down question.
 - ~~[#109](https://github.com/misnow1/tacet-downbeat/issues/109)~~ Done. A tap in MORE, including Note, Arm / Stand down / Start recording and the StageMix answers, now leaves the operator on MORE; the tab moves only when they tap a tab button. Revisit if it turns out to be the wrong call once used in a game.
 - ~~[#116](https://github.com/misnow1/tacet-downbeat/issues/116)/[#117](https://github.com/misnow1/tacet-downbeat/issues/117)/[#118](https://github.com/misnow1/tacet-downbeat/issues/118)~~ Done, together. #116: an absolute command whose send failed now un-knows the level again, instead of marking it known on a packet that never landed. #117: HANDOFF is now operator-only, so a detector can never un-know the level once Phase 2 is declared. #118: a hand-off always earns its `handed-off` entry, even when the level already reads unknown - the record a restart under StageMix could not otherwise leave.
 
