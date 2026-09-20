@@ -1040,7 +1040,7 @@ const guardWait = () => new Promise((resolve) => setTimeout(resolve, PROMPT_GUAR
   check("guard: a refusal on the same seq does not re-arm it; the retry goes through", posted.length, 1);
 }
 
-// -- the shared #prompt slot: the hand-off confirmation wins it (#12, #19) --
+// -- the hand-off confirmation and #19's question exclude each other (#12, #19) --
 
 {
   const { context, nodes, posted } = browser();
@@ -1079,6 +1079,53 @@ const guardWait = () => new Promise((resolve) => setTimeout(resolve, PROMPT_GUAR
   await guardWait();
   nodes.get("btn-prompt-accept").onclick();
   check("slot: and answers once the guard passes", posted.length, 1);
+}
+
+// -- leaving MORE cancels an unanswered hand-off confirmation (#108) -------
+
+{
+  // The confirmation now lives inside MORE, so switching tabs would hide it
+  // while `handoffPromptOpen` stayed true. Nothing has been sent at that
+  // point, so the switch cancels it and sends nothing.
+  const { context, nodes, posted } = browser();
+  context.render(levelSnapshot(true));
+  posted.length = 0;
+  nodes.get("tab-btn-more").onclick();
+  nodes.get("btn-handoff").onclick();
+  check("cancel: the confirmation is open", nodes.get("handoff-confirm").style.display, "block");
+  nodes.get("tab-btn-main").onclick();
+  check("cancel: leaving MORE closes it", nodes.get("handoff-confirm").style.display, "none");
+  check("cancel: and sends nothing at all", posted.length, 0);
+  check(
+    "cancel: neither answer was posted",
+    posted.some((p) => p.path === "/api/handoff" || p.path === "/api/still-mine"),
+    false,
+  );
+}
+
+{
+  // The safety half: an abandoned, invisible confirmation must never be
+  // able to suppress the box's own arm / stand-down question.
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  nodes.get("tab-btn-more").onclick();
+  nodes.get("btn-handoff").onclick();
+  check("cancel: opening the confirmation hides the question", nodes.get("prompt-panel").style.display, "none");
+  nodes.get("tab-btn-main").onclick();
+  check("cancel: leaving MORE brings the question back", nodes.get("prompt-panel").style.display, "block");
+}
+
+{
+  // Coming back to MORE does not resurrect it: re-opening is one tap.
+  const { context, nodes } = browser();
+  context.render(levelSnapshot(true));
+  nodes.get("tab-btn-more").onclick();
+  nodes.get("btn-handoff").onclick();
+  nodes.get("tab-btn-main").onclick();
+  nodes.get("tab-btn-more").onclick();
+  check("cancel: returning to MORE does not re-open it", nodes.get("handoff-confirm").style.display, "none");
+  nodes.get("btn-handoff").onclick();
+  check("cancel: one tap on the button re-opens it", nodes.get("handoff-confirm").style.display, "block");
 }
 
 {
