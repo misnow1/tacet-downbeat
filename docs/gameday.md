@@ -270,14 +270,17 @@ trust. It cuts the band PA at once, so once the box knows the level use
 **Faded out**. **Stand down** is never refused either.
 
 **If you take the fader to StageMix**, tap **StageMix has it** in MORE first
-and confirm. The commanded reading goes to `unknown` - it would otherwise sit
-there looking current while StageMix moves the real fader, which is exactly
-what happened for 76 minutes in game 2. When you take it back, tap **Close now**
-or an open, as above. The log's `handed-off` entry marks the hand-off; its
-`took-back` marks the moment the box knew again, which also happens at every
-boot. If the box restarts while StageMix still has it, tap **StageMix has it**
-and confirm again - the reading already says `unknown` and nothing on the box
-changes, but the log gets the `handed-off` entry the review needs.
+and confirm. The Yes / No confirmation appears directly under the button, in
+MORE; leaving MORE before you answer cancels it and sends nothing, so tap the
+button again if you still mean it. The commanded reading goes to `unknown` - it
+would otherwise sit there looking current while StageMix moves the real fader,
+which is exactly what happened for 76 minutes in game 2. When you take it back,
+tap **Close now** or an open, as above. The log's `handed-off` entry marks the
+hand-off; its `took-back` marks the moment the box knew again, which also
+happens at every boot. If the box restarts while StageMix still has it, tap
+**StageMix has it** and confirm again - the reading already says `unknown` and
+nothing on the box changes, but the log gets the `handed-off` entry the review
+needs.
 
 ---
 

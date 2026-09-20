@@ -215,7 +215,7 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("handed-off", "Handed off to StageMix", Category.SESSION, button=False),
     _instant("took-back", "Fader position confirmed", Category.SESSION, button=False),
     # The return prompt's negative answer: a pure confirmation that changes
-    # nothing, tapped from the prompt slot rather than a button in a grid.
+    # nothing, tapped from the hand-off confirmation rather than a button in a grid.
     _instant("still-mine", "Still mine (no handoff)", Category.SESSION, button=False),
     # The arm / stand-down question (#19), written by the box and never tapped.
     # A prompt has five keys rather than one with an outcome field because each

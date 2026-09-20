@@ -64,10 +64,43 @@ class TestPage(WebTestCase):
             self.assertNotIn(scheme, body)
 
     async def test_the_page_carries_the_handoff_controls(self):
-        # #12: the "StageMix has it" control and its confirm prompt.
+        # #12: the "StageMix has it" control and its confirm prompt. Where the
+        # prompt sits is pinned by the tests below (#108).
         body = await (await self.client.get("/")).text()
         for element_id in ("btn-handoff", "handoff-confirm", "btn-handoff-yes", "btn-handoff-no", "level-tag"):
             self.assertIn(f'id="{element_id}"', body)
+
+    async def test_the_handoff_confirmation_sits_in_more_after_the_control_grid(self):
+        # #108: the confirmation renders where the operator just tapped, in
+        # MORE and below the Control row whose last button opens it, not in
+        # the top slot.
+        body = await (await self.client.get("/")).text()
+        more = body.split('<div id="tab-more" ', 1)[1].split('<div id="wake">', 1)[0]
+        self.assertIn('id="handoff-confirm"', more)
+        self.assertLess(more.index('id="btn-handoff"'), more.index('id="handoff-confirm"'))
+        # After the grid closes, not inside it: inside, its buttons would
+        # inherit `.grid button` and shrink.
+        grid_closes = more.index("</div>", more.index('id="btn-handoff"'))
+        self.assertLess(grid_closes, more.index('id="handoff-confirm"'))
+
+    async def test_the_handoff_confirmation_has_left_the_top_slot(self):
+        # #108: the #prompt slot is above the tabs, so anything before the
+        # tabs is in the top slot. It now holds #19's question alone.
+        body = await (await self.client.get("/")).text()
+        self.assertLess(body.index('class="tabs"'), body.index('id="handoff-confirm"'))
+        slot = body.split('<div id="prompt">', 1)[1].split('id="recording-status"', 1)[0]
+        self.assertNotIn("handoff-confirm", slot)
+        self.assertIn('id="prompt-panel"', slot)
+
+    async def test_the_handoff_confirmation_can_never_move_the_fader_column(self):
+        # #108: it lives in .left, before the fader column, which is a flex
+        # sibling of the whole left panel (#5), so opening it cannot move it.
+        body = await (await self.client.get("/")).text()
+        self.assertLess(body.index('id="handoff-confirm"'), body.index('id="fader-column"'))
+
+    async def test_the_handoff_confirmation_ships_hidden(self):
+        body = await (await self.client.get("/")).text()
+        self.assertIn('<div class="panel" id="handoff-confirm" style="display:none">', body)
 
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
         # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
@@ -168,8 +201,8 @@ class TestPage(WebTestCase):
             self.assertNotIn(gone, body)
 
     async def test_the_page_carries_the_prompt_controls(self):
-        # #19: the arm / stand-down question's panel, sharing #prompt with
-        # #12's hand-off confirmation.
+        # #19: the arm / stand-down question's panel, alone in #prompt since
+        # #12's hand-off confirmation moved into MORE (#108).
         body = await (await self.client.get("/")).text()
         for element_id in (
             "prompt-panel",

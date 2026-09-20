@@ -271,15 +271,33 @@ function paintTabs() {
   $("left").classList.toggle("more", activeTab === "more");
 }
 
-// No call sites since #109; retained deliberately, not an oversight. It is
-// the one place that moves the tab for us, should anything need to again.
-function returnToMain() {
-  activeTab = "main";
+// The one entry point that moves the tab. Switching tabs cancels an
+// unanswered hand-off confirmation (#108): the confirmation lives inside MORE,
+// so leaving would otherwise hide it while `handoffPromptOpen` stayed true,
+// and an invisible confirmation would go on suppressing the box's own arm /
+// stand-down question (`paintPrompt`). Nothing has been sent at that point, so
+// cancelling changes nothing on the console, and re-opening is one tap on the
+// button right there in MORE. `paintSlot` is a function declaration below, so
+// it is callable from here whatever the order they are defined in;
+// `handoffPromptOpen` is a `let` declared further down, so selectTab must not
+// be called during script evaluation (it would hit the temporal dead zone),
+// only from handlers.
+function selectTab(tab) {
+  activeTab = tab;
+  handoffPromptOpen = false;
   paintTabs();
+  paintSlot();
 }
 
-$("tab-btn-main").onclick = () => { activeTab = "main"; paintTabs(); };
-$("tab-btn-more").onclick = () => { activeTab = "more"; paintTabs(); };
+// No call sites since #109; retained deliberately, not an oversight. It is
+// the one place that moves the tab for us, should anything need to again -
+// now a thin wrapper, so it cancels a hand-off confirmation like the buttons.
+function returnToMain() {
+  selectTab("main");
+}
+
+$("tab-btn-main").onclick = () => selectTab("main");
+$("tab-btn-more").onclick = () => selectTab("more");
 
 // Span buttons toggle: the first tap opens the region, the second closes it.
 // Instants fire once. The highlight alone cannot carry that difference - it
@@ -522,9 +540,9 @@ for (const [id, path] of [["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stan
 // -- handing off to StageMix (#12) --------------------------------------------
 //
 // A mode change asks rather than firing on one tap (CLAUDE.md principle 4:
-// "announce, don't surprise"), using the prompt slot #19 will also draw on.
-// "No" is `still-mine`: a pure log entry, answered from here rather than a
-// button in a grid, that changes nothing on the box.
+// "announce, don't surprise"). The confirmation renders under the button that
+// opens it, in MORE (#108). "No" is `still-mine`: a pure log entry, answered
+// from here rather than a button in a grid, that changes nothing on the box.
 let handoffPromptOpen = false;
 // null until the first snapshot is painted, so nothing is treated as a
 // known-to-unknown transition on load (#118).
@@ -538,10 +556,10 @@ function paintHandoffPrompt() {
 //
 // The box raises this from `band-exits-stands`, the start of
 // `halftime-exodus`, or `band-enters-stands` (tacet.prompts); the page only
-// renders what it is told and answers with one tap. It shares the #prompt
-// slot with the hand-off confirmation above, through `paintSlot`, which the
-// hand-off handlers above call instead of `paintHandoffPrompt` directly - see
-// every `paintSlot()` call site for why.
+// renders what it is told and answers with one tap. It has the #prompt slot to
+// itself, but is still held back while a hand-off confirmation is open,
+// through `paintSlot`, which the hand-off handlers and `selectTab` call
+// instead of `paintHandoffPrompt` directly - see `paintSlot` for why.
 
 // How long an answer is ignored after the question appears on screen, so a
 // tap already in flight toward some other button cannot land on a question
@@ -590,12 +608,13 @@ function answerable(shownAt, at) {
 let promptSeq = null;
 let promptShownAt = null;
 
-// The #prompt slot has one occupant at a time. The hand-off confirmation
-// takes it first - the operator opened that one deliberately and is looking
-// at it, and a question popping in underneath would steal the tap meant for
-// "Yes, hand off". `paintPrompt` treats a currently-open hand-off exactly like
+// The hand-off confirmation and the question exclude each other. The operator
+// opened the confirmation deliberately and is mid-decision on a two-step
+// confirmation, and a freshly guarded question must not compete for that
+// attention. `paintPrompt` treats a currently-open hand-off exactly like
 // "nothing to ask": the guard clears, so the question reappears, freshly
-// armed, the moment the hand-off confirmation is answered and this runs again.
+// armed, the moment the hand-off confirmation is answered or cancelled (a tab
+// switch, `selectTab`) and this runs again.
 function paintSlot() {
   paintHandoffPrompt();
   paintPrompt();

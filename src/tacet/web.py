@@ -532,16 +532,14 @@ font-size:13px}
 #tap{display:none}
 #tap.failed{display:block;color:#fff;background:var(--warn)}
 #tap.untimed{display:block;color:#ffca7a}
-/* #12's hand-off confirmation and #19's arm / stand-down question share this
-   one slot - one at a time, see paintSlot in app.js - so it stays a fixed
-   height whichever of them is showing, and nothing below it ever moves. */
+/* #19's arm / stand-down question is alone in this slot (the hand-off
+   confirmation moved into MORE, #108), so it stays a fixed height whether
+   or not the question is showing, and nothing below it ever moves. */
 #prompt{min-height:88px;padding:0 16px;display:flex;align-items:center}
-/* #19's question panel. Shares .panel with the hand-off confirmation above it
-   but needs its own budget: a hand-off is rare enough to tolerate the slot
-   growing for a moment, while this question recurs every quarter change and
-   has to fit the fixed 88px like #readout does. Ignoring .panel's own
-   border+padding (1+12 top, 1+12 bottom = 26px), against the longest of the
-   four sentences in PROMPT_COPY:
+/* #19's question panel. Built on .panel but with its own budget: this
+   question recurs every quarter change and has to fit the fixed 88px like
+   #readout does. Ignoring .panel's own border+padding (1+12 top, 1+12
+   bottom = 26px), against the longest of the four sentences in PROMPT_COPY:
      question line   28   13px font, 14px line-height, up to two lines,
                           clipped by max-height rather than left to wrap
                           further
@@ -585,6 +583,9 @@ h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em
 margin:4px 0 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .grid button{padding:14px 10px;font-size:14px;font-weight:500}
+/* The Control grid's own gap is 8px; the same here puts the confirmation the
+   same distance below the row as the buttons sit from each other. */
+#handoff-confirm{margin-top:8px}
 /* Spans are a different kind of control from instants and must not look like
    them: one tap of these opens a region and the next one closes it. Not
    scoped to .grid: the fader column's buttons carry the same data attributes
@@ -714,18 +715,6 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <div id="tap"></div>
 </div>
 <div id="prompt">
-  <!-- Announce, don't surprise (CLAUDE.md principle 4): handing off is a mode
-       change, so it asks before it happens rather than firing on one tap. "No"
-       is `still-mine` (#12) - a pure log entry, answered from here rather than
-       a button in a grid, that changes nothing. Shares this slot with #19's
-       question below - one at a time, see paintSlot in app.js. -->
-  <div class="panel" id="handoff-confirm" style="display:none">
-    <div>Hand off to StageMix? The commanded level will read as unknown until you say where it really is.</div>
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button id="btn-handoff-yes">Yes, hand off</button>
-      <button id="btn-handoff-no">No, still mine</button>
-    </div>
-  </div>
   <!-- #19: the arm / stand-down question the box raises from
        band-exits-stands, the start of halftime-exodus, or band-enters-stands.
        The accept button's label is filled in by script, per the question's
@@ -754,6 +743,20 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     <button id="btn-stand-down">Stand down</button>
     <button id="btn-record">Start recording</button>
     <button id="btn-handoff">StageMix has it</button>
+  </div>
+  <!-- Announce, don't surprise (CLAUDE.md principle 4): handing off is a mode
+       change, so it asks before it happens rather than firing on one tap. "No"
+       is `still-mine` (#12) - a pure log entry, answered from here rather than
+       a button in a grid, that changes nothing. It sits directly under the
+       Control row, where the button that opens it is (#108); a sibling of the
+       grid rather than inside it, so its buttons do not inherit `.grid
+       button`. Leaving MORE cancels it unanswered - see selectTab in app.js. -->
+  <div class="panel" id="handoff-confirm" style="display:none">
+    <div>Hand off to StageMix? The commanded level will read as unknown until you say where it really is.</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="btn-handoff-yes">Yes, hand off</button>
+      <button id="btn-handoff-no">No, still mine</button>
+    </div>
   </div>
 </div>
 <div id="wake"></div>
