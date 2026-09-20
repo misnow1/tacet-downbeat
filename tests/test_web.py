@@ -167,6 +167,62 @@ class TestPage(WebTestCase):
         for gone in ("takeback", "btn-take-back-up", "btn-take-back-down", "Take back control"):
             self.assertNotIn(gone, body)
 
+    async def test_the_page_carries_the_prompt_controls(self):
+        # #19: the arm / stand-down question's panel, sharing #prompt with
+        # #12's hand-off confirmation.
+        body = await (await self.client.get("/")).text()
+        for element_id in (
+            "prompt-panel",
+            "prompt-question",
+            "prompt-answers",
+            "btn-prompt-dismiss",
+            "btn-prompt-accept",
+            "duty",
+        ):
+            self.assertIn(f'id="{element_id}"', body)
+
+    async def test_the_prompt_panel_ships_hidden(self):
+        body = await (await self.client.get("/")).text()
+        self.assertIn('<div class="panel" id="prompt-panel" style="display:none">', body)
+
+    async def test_the_prompt_panel_ships_its_dismiss_label_and_an_empty_accept_button(self):
+        # "Not yet" is the page's own markup; the accept label is filled in by
+        # script per the question's kind, so it ships empty.
+        body = await (await self.client.get("/")).text()
+        self.assertIn(">Not yet<", body)
+        self.assertIn('<button id="btn-prompt-accept"></button>', body)
+
+    async def test_the_prompt_panel_never_covers_the_fader_column(self):
+        # #prompt lives in .left, well before the fader column, which is a
+        # flex sibling of the whole left panel (#5) - nothing in #prompt can
+        # ever move or cover it.
+        body = await (await self.client.get("/")).text()
+        left = body.index('id="left"')
+        prompt = body.index('id="prompt"')
+        fader_column = body.index('id="fader-column"')
+        self.assertLess(left, prompt)
+        self.assertLess(prompt, fader_column)
+
+    async def test_the_new_prompt_rules_use_no_fixed_or_absolute_positioning(self):
+        body = await (await self.client.get("/")).text()
+        for selector in ("#prompt-panel", "#prompt-question", "#prompt-answers", "#duty"):
+            rule = body.split(selector + "{", 1)[1].split("}", 1)[0]
+            self.assertNotIn("position:fixed", rule, selector)
+            self.assertNotIn("position:absolute", rule, selector)
+
+    async def test_the_prompt_panel_css_budget_is_documented(self):
+        # Mirrors the #readout budget comment: border/padding/line-heights
+        # summing to at most the 88px slot, against one line of the decided
+        # copy (CLAUDE.md's no-magic-numbers standard).
+        body = await (await self.client.get("/")).text()
+        self.assertIn("26 + 28 + 6 + 28 = 88", body)
+
+    async def test_the_duty_chip_is_first_in_the_strip_and_never_hidden(self):
+        body = await (await self.client.get("/")).text()
+        self.assertIn('<div id="strip">\n  <div id="duty"></div>', body)
+        self.assertNotIn("#duty{display:none", body)
+        self.assertNotIn('id="duty" style="display:none', body)
+
 
 class TestThePageHasWhereTapsReport(WebTestCase):
     async def test_the_tap_line_is_on_the_page(self):
