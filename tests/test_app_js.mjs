@@ -517,6 +517,107 @@ function levelSnapshot(known) {
   check("at cold boot the button is still live", nodes.get("btn-handoff").disabled, false);
 }
 
+// -- the arm / stand-down question: pure functions (#19) --------------------
+
+// Mirrors app.js's own constant of the same name (a `const`, so it is not
+// reachable through the sandbox's global object the way the `function`
+// declarations below are - see STALE_AFTER above for the same reasoning).
+const PROMPT_GUARD_MS = 700;
+
+const { context: promptFnContext } = browser();
+const { promptCopy, answerable, clockTime, dutyChip } = promptFnContext;
+
+check(
+  "promptCopy: stand-down, level known",
+  promptCopy("stand-down", true),
+  { question: "Band left the stands. Stand down? Fades the band out if it is up.", accept: "Stand down" },
+);
+check(
+  "promptCopy: stand-down, level unknown - the send is a no-op, and says so",
+  promptCopy("stand-down", false),
+  {
+    question: "Band left the stands. Stand down? Moves nothing while the fader position is unknown.",
+    accept: "Stand down",
+  },
+);
+check(
+  "promptCopy: arm, level known",
+  promptCopy("arm", true),
+  { question: "Band in the stands. Arm? Moves nothing.", accept: "Arm" },
+);
+check(
+  "promptCopy: arm, level unknown - the same sentence either way",
+  promptCopy("arm", false),
+  { question: "Band in the stands. Arm? Moves nothing.", accept: "Arm" },
+);
+check(
+  "promptCopy: an unrecognized kind renders nothing, not a broken panel",
+  promptCopy("some-future-kind", true),
+  null,
+);
+
+check("answerable: never before it has been shown", answerable(null, 100), false);
+check(
+  "answerable: just under the guard is not yet answerable",
+  answerable(0, (PROMPT_GUARD_MS - 1) / 1000),
+  false,
+);
+check(
+  "answerable: exactly the guard is answerable",
+  answerable(0, PROMPT_GUARD_MS / 1000),
+  true,
+);
+check(
+  "answerable: comfortably past the guard",
+  answerable(1000, 1000 + PROMPT_GUARD_MS / 1000 + 1),
+  true,
+);
+
+// An independent oracle for a local HH:MM, built from calendar fields with the
+// `Date` constructor directly rather than by reusing clockTime's own
+// arithmetic - and read back with the same local getters clockTime uses, so
+// the check holds in whatever timezone this runs in rather than assuming UTC.
+function oracleClock(y, m, d, h, min) {
+  const local = new Date(y, m - 1, d, h, min, 0);
+  return { epoch: local.getTime() / 1000, text: String(h).padStart(2, "0") + ":" + String(min).padStart(2, "0") };
+}
+
+check("clockTime: no reading at all is blank", clockTime(null, 0), "");
+check("clockTime: a reading with no offset yet is blank", clockTime(100, null), "");
+{
+  const at = oracleClock(2026, 9, 19, 10, 42);
+  check("clockTime: matches an independently computed local time", clockTime(at.epoch, 0), at.text);
+}
+{
+  const at = oracleClock(2026, 9, 19, 0, 7);
+  check("clockTime: hour and minute are both zero-padded", clockTime(at.epoch, 0), at.text);
+}
+{
+  // The box's own seconds plus the page's clock offset should land on the
+  // same instant as the oracle, whatever that offset is.
+  const at = oracleClock(2026, 9, 19, 23, 59);
+  check("clockTime: box seconds plus a nonzero offset", clockTime(at.epoch - 1000, 1000), at.text);
+}
+
+check("dutyChip: armed with no time yet (a restarted box)", dutyChip({ armed: true, since: null }, 0), "ARMED");
+check(
+  "dutyChip: stood down with no time yet",
+  dutyChip({ armed: false, since: null }, 0),
+  "STOOD DOWN",
+);
+{
+  const at = oracleClock(2026, 9, 19, 10, 42);
+  check("dutyChip: armed with a time, CLAUDE.md's own example", dutyChip({ armed: true, since: at.epoch }, 0), "ARMED " + at.text);
+}
+{
+  const at = oracleClock(2026, 9, 19, 12, 51);
+  check(
+    "dutyChip: stood down with a time, CLAUDE.md's other example",
+    dutyChip({ armed: false, since: at.epoch }, 0),
+    "STOOD DOWN " + at.text,
+  );
+}
+
 // -- where is the fader: the two belief controls (#107) -----------------------
 
 const STATES = ["standing-down", "idle", "ready", "open", "releasing"];
@@ -676,7 +777,7 @@ for (const known of [false, true]) {
 check(
   "the box wrote the snapshots these tests read",
   Object.keys(SNAPSHOTS).sort(),
-  ["faults", "open-recording", "prompt", "releasing", "standing-down"],
+  ["faults", "open-recording", "prompt", "prompt-arm", "releasing", "standing-down"],
 );
 
 function renderedFixture(name) {
@@ -759,6 +860,198 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("faults: Reaper", nodes.get("rec-tag").textContent, "LINK LOST");
   check("faults: the log", nodes.get("saving").className, "fault");
   check("faults: the refusal is shown", nodes.get("refusal").style.display, "block");
+}
+
+// -- the arm / stand-down question, rendered from the box's own snapshots (#19) --
+
+{
+  // The "prompt" fixture: armed, open, a stand-down question raised by
+  // band-exits-stands (tests/snapshots.py:prompt_open), level known.
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  check("prompt: the panel shows", nodes.get("prompt-panel").style.display, "block");
+  check(
+    "prompt: stand-down copy at a known level",
+    nodes.get("prompt-question").textContent,
+    "Band left the stands. Stand down? Fades the band out if it is up.",
+  );
+  check("prompt: the accept button is labelled for the kind", nodes.get("btn-prompt-accept").textContent, "Stand down");
+  check(
+    "prompt: the chip starts ARMED - the exact minute is whatever time this test runs, see dutyChip's own tests",
+    nodes.get("duty").textContent.startsWith("ARMED "),
+    true,
+  );
+}
+
+{
+  // The "prompt-arm" fixture: cold boot, an Arm question raised by
+  // band-enters-stands, accepted and refused for want of a known level
+  // (tests/snapshots.py:prompt_arm_refused). The refusal shows and the
+  // question stays open under the same seq - #107 and #19 together.
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt-arm"]));
+  check("prompt-arm: the panel is still open despite the refusal", nodes.get("prompt-panel").style.display, "block");
+  check(
+    "prompt-arm: arm copy",
+    nodes.get("prompt-question").textContent,
+    "Band in the stands. Arm? Moves nothing.",
+  );
+  check("prompt-arm: the accept button says Arm", nodes.get("btn-prompt-accept").textContent, "Arm");
+  check(
+    "prompt-arm: the chip is exactly STOOD DOWN - a restarted box invents no time",
+    nodes.get("duty").textContent,
+    "STOOD DOWN",
+  );
+  check("prompt-arm: the refusal is shown too", nodes.get("refusal").style.display, "block");
+}
+
+for (const name of ["standing-down", "open-recording"]) {
+  // Neither fixture is asking anything: the panel is hidden and a tap on its
+  // buttons - left over from some earlier question - posts nothing.
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS[name]));
+  check(`${name}: no question, no panel`, nodes.get("prompt-panel").style.display, "none");
+  posted.length = 0;
+  nodes.get("btn-prompt-accept").onclick();
+  nodes.get("btn-prompt-dismiss").onclick();
+  check(`${name}: a tap on a hidden panel's buttons posts nothing`, posted.length, 0);
+}
+
+// The chip is one of the two ways design.md 5.5 requires duty state to always
+// be visible (the other being the why line); a blank chip on any real
+// snapshot would defeat that.
+for (const name of Object.keys(SNAPSHOTS)) {
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS[name]));
+  check(`${name}: the duty chip is never blank`, nodes.get("duty").textContent.length > 0, true);
+}
+
+// -- the 700ms tap guard (#19) ------------------------------------------------
+//
+// Real-timer waits, like the other timing-sensitive checks in this suite:
+// `now()` in app.js reads `Date.now()` directly rather than an injectable
+// clock, since it is measured against the same wall clock a real tap on a
+// real screen would be.
+const guardWait = () => new Promise((resolve) => setTimeout(resolve, PROMPT_GUARD_MS + 50));
+
+{
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  posted.length = 0;
+  nodes.get("btn-prompt-accept").onclick();
+  check("guard: a tap inside the window posts nothing", posted.length, 0);
+  await guardWait();
+  nodes.get("btn-prompt-accept").onclick();
+  check("guard: a tap after the window posts exactly once", posted.length, 1);
+  check("guard: to the accept route", posted[0].path, "/api/prompt/accept");
+  check("guard: naming the open seq", posted[0].body.seq, SNAPSHOTS["prompt"].prompt.seq);
+  check(
+    "guard: and nothing else in the body besides the tap stamp every request carries",
+    Object.keys(posted[0].body).filter((key) => key !== "tap").sort(),
+    ["seq"],
+  );
+}
+
+{
+  // Dismiss is guarded the same way as accept.
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  posted.length = 0;
+  nodes.get("btn-prompt-dismiss").onclick();
+  check("guard: dismiss inside the window posts nothing either", posted.length, 0);
+  await guardWait();
+  nodes.get("btn-prompt-dismiss").onclick();
+  check("guard: dismiss after the window posts once", posted.length, 1);
+  check("guard: to the dismiss route", posted[0].path, "/api/prompt/dismiss");
+}
+
+{
+  // A new seq - a fresh question, or the same kind raised again - re-arms the
+  // guard even though the previous one had already cleared.
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  await guardWait();
+  const later = structuredClone(SNAPSHOTS["prompt"]);
+  later.prompt = { ...later.prompt, seq: later.prompt.seq + 1 };
+  later.at = later.at + 1;
+  context.render(later);
+  posted.length = 0;
+  nodes.get("btn-prompt-accept").onclick();
+  check("guard: a new seq is not yet answerable", posted.length, 0);
+  await guardWait();
+  nodes.get("btn-prompt-accept").onclick();
+  check("guard: and clears in its own turn", posted.length, 1);
+  check("guard: naming the new seq", posted[0].body.seq, later.prompt.seq);
+}
+
+{
+  // A refusal on the SAME seq - the box declined the accept, e.g. #107's
+  // unknown-level Arm refusal - must not re-arm the guard: the operator's
+  // retry tap has to go through at once, not wait another 700ms.
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  await guardWait();
+  const refused = structuredClone(SNAPSHOTS["prompt"]);
+  refused.refusal = "the box does not know where the fader is";
+  refused.at = refused.at + 1;
+  context.render(refused);
+  posted.length = 0;
+  nodes.get("btn-prompt-accept").onclick();
+  check("guard: a refusal on the same seq does not re-arm it; the retry goes through", posted.length, 1);
+}
+
+// -- the shared #prompt slot: the hand-off confirmation wins it (#12, #19) --
+
+{
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  check("slot: the question is showing to start", nodes.get("prompt-panel").style.display, "block");
+  await guardWait();
+
+  nodes.get("btn-handoff").onclick();
+  check("slot: opening the hand-off confirmation hides the question", nodes.get("prompt-panel").style.display, "none");
+  posted.length = 0;
+  nodes.get("btn-prompt-accept").onclick();
+  nodes.get("btn-prompt-dismiss").onclick();
+  check("slot: its buttons are inert while hidden", posted.length, 0);
+
+  nodes.get("btn-handoff-no").onclick();
+  check("slot: declining the hand-off brings the question back", nodes.get("prompt-panel").style.display, "block");
+  posted.length = 0; // clear the still-mine post the decline itself made
+  nodes.get("btn-prompt-accept").onclick();
+  check("slot: but its guard is freshly armed - an immediate tap posts nothing", posted.length, 0);
+  await guardWait();
+  nodes.get("btn-prompt-accept").onclick();
+  check("slot: and it answers once the guard has passed again", posted.length, 1);
+}
+
+{
+  // The same story for accepting the hand-off rather than declining it.
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  await guardWait();
+  nodes.get("btn-handoff").onclick();
+  nodes.get("btn-handoff-yes").onclick();
+  check("slot: accepting the hand-off brings the question back too", nodes.get("prompt-panel").style.display, "block");
+  posted.length = 0; // clear the handoff post the accept itself made
+  nodes.get("btn-prompt-accept").onclick();
+  check("slot: freshly armed here as well", posted.length, 0);
+  await guardWait();
+  nodes.get("btn-prompt-accept").onclick();
+  check("slot: and answers once the guard passes", posted.length, 1);
+}
+
+{
+  // Answering is not navigation (unlike a vocabulary tap - see activate()):
+  // it must not steal the operator back to MAIN from wherever they were.
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["prompt"]));
+  nodes.get("tab-btn-more").onclick();
+  check("tab: MORE is selected", nodes.get("tab-btn-more").classList.contains("on"), true);
+  await guardWait();
+  nodes.get("btn-prompt-accept").onclick();
+  check("tab: answering the question does not return to MAIN", nodes.get("tab-btn-more").classList.contains("on"), true);
+  check("tab: and the tap really went out", posted.length > 0, true);
 }
 
 // -- span buttons say which tap they are ------------------------------------
