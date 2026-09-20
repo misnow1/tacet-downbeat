@@ -255,9 +255,10 @@ function renderButtons(buttons, orphans) {
 // -- MAIN / MORE ---------------------------------------------------------
 //
 // The fader column and the status strip are visible in both; only the two
-// vocabulary panels swap. A tap in MORE returns to MAIN once it is answered
-// for - navigation, not a mode change, so nothing here is announced or logged.
-// Note (and, once #9 lands, a typed target level) stays open until finished.
+// vocabulary panels swap. The tab moves only when the operator taps a tab
+// button (#109): a tap inside MORE leaves them on MORE, so a run of taps there
+// does not bounce them back to MAIN between each one. Navigation, not a mode
+// change, so nothing here is announced or logged.
 let activeTab = "main";
 
 function paintTabs() {
@@ -270,6 +271,8 @@ function paintTabs() {
   $("left").classList.toggle("more", activeTab === "more");
 }
 
+// No call sites since #109; retained deliberately, not an oversight. It is
+// the one place that moves the tab for us, should anything need to again.
 function returnToMain() {
   activeTab = "main";
   paintTabs();
@@ -305,9 +308,6 @@ function activate(item, node) {
     if (open) post("/api/span/end", {span_id: open.span_id}, node);
     else post("/api/span/start", {key: item.key}, node);
   }
-  // Navigation, not a mode change: Note is the one exception, since its
-  // prompt() is still open when this runs.
-  if (item.key !== "note") returnToMain();
 }
 
 // Reaper's /time is a float of seconds and says nothing about how Reaper is
@@ -513,13 +513,10 @@ function render(next) {
 // the fader column do the same move and also say why. The routes stay, for
 // anything that wants to drive the box without the vocabulary - verify_dm7,
 // say, or the detector once Phase 2 is declared.
-//
-// Arm, Stand down and Start recording live in MORE's Control group, so a tap
-// on any of them is navigation too, same as a vocabulary button.
 for (const [id, path] of [["btn-arm", "/api/arm"], ["btn-stand-down", "/api/stand-down"],
                           ["btn-record", "/api/record"]]) {
   const node = $(id);
-  node.onclick = () => { post(path, undefined, node); returnToMain(); };
+  node.onclick = () => post(path, undefined, node);
 }
 
 // -- handing off to StageMix (#12) --------------------------------------------
@@ -676,14 +673,12 @@ $("btn-handoff-yes").onclick = () => {
   handoffPromptOpen = false;
   paintSlot();
   post("/api/handoff", undefined, $("btn-handoff-yes"));
-  returnToMain();
 };
 
 $("btn-handoff-no").onclick = () => {
   handoffPromptOpen = false;
   paintSlot();
   post("/api/still-mine", undefined, $("btn-handoff-no"));
-  returnToMain();
 };
 
 // The two answers to "where is the fader" (#107). Neither asks first: Close now
