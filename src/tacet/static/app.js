@@ -271,7 +271,8 @@ function paintTabs() {
   $("left").classList.toggle("more", activeTab === "more");
 }
 
-// No call sites since #109; retained deliberately, not an oversight.
+// No call sites since #109; retained deliberately, not an oversight. It is
+// the one place that moves the tab for us, should anything need to again.
 function returnToMain() {
   activeTab = "main";
   paintTabs();

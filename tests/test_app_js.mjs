@@ -1082,15 +1082,16 @@ const guardWait = () => new Promise((resolve) => setTimeout(resolve, PROMPT_GUAR
 }
 
 {
-  // Answering is not navigation (unlike a vocabulary tap - see activate()):
-  // it must not steal the operator back to MAIN from wherever they were.
+  // Answering the question never moves the tab - the same rule every other
+  // button now follows (#109). It must not steal the operator away from
+  // wherever they were.
   const { context, nodes, posted } = browser();
   context.render(structuredClone(SNAPSHOTS["prompt"]));
   nodes.get("tab-btn-more").onclick();
   check("tab: MORE is selected", nodes.get("tab-btn-more").classList.contains("on"), true);
   await guardWait();
   nodes.get("btn-prompt-accept").onclick();
-  check("tab: answering the question does not return to MAIN", nodes.get("tab-btn-more").classList.contains("on"), true);
+  check("tab: answering the question leaves the tab where it was", nodes.get("tab-btn-more").classList.contains("on"), true);
   check("tab: and the tap really went out", posted.length > 0, true);
 }
 
