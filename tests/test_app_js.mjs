@@ -2047,6 +2047,15 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
   context.render(targetSnapshot({ db: -6, level: -600 }, idle));
   check("nothing moving: no note", nodes.get("target-level").textContent, "target -6 dB");
 
+  // READY's own ride goes to target - hold_below_db, never to the standing
+  // target, so the chip carries the suffix there too even though nothing was
+  // changed. Deliberate: the readout says "-inf dB -> -15.00 dB" at the same
+  // moment and the chip must not seem to disagree with it.
+  const ready = { level_known: true, commanded: -32768, db: null, target: -1500, target_db: -15, moving: true };
+  context.render(targetSnapshot({}, ready));
+  check("READY's ride to its hold level: the readout shows the hold level", nodes.get("level").textContent.startsWith("-\u221e dB \u2192 -15.00 dB"), true);
+  check("READY's ride to its hold level: the chip says the target is for the next open", nodes.get("target-level").textContent, "target 0 dB (next open)");
+
   const fade = { level_known: true, commanded: -1000, db: -10, target: -32768, target_db: null, moving: true };
   context.render(targetSnapshot({ db: -6, level: -600 }, fade));
   check("a fade to -inf is not a competing target: no note", nodes.get("target-level").textContent, "target -6 dB");

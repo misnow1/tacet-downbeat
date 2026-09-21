@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import math
 import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
@@ -337,9 +338,10 @@ class App:
         A level that is not one of the presets is refused, said on the page, and
         not logged: nothing happened.
         """
-        level = targets.level_for(db)
         with _tapped(tap):
-            if not self._targets.allows(level):
+            # Finite first: `level_for` cannot convert inf or nan, and this is a
+            # public coroutine whose callers may not have checked (#128 adds one).
+            if not math.isfinite(db) or not self._targets.allows(level := targets.level_for(db)):
                 self._last_refusal = TARGET_NOT_A_PRESET.format(db=db, presets=self._preset_names())
                 self._notify()
                 return

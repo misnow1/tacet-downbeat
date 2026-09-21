@@ -2425,6 +2425,20 @@ class TestTheStandingTarget(AppTestCase):
                     self.assertNotIn(tacet_app.TARGET_SET, self.keys())
                     self.assertEqual(snap["target"]["db"], 0.0)
 
+    async def test_a_non_finite_level_is_refused_like_any_other_non_preset(self):
+        # `set_target` is a public coroutine, so it cannot rely on the route to
+        # have kept `inf` out: `round(inf * 100)` raises OverflowError.
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(db=bad):
+                app = self.build()
+                before, keys = self.sent(), self.keys()
+                await app.set_target(bad)
+                snap = app.snapshot()
+                self.assertTrue(snap["refusal"].startswith("Not a target level:"))
+                self.assertEqual(self.sent(), before)
+                self.assertEqual(self.keys(), keys)
+                self.assertEqual(snap["target"]["db"], 0.0)
+
     async def test_a_preset_is_matched_in_console_units(self):
         app = self.build()
         await app.set_target(-3.004)

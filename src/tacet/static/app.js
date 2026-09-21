@@ -260,11 +260,14 @@ function renderButtons(buttons, orphans) {
 // the strip) and changes (the segments in MORE > Target level). Changing it
 // stores a value and moves nothing. `snapshot.fader.target` is where a move
 // already in flight is heading, null when nothing is moving; the fader readout
-// below draws that as the arrow in "-10.00 dB -> 0.00 dB". A ride that began
-// before a change keeps going to its old destination, so for that second or so
+// below draws that as the arrow in "-10.00 dB -> 0.00 dB". A move in flight can
+// head somewhere other than the standing target: a ride that began before a
+// change keeps going to its old destination, and Ready's own ride goes to its
+// hold level (target - hold_below_db), never to the target. While that lasts
 // the two disagree, and the chip says "(next open)" rather than let the readout
-// and the chip seem to contradict each other. A fade's destination is -inf, which
-// is not a competing target, so it adds nothing to the chip.
+// and the chip seem to contradict each other. That is deliberate for Ready even
+// when nothing was changed. A fade's destination is -inf, which is not a
+// competing target, so it adds nothing to the chip.
 //
 // Taps here leave the operator on MORE (#109) like every other tap in it. The
 // selected segment is painted from the snapshot on every render and never
@@ -282,6 +285,8 @@ function targetChipText(db, nextOpenOnly = false) {
 // detached fires no click, and this control is one the operator taps while
 // looking at the field.
 let renderedPresets = null;
+// Kept here, not read back from the host: the stub cannot list a host's
+// children, and this saves a DOM query on every render.
 let presetNodes = [];
 
 function buildPresetNode(db) {
