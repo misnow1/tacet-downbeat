@@ -170,11 +170,11 @@ stays possible.
 Non-negotiable, same status as the hard constraints above.
 
 - **The control path takes no dependencies.** `tacet.osc`, `tacet.net`,
-  `tacet.dm7` and `tacet.state` are what move the fader during a game, and they
-  import nothing but the standard library. That is why OSC is hand-rolled rather
-  than taken from PyPI. `tests/test_dependency_policy.py` enforces this by
-  reading the imports, so it fails rather than drifts. Ask before adding
-  anything here.
+  `tacet.dm7`, `tacet.state` and `tacet.targets` are what move the fader during
+  a game, and they import nothing but the standard library. That is why OSC is
+  hand-rolled rather than taken from PyPI. `tests/test_dependency_policy.py`
+  enforces this by reading the imports, so it fails rather than drifts. Ask
+  before adding anything here.
 - **Everything else may take dependencies.** The web UI, Reaper integration,
   capture and offline analysis sit outside the control path, and a mature,
   pinned library there beats hand-rolling. Dev tooling never ships at all.

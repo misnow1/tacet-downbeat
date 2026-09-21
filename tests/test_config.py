@@ -9,13 +9,14 @@ wrong quietly -- a misspelled key, a port that is a string, a path that was
 never there -- so every one of those is an error with the file named in it.
 """
 
+import argparse
 import io
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
-from tacet import config, serve, verify_dm7, verify_reaper
+from tacet import config, serve, targets, verify_dm7, verify_reaper
 
 SAMPLE = """
 [console]
@@ -435,6 +436,132 @@ class TestPortsAreInRange(_TempConfig):
         for module, dest in PORT_DESTS:
             with self.subTest(module=module.__name__, dest=dest):
                 self.assertIn(module.parser().get_default(dest), range(config.PORT_MIN, config.PORT_MAX + 1))
+
+
+class TestTargetPresets(_TempConfig):
+    """#9: `fader.presets` and `fader.max_target_db`, and the cross-key rule.
+
+    The cap is the safety half: +3 dB costs 3 dB of feedback margin, and the
+    number is set by an on-site ring-out. A file that names a preset above it
+    must refuse at load, naming the key and the value, rather than start a box
+    that offers a level nobody has rung out.
+    """
+
+    def values(self, **fader):
+        return config.values_from_mapping({"fader": fader})
+
+    def test_a_preset_above_the_cap_refuses_naming_the_key_and_the_value(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            self.values(presets=[3.0, 0.0], max_target_db=0.0)
+        message = str(caught.exception)
+        self.assertIn("fader.presets", message)
+        self.assertIn("3.0", message)
+
+    def test_a_preset_at_the_cap_loads(self):
+        values = self.values(presets=[0.0, -3.0], max_target_db=0.0)
+        self.assertEqual(values["fader.presets"], (0.0, -3.0))
+        self.assertEqual(values["fader.max_target_db"], 0.0)
+
+    def test_a_raised_cap_admits_a_higher_preset(self):
+        self.assertEqual(self.values(presets=[3.0, 0.0], max_target_db=3.0)["fader.presets"], (3.0, 0.0))
+
+    def test_whole_numbers_are_accepted_and_become_floats(self):
+        values = self.values(presets=[0, -3, -6])
+        self.assertEqual(values["fader.presets"], (0.0, -3.0, -6.0))
+        self.assertTrue(all(isinstance(v, float) for v in values["fader.presets"]))
+
+    def test_a_cap_alone_with_no_presets_loads(self):
+        self.assertEqual(self.values(max_target_db=3.0), {"fader.max_target_db": 3.0})
+
+    def test_presets_with_no_cap_are_checked_against_the_built_in_cap(self):
+        self.assertIn("fader.presets", self.values(presets=[0.0, -3.0]))
+        with self.assertRaises(config.ConfigError) as caught:
+            self.values(presets=[1.0])
+        self.assertIn("1.0", str(caught.exception))
+
+    def test_the_refusal_names_the_file(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"fader": {"presets": [1.0]}}, where="/etc/tacet.toml")
+        self.assertIn("/etc/tacet.toml", str(caught.exception))
+
+    def test_a_duplicate_and_an_empty_list_refuse(self):
+        for bad in ([-3.0, -3.0], []):
+            with self.subTest(bad=bad), self.assertRaises(config.ConfigError) as caught:
+                self.values(presets=bad)
+            self.assertIn("fader.presets", str(caught.exception))
+
+    def test_a_list_holding_anything_but_numbers_refuses_naming_the_position(self):
+        for bad in (["0"], [0.0, True], [0.0, "-3"], [None]):
+            with self.subTest(bad=bad), self.assertRaises(config.ConfigError) as caught:
+                self.values(presets=bad)
+            self.assertIn("fader.presets", str(caught.exception))
+            self.assertIn("must be a number", str(caught.exception))
+
+    def test_a_scalar_where_a_list_belongs_refuses(self):
+        for bad in (0.0, 0, "0,-3", True):
+            with self.subTest(bad=bad), self.assertRaises(config.ConfigError) as caught:
+                self.values(presets=bad)
+            self.assertIn("fader.presets", str(caught.exception))
+            self.assertIn("list", str(caught.exception))
+
+    def test_a_cap_is_a_number_like_any_float_key(self):
+        with self.assertRaises(config.ConfigError):
+            self.values(max_target_db="0 dB")
+
+    def test_a_file_carrying_both_keys_loads_through_load(self):
+        path = self.write("[fader]\npresets = [-2.0, -5.0, -8.0]\nmax_target_db = 3.0\n")
+        self.assertEqual(config.load(path)["fader.presets"], (-2.0, -5.0, -8.0))
+
+    def test_the_toml_example_ships_unity_capped_at_unity(self):
+        values = config.load(TestTheExampleFile.EXAMPLE)
+        self.assertEqual(values["fader.presets"], targets.DEFAULT_PRESETS_DB)
+        self.assertEqual(values["fader.max_target_db"], targets.DEFAULT_MAX_TARGET_DB)
+
+
+#: SAMPLE with the two target keys added to its own [fader] table.
+WITH_PRESETS = SAMPLE.replace("fade_seconds = 2.5", "fade_seconds = 2.5\npresets = [-2.0, -5.0]\nmax_target_db = -1.0")
+
+
+class TestTargetFlags(_TempConfig):
+    def resolve(self, argv, text=SAMPLE):
+        path = self.write(text)
+        args, _ = config.resolve(serve.parser(), serve.CONFIG_MAPPING, argv, environ={}, search=[path])
+        return args
+
+    def test_the_built_in_defaults_are_the_shipped_ones(self):
+        args, _ = config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[])
+        self.assertEqual(args.presets, targets.DEFAULT_PRESETS_DB)
+        self.assertEqual(args.max_target, targets.DEFAULT_MAX_TARGET_DB)
+
+    def test_the_file_beats_the_default(self):
+        args = self.resolve([], text=WITH_PRESETS)
+        self.assertEqual(args.presets, (-2.0, -5.0))
+        self.assertEqual(args.max_target, -1.0)
+
+    def test_the_flag_beats_the_file(self):
+        args = self.resolve(["--presets", "0,-3,-6"], text=WITH_PRESETS)
+        self.assertEqual(args.presets, (0.0, -3.0, -6.0))
+
+    def test_a_negative_cap_parses_as_a_value_not_a_flag(self):
+        # argparse would read `-2.0` as an option if the parser had one that
+        # looked like a number. Pinned so adding such a flag fails here.
+        args = self.resolve(["--max-target", "-2.0"])
+        self.assertEqual(args.max_target, -2.0)
+
+    def test_the_db_list_parses_signed_numbers(self):
+        self.assertEqual(config.db_list("0,-3,-6"), (0.0, -3.0, -6.0))
+        self.assertEqual(config.db_list(" 0 , -2.5 "), (0.0, -2.5))
+
+    def test_the_db_list_refuses_junk_and_empty(self):
+        for bad in ("", " ", "loud", "0,,-3", "0,-3,x", "nan", "inf", "0,"):
+            with self.subTest(bad=bad), self.assertRaises(argparse.ArgumentTypeError):
+                config.db_list(bad)
+
+    def test_a_junk_presets_flag_names_the_flag(self):
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stderr(stderr):
+            serve.parser().parse_args(["--presets", "loud"])
+        self.assertIn("--presets", stderr.getvalue())
 
 
 class TestTheExampleFile(unittest.TestCase):

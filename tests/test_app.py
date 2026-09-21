@@ -10,7 +10,7 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, osc, prompts, reaper, state, taps
+from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets
 from tests.disk import Disk
 from tests.test_annotations import Gate, Killed
 
@@ -2223,6 +2223,323 @@ class TestFaderPositionTrust(AppTestCase):
         await app.trigger()
         clock.now += 10.0
         self.assertEqual(app.snapshot()["fader"]["age"], 10.0)
+
+
+class TestTheStandingTarget(AppTestCase):
+    """#9: where an open goes is a setting the operator can change, and
+    changing it moves nothing.
+
+    Two things are called a target and they are not the same. `snapshot()
+    ["target"]` is the standing setting: the level the next open goes to.
+    `snapshot()["fader"]["target"]` is where a move already in flight is
+    heading. A ride-in that started before the setting changed keeps going to
+    the old level, so the two differ, and the tests below say which is which.
+    """
+
+    def sent(self):
+        return len(self.console_sender.packets)
+
+    def commanded_entries(self):
+        return [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+
+    async def test_the_default_target_is_the_first_preset(self):
+        app = self.build()
+        target = app.snapshot()["target"]
+        self.assertEqual(target["level"], dm7.UNITY)
+        self.assertEqual(target["db"], 0.0)
+        self.assertEqual(target["default_db"], 0.0)
+        self.assertEqual(target["presets_db"], [0.0, -3.0, -6.0])
+
+    async def test_a_site_that_starts_quieter_gets_that_as_its_default(self):
+        self.build()
+        app = tacet_app.App(
+            console=self.console,
+            log=self.log,
+            target_levels=targets.build((-2.0, -5.0, -8.0), 3.0),
+            machine=state.Machine(level_known=True),
+        )
+        self.assertEqual(app.snapshot()["target"]["db"], -2.0)
+        self.assertEqual(app.snapshot()["target"]["default_db"], -2.0)
+        await app.arm()
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, -200)
+
+    async def test_setting_the_target_sends_no_packet_and_leaves_the_commanded_level_alone(self):
+        for label, prepare in (
+            ("standing down", None),
+            ("idle", lambda app: app.arm()),
+            ("open", self.open_it),
+        ):
+            with self.subTest(state=label):
+                app = self.build()
+                if prepare is not None:
+                    await prepare(app)
+                before, level = self.sent(), self.console.commanded_level
+                await app.set_target(-3.0)
+                self.assertEqual(self.sent(), before)
+                self.assertEqual(self.console.commanded_level, level)
+                self.assertEqual(app.snapshot()["target"]["db"], -3.0)
+
+    async def open_it(self, app):
+        await app.arm()
+        await app.trigger()
+
+    async def test_the_next_open_goes_to_the_new_target(self):
+        app = self.build()
+        await app.arm()
+        await app.set_target(-3.0)
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, -300)
+        self.assertEqual(self.console_sender.levels()[-1], -300)
+        opened = self.commanded_entries()[-1]
+        self.assertEqual(opened.data["target"], -300)
+        self.assertEqual(opened.data["target_db"], -3.0)
+        self.assertEqual(app.snapshot()["fader"]["db"], -3.0)
+
+    async def test_a_slow_open_goes_to_the_new_target_too(self):
+        app = self.build()
+        app._slow_open_seconds = 0.1
+        await app.arm()
+        await app.set_target(-6.0)
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -600)
+
+    async def test_the_hold_level_follows_the_target(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.1
+        await app.arm()
+        await app.set_target(-6.0)
+        self.assertEqual(app._hold_level(), dm7.clamp(-600 - round(app._hold_below_db * dm7.UNITS_PER_DB)))
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, app._hold_level())
+        self.assertEqual(self.console.commanded_level, -2100)
+
+    async def test_a_target_change_while_ready_stores_only_and_the_commit_goes_to_the_new_target(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.1
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        old_hold = self.console.commanded_level
+        self.assertEqual(old_hold, -1500)
+        before = self.sent()
+
+        await app.set_target(-6.0)
+
+        # Nothing sent, and the fader still sits at the OLD hold level.
+        self.assertEqual(self.sent(), before)
+        self.assertEqual(self.console.commanded_level, old_hold)
+        self.assertEqual(app.machine.state, state.State.READY)
+        # The up-from-READY commit is absolute and goes to the NEW target.
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, -600)
+        self.assertEqual(self.console_sender.levels()[-1], -600)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def test_a_ready_report_after_the_change_assumes_the_new_hold_level(self):
+        app = self.build(level_known=False)
+        await app.set_target(-6.0)
+        await app.report_ready()
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(self.console.commanded_level, -2100)
+        self.assertEqual(app.machine.state, state.State.READY)
+
+    async def test_a_ride_in_already_under_way_keeps_its_original_destination(self):
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        entries_before = len(self.commanded_entries())
+
+        await app.set_target(-6.0)
+
+        snap = app.snapshot()
+        self.assertEqual(snap["fader"]["target"], dm7.UNITY)
+        self.assertEqual(snap["target"]["db"], -6.0)
+        self.assertEqual(len(self.commanded_entries()), entries_before)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+
+    async def test_fader_target_is_where_a_move_is_going_and_target_level_is_the_standing_setting(self):
+        # The naming trap, pinned: after a change mid-ride the two disagree.
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        await app.set_target(-3.0)
+        snap = app.snapshot()
+        self.assertNotEqual(snap["fader"]["target"], snap["target"]["level"])
+        self.assertEqual(snap["fader"]["target"], 0)
+        self.assertEqual(snap["target"]["level"], -300)
+        await app.wait_for_fade()
+
+    async def test_the_standing_setting_is_not_inside_the_fader_block(self):
+        snap = self.build().snapshot()
+        self.assertIn("presets_db", snap["target"])
+        self.assertNotIn("presets_db", snap["fader"])
+        # Nothing in flight: `fader.target` is null while `target.level` is set.
+        self.assertIsNone(snap["fader"]["target"])
+        self.assertIsNotNone(snap["target"]["level"])
+
+    async def test_a_target_change_while_releasing_stores_only_and_the_fade_still_ends_at_minus_infinity(self):
+        app = self.build(fade=0.2)
+        await self.open_it(app)
+        await app.release()
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        entries_before = len(self.commanded_entries())
+
+        await app.set_target(-3.0)
+
+        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        self.assertEqual(len(self.commanded_entries()), entries_before)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.snapshot()["target"]["db"], -3.0)
+
+    async def test_a_target_change_while_open_leaves_the_fader_and_a_later_fade_still_closes(self):
+        app = self.build(fade=0.05)
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        self.assertEqual(self.console.commanded_level, dm7.UNITY)
+        await app.release()
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_level_that_is_not_a_preset_is_refused_and_changes_nothing(self):
+        for label, level_known in (("known", True), ("unknown", False)):
+            for bad in (-2.5, 3.0, 0.5, -2.99):
+                with self.subTest(level=label, db=bad):
+                    app = self.build(level_known=level_known)
+                    before = self.sent()
+                    keys = self.keys()
+                    await app.set_target(bad)
+                    snap = app.snapshot()
+                    self.assertIn(f"{bad:g}", snap["refusal"])
+                    self.assertIn("-3", snap["refusal"])
+                    self.assertEqual(self.sent(), before)
+                    self.assertEqual(self.keys(), keys)
+                    self.assertNotIn(tacet_app.TARGET_SET, self.keys())
+                    self.assertEqual(snap["target"]["db"], 0.0)
+
+    async def test_a_non_finite_level_is_refused_like_any_other_non_preset(self):
+        # `set_target` is a public coroutine, so it cannot rely on the route to
+        # have kept `inf` out: `round(inf * 100)` raises OverflowError.
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(db=bad):
+                app = self.build()
+                before, keys = self.sent(), self.keys()
+                await app.set_target(bad)
+                snap = app.snapshot()
+                self.assertTrue(snap["refusal"].startswith("Not a target level:"))
+                self.assertEqual(self.sent(), before)
+                self.assertEqual(self.keys(), keys)
+                self.assertEqual(snap["target"]["db"], 0.0)
+
+    async def test_a_preset_is_matched_in_console_units(self):
+        app = self.build()
+        await app.set_target(-3.004)
+        self.assertEqual(app.snapshot()["target"]["level"], -300)
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_the_target_can_be_changed_in_every_state_and_while_the_level_is_unknown(self):
+        app = self.build(level_known=False)
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        await app.set_target(-3.0)
+        self.assertEqual(app.snapshot()["target"]["db"], -3.0)
+        self.assertIsNone(app.snapshot()["refusal"])
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+        self.assertFalse(app.machine.level_known)
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_a_late_tap_is_not_refused_because_nothing_moves(self):
+        # Not stale-checked (#9): a silently refused tap on an inert control is
+        # a dead end, and there is no late move to guard against.
+        app = self.build()
+        await app.set_target(-3.0, tap=late(taps.DEFAULT_STALE_TAP_SECONDS + 5.0))
+        self.assertEqual(app.snapshot()["target"]["db"], -3.0)
+        self.assertIsNone(app.snapshot()["stale_tap"])
+        self.assertNotIn(tacet_app.STALE_TAP, self.keys())
+
+    async def test_a_change_is_logged_with_what_it_replaced(self):
+        app = self.build()
+        await app.arm()
+        await app.set_target(-3.0)
+        entry = [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
+        self.assertEqual(
+            {k: v for k, v in entry.data.items() if k != "tap"},
+            {
+                "level": -300,
+                "db": -3.0,
+                "previous_level": 0,
+                "previous_db": 0.0,
+                "default": False,
+                "state": state.State.IDLE.value,
+            },
+        )
+
+    async def test_going_back_to_the_default_says_so(self):
+        app = self.build()
+        await app.set_target(-3.0)
+        await app.set_target(0.0)
+        entry = [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
+        self.assertTrue(entry.data["default"])
+        self.assertEqual(entry.data["previous_db"], -3.0)
+
+    async def test_the_tap_stamp_reaches_the_log_entry(self):
+        app = self.build()
+        tap = TestEveryEntryATapProducesCarriesItsTiming.TAP
+        await app.set_target(-3.0, tap=tap)
+        entry = [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
+        self.assertEqual(entry.data["tap"], tap.as_data())
+
+    async def test_target_set_is_a_session_entry_and_never_a_button(self):
+        event = ann.lookup(tacet_app.TARGET_SET)
+        self.assertEqual(event.category, ann.Category.SESSION)
+        self.assertNotIn(tacet_app.TARGET_SET, [b.key for b in ann.BUTTONS])
+
+    async def test_a_change_clears_an_earlier_refusal_and_a_refused_one_sets_it(self):
+        app = self.build(level_known=False)
+        await app.arm()
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_ARM)
+        await app.set_target(-3.0)
+        self.assertIsNone(app.snapshot()["refusal"])
+        await app.set_target(-2.5)
+        self.assertIsNotNone(app.snapshot()["refusal"])
+        await app.set_target(-6.0)
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_listeners_are_told_of_a_change_and_of_a_refusal(self):
+        app = self.build()
+        told = []
+        app.on_change(lambda: told.append(app.snapshot()["target"]["db"]))
+        await app.set_target(-3.0)
+        await app.set_target(-2.5)
+        self.assertEqual(told, [-3.0, -3.0])
+
+    async def test_every_packet_of_a_cycle_with_a_target_change_is_a_fader_level_write(self):
+        # The app-level sibling of test_dm7's faders-only test: the target has
+        # its own path now, and nothing it does may be anything but that write.
+        app = self.build(fade=0.05)
+        app._slow_open_seconds = 0.05
+        await app.arm()
+        await app.trigger()
+        await app.set_target(-3.0)
+        await app.release()
+        await app.wait_for_fade()
+        await app.annotate("up-slow")
+        await app.wait_for_fade()
+        await app.set_target(-6.0)
+        await app.release()
+        await app.wait_for_fade()
+        self.assertGreater(self.sent(), 3)
+        for address in self.console_sender.addresses():
+            self.assertEqual(address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3")
+        for level in self.console_sender.levels():
+            self.assertIsInstance(level, int)
 
 
 class SwallowingConsole(dm7.Dm7Client):

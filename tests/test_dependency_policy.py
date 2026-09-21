@@ -17,7 +17,7 @@ from pathlib import Path
 import tacet
 
 #: The modules that move the fader. Nothing here may import a third party.
-CONTROL_PATH = ("osc", "net", "dm7", "state")
+CONTROL_PATH = ("osc", "net", "dm7", "state", "targets")
 
 PACKAGE_ROOT = Path(tacet.__file__).parent
 

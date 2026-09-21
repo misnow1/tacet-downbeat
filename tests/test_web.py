@@ -271,6 +271,87 @@ class TestPage(WebTestCase):
         self.assertNotIn('id="duty" style="display:none', body)
 
 
+class TestThePageCarriesTheTargetControl(WebTestCase):
+    """#9: the standing target's segmented control on MORE and its chip in the
+    strip. Both ship empty - the script fills them from the snapshot - and where
+    each sits is pinned, since #108 put the hand-off confirmation directly under
+    its button and nothing may come between them."""
+
+    async def body(self):
+        return await (await self.client.get("/")).text()
+
+    def rule(self, body, selector):
+        return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+    async def test_the_control_and_the_chip_ship_empty(self):
+        body = await self.body()
+        self.assertIn('<div id="target-control"></div>', body)
+        self.assertIn('<div id="target-level"></div>', body)
+
+    async def test_the_control_is_in_more_after_the_handoff_confirmation(self):
+        body = await self.body()
+        more = body.split('<div id="tab-more" ', 1)[1].split('<div id="wake">', 1)[0]
+        self.assertIn('id="target-control"', more)
+        self.assertLess(more.index('id="handoff-confirm"'), more.index('id="target-control"'))
+        # The confirmation stays directly under its button: the heading comes
+        # after the panel closes, not between the two.
+        self.assertLess(more.index('id="btn-handoff-no"'), more.index("<h2>Target level</h2>"))
+        self.assertLess(more.index("<h2>Target level</h2>"), more.index('id="target-control"'))
+
+    async def test_nothing_sits_between_the_button_and_its_confirmation(self):
+        body = await self.body()
+        between = body.split('id="btn-handoff"', 1)[1].split('id="handoff-confirm"', 1)[0]
+        self.assertNotIn("target", between)
+
+    async def test_both_are_before_the_fader_column(self):
+        body = await self.body()
+        column = body.index('id="fader-column"')
+        self.assertLess(body.index('id="target-control"'), column)
+        self.assertLess(body.index('id="target-level"'), column)
+
+    async def test_the_chip_is_in_the_strip_after_the_duty_chip(self):
+        body = await self.body()
+        strip = body.split('<div id="strip">', 1)[1].split('<div id="prompt">', 1)[0]
+        self.assertIn('id="target-level"', strip)
+        self.assertLess(strip.index('id="duty"'), strip.index('id="target-level"'))
+
+    async def test_the_chip_rules_are_scoped_to_the_strip_so_they_win(self):
+        # `#strip > div` is an id plus a type: an id alone would lose to it.
+        body = await self.body()
+        self.assertIn("#strip > #target-level{", body)
+        self.assertIn("cursor:default", self.rule(body, "#strip > #target-level"))
+        amber = self.rule(body, "#strip > #target-level.off-default")
+        self.assertIn("var(--fade)", amber)
+        self.assertIn("var(--fade-text)", amber)
+
+    async def test_the_segments_are_96_by_72(self):
+        body = await self.body()
+        rule = self.rule(body, "#target-control button")
+        self.assertIn("96px", rule)
+        self.assertIn("72px", rule)
+
+    async def test_the_selected_segment_is_neutral_because_this_control_moves_nothing(self):
+        # Green and amber are the fader's direction (#5); a segment that
+        # changes no level must not borrow either.
+        body = await self.body()
+        rule = self.rule(body, "#target-control button.selected")
+        self.assertNotIn("var(--open)", rule)
+        self.assertNotIn("var(--fade)", rule)
+        self.assertIn("var(--text)", rule)
+
+    async def test_the_new_rules_use_no_fixed_or_absolute_positioning(self):
+        body = await self.body()
+        for selector in ("#strip > #target-level", "#target-control", "#target-control button"):
+            rule = self.rule(body, selector)
+            self.assertNotIn("position:fixed", rule, selector)
+            self.assertNotIn("position:absolute", rule, selector)
+
+    async def test_the_script_and_the_page_agree_on_the_ids(self):
+        body = await self.body()
+        for element_id in ("target-control", "target-level"):
+            self.assertIn(f'$("{element_id}")', body)
+
+
 class TestThePageHasWhereTapsReport(WebTestCase):
     async def test_the_tap_line_is_on_the_page(self):
         # The script writes a failed tap here (#11); a page without it throws
@@ -394,8 +475,124 @@ class TestTheLevelIsKnownOrNot(WebTestCase):
         paths = {getattr(route.resource, "canonical", "") for route in self.server.app.router.routes()}
         for gone in ("/api/take-back-up", "/api/take-back-down"):
             self.assertNotIn(gone, paths)
-        for present in ("/api/close-now", "/api/report-ready", "/api/handoff", "/api/still-mine"):
+        for present in ("/api/close-now", "/api/report-ready", "/api/handoff", "/api/still-mine", "/api/target"):
             self.assertIn(present, paths)
+
+
+class TestTheTargetRoute(WebTestCase):
+    """#9: `POST /api/target {"db": -3.0}`. It stores a value and moves nothing,
+    so what it is held to is the shape of the request and the presets."""
+
+    def build_app(self, monotonic=time.monotonic):
+        self.clock = [5000.0]
+        return super().build_app(monotonic=lambda: self.clock[0])
+
+    async def post(self, body):
+        return await self.client.post("/api/target", json=body)
+
+    async def test_a_good_post_changes_the_target_and_the_response_shows_it(self):
+        response = await self.post({"db": -3.0})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertEqual(payload["target"]["db"], -3.0)
+        self.assertEqual(payload["target"]["level"], -300)
+        self.assertIsNone(payload["refusal"])
+        self.assertIn("target-set", self.entries())
+
+    async def test_a_whole_number_is_a_number(self):
+        payload = await (await self.post({"db": -6})).json()
+        self.assertEqual(payload["target"]["db"], -6.0)
+
+    async def test_a_good_post_sends_nothing_to_the_console(self):
+        await self.post({"db": -3.0})
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_the_fader_block_is_untouched_by_it(self):
+        before = (await (await self.client.get("/api/state")).json())["fader"]
+        payload = await (await self.post({"db": -3.0})).json()
+        for key in ("commanded", "level_known", "target", "moving"):
+            self.assertEqual(payload["fader"][key], before[key])
+
+    async def test_a_body_without_db_is_a_400_naming_the_field(self):
+        response = await self.post({})
+        self.assertEqual(response.status, 400)
+        self.assertIn("'db' is required", (await response.json())["error"])
+
+    async def test_a_db_that_is_not_a_number_is_a_400_naming_the_field(self):
+        bad: object
+        for bad in (True, False, "loud", "-3", None, [], {}):
+            with self.subTest(bad=bad):
+                response = await self.post({"db": bad})
+                self.assertEqual(response.status, 400)
+                self.assertIn("'db' must be a number", (await response.json())["error"])
+        self.assertNotIn("target-set", self.entries())
+
+    async def test_a_non_finite_db_is_a_400(self):
+        # `json` accepts NaN and Infinity, which are not levels.
+        for text in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(text=text):
+                response = await self.client.post(
+                    "/api/target", data='{"db": ' + text + "}", headers={"Content-Type": "application/json"}
+                )
+                self.assertEqual(response.status, 400)
+                self.assertIn("'db' must be a number", (await response.json())["error"])
+
+    async def test_malformed_json_is_a_400(self):
+        response = await self.client.post("/api/target", data="{", headers={"Content-Type": "application/json"})
+        self.assertEqual(response.status, 400)
+
+    async def test_a_well_formed_non_preset_is_a_200_with_the_refusal_and_nothing_changed(self):
+        response = await self.post({"db": -2.5})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertIn("-2.5", payload["refusal"])
+        self.assertEqual(payload["target"]["db"], 0.0)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertNotIn("target-set", self.entries())
+
+    async def test_it_works_while_the_level_is_unknown_and_standing_down(self):
+        # The production default at cold boot: nothing about the target waits
+        # on the box knowing where the fader is (#89, #107).
+        state_before = await (await self.client.get("/api/state")).json()
+        self.assertFalse(state_before["fader"]["level_known"])
+        payload = await (await self.post({"db": -6.0})).json()
+        self.assertEqual(payload["target"]["db"], -6.0)
+        self.assertEqual(payload["state"], "standing-down")
+
+    async def test_the_next_open_goes_to_it(self):
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        await self.post({"db": -3.0})
+        payload = await (await self.client.post("/api/trigger")).json()
+        self.assertEqual(payload["fader"]["commanded"], -300)
+
+    async def test_the_tap_stamp_reaches_the_log_entry(self):
+        body = {"db": -3.0, "tap": {"at": 5998.0, "offset": 1000.0, "uncertainty": 0.05}}
+        await self.post(body)
+        self.log.flush()
+        entry = [e for e in ann.read_entries(self.root / "game.jsonl") if e.event == "target-set"][-1]
+        want = {"tapped": 4998.0, "received": 5000.0, "delay": 2.0, "uncertainty": 0.05}
+        self.assertEqual(entry.data["tap"], want)
+
+    async def test_a_late_tap_is_still_applied(self):
+        # Not stale-checked: it moves nothing.
+        body = {"db": -3.0, "tap": {"at": 5000.0 + 1000.0 - 30.0, "offset": 1000.0, "uncertainty": 0.05}}
+        payload = await (await self.post(body)).json()
+        self.assertEqual(payload["target"]["db"], -3.0)
+        self.assertIsNone(payload["stale_tap"])
+
+    async def test_a_malformed_stamp_is_a_client_error_and_changes_nothing(self):
+        response = await self.post({"db": -3.0, "tap": {"at": "soon"}})
+        self.assertEqual(response.status, 400)
+        self.assertEqual(self.tacet.snapshot()["target"]["db"], 0.0)
+
+    async def test_the_page_is_pushed_the_new_target(self):
+        async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
+            await socket.receive()  # the initial snapshot
+            await self.post({"db": -3.0})
+            frame = json.loads((await socket.receive()).data)
+        self.assertEqual(frame["target"]["db"], -3.0)
 
 
 class TestAnnotation(WebTestCase):

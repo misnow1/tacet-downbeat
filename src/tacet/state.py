@@ -492,14 +492,14 @@ def _opening(machine: Machine, event: Event, *, armed_by_operator: bool = False)
             stalled=False,
             riding_in=event.gradual,
             armed_by_operator=armed_by_operator,
-            # Every open ends at `open_level`, absolute, so the fader's place is
-            # known from here whatever the box believed before (#107). Only
-            # that: `_closing` and `_readying` are relative and never set this.
-            # This is not a claim the packet was delivered - `step` is pure and
-            # cannot know that - but the belief no longer just sits there
-            # looking confident: if the send delivers nothing, the shell says
-            # so with an absolute MOVE_FAILED and the belief goes back with it
-            # (#116).
+            # Every open ends at the app's current target (#9), absolute, so
+            # the fader's place is known from here whatever the box believed
+            # before (#107). Only that: `_closing` and `_readying` are
+            # relative and never set this. This is not a claim the packet was
+            # delivered - `step` is pure and cannot know that - but the belief
+            # no longer just sits there looking confident: if the send
+            # delivers nothing, the shell says so with an absolute MOVE_FAILED
+            # and the belief goes back with it (#116).
             level_known=True,
         ),
         fader=FaderCommand.OPEN,

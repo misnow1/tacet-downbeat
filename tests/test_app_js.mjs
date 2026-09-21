@@ -1331,7 +1331,8 @@ function grid(snapshots) {
   // Parsed fresh each time, exactly as a websocket frame arrives. The old guard
   // passed when handed the same object twice, which is why this matters.
   for (const snap of snapshots) context.render(JSON.parse(JSON.stringify(snap)));
-  return created.filter((node) => node.tag === "button");
+  // The vocabulary's buttons: the target segments (#9) are not among them.
+  return created.filter((node) => node.tag === "button" && node.dataset.preset === undefined);
 }
 
 const GRID = snapshot({}, {}, BUTTONS, []);
@@ -1374,7 +1375,7 @@ check(
   const { context, created } = browser();
   context.render(snapshot({}, {}, BUTTONS, []));
   context.render(snapshot({}, {}, BUTTONS, [open("q1", 2)]));
-  const buttons = created.filter((node) => node.tag === "button");
+  const buttons = created.filter((node) => node.tag === "button" && node.dataset.preset === undefined);
   const q1 = buttons.find((node) => node.dataset.key === "q1");
   check("an opened span still updates", q1.textContent, "Q1 (end)");
   check("and is still highlighted", q1.classList.contains("on"), true);
@@ -1968,6 +1969,215 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
     "and does not go on telling the operator to change a setting",
     nodes.get("wake").textContent.includes("Auto-Lock"),
     false,
+  );
+}
+
+// -- the standing target level (#9) ------------------------------------------
+//
+// Two things are called a target. `snapshot.target` is the STANDING setting -
+// the level the next open goes to, chosen on MORE > Target level and shown in
+// the strip. `snapshot.fader.target` is where a move already in flight is
+// heading. The tests below say which they mean.
+
+// The standing-down fixture with the standing target changed, and optionally
+// the fader. `overlay` refuses a key the box does not send.
+function targetSnapshot(changes = {}, fader = {}) {
+  const snap = snapshot({}, fader);
+  snap.target = overlay(SNAPSHOTS["standing-down"].target, changes, "target");
+  return snap;
+}
+
+const presetSegments = (created) => created.filter((node) => node.tag === "button" && node.dataset.preset !== undefined);
+
+{
+  const { context } = browser();
+  check("targetChipText: unity", context.targetChipText(0), "target 0 dB");
+  check("targetChipText: a whole dB down", context.targetChipText(-3), "target -3 dB");
+  check("targetChipText: a fraction", context.targetChipText(-2.5), "target -2.5 dB");
+  for (const db of [0, -3, -2.5, -6, 3]) {
+    check(`targetChipText: ${db} is ASCII`, /^[\x20-\x7e]*$/.test(context.targetChipText(db)), true);
+  }
+  check(
+    "targetChipText: a ride in flight to somewhere else says the target is for the next open",
+    context.targetChipText(-6, true),
+    "target -6 dB (next open)",
+  );
+}
+
+{
+  // The chip is amber only when the standing target is not the configured
+  // default, so a leftover quiet setting is not forgotten.
+  const { context, nodes } = browser();
+  context.render(targetSnapshot());
+  const chip = nodes.get("target-level");
+  check("chip: reads the target at the default", chip.textContent, "target 0 dB");
+  check("chip: no off-default at the default", chip.classList.contains("off-default"), false);
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  check("chip: reads a quieter target", chip.textContent, "target -3 dB");
+  check("chip: off-default at -3", chip.classList.contains("off-default"), true);
+  context.render(targetSnapshot());
+  check("chip: back at the default it goes neutral again", chip.classList.contains("off-default"), false);
+}
+
+{
+  // "Default" is the box's word, not the page's: a site whose default is -2
+  // is neutral at -2 and amber at 0.
+  const { context, nodes } = browser();
+  const site = { presets_db: [-2, -5, -8], default_db: -2, db: -2, level: -200 };
+  context.render(targetSnapshot(site));
+  check("chip: neutral at a quiet site's own default", nodes.get("target-level").classList.contains("off-default"), false);
+  context.render(targetSnapshot({ ...site, db: -5, level: -500 }));
+  check("chip: amber at another preset", nodes.get("target-level").classList.contains("off-default"), true);
+}
+
+{
+  // The chip and the fader readout do not fight (see the section comment in
+  // app.js). A ride to the old target still shows its own arrow in the readout;
+  // the chip says the standing target is for the NEXT open.
+  const ride = { level_known: true, commanded: -1000, db: -10, target: 0, target_db: 0, moving: true };
+  const { context, nodes } = browser();
+  context.render(targetSnapshot({ db: -6, level: -600 }, ride));
+  check("ride: the readout still shows where the ride is going", nodes.get("level").textContent.startsWith("-10.00 dB \u2192 0.00 dB"), true);
+  check("ride: the chip says the new target is for the next open", nodes.get("target-level").textContent, "target -6 dB (next open)");
+
+  context.render(targetSnapshot({ db: 0, level: 0 }, ride));
+  check("ride: no note when the ride is to the standing target", nodes.get("target-level").textContent, "target 0 dB");
+
+  const idle = { level_known: true, commanded: 0, db: 0, target: null, target_db: null, moving: false };
+  context.render(targetSnapshot({ db: -6, level: -600 }, idle));
+  check("nothing moving: no note", nodes.get("target-level").textContent, "target -6 dB");
+
+  // READY's own ride goes to target - hold_below_db, never to the standing
+  // target, so the chip carries the suffix there too even though nothing was
+  // changed. Deliberate: the readout says "-inf dB -> -15.00 dB" at the same
+  // moment and the chip must not seem to disagree with it.
+  const ready = { level_known: true, commanded: -32768, db: null, target: -1500, target_db: -15, moving: true };
+  context.render(targetSnapshot({}, ready));
+  check("READY's ride to its hold level: the readout shows the hold level", nodes.get("level").textContent.startsWith("-\u221e dB \u2192 -15.00 dB"), true);
+  check("READY's ride to its hold level: the chip says the target is for the next open", nodes.get("target-level").textContent, "target 0 dB (next open)");
+
+  const fade = { level_known: true, commanded: -1000, db: -10, target: -32768, target_db: null, moving: true };
+  context.render(targetSnapshot({ db: -6, level: -600 }, fade));
+  check("a fade to -inf is not a competing target: no note", nodes.get("target-level").textContent, "target -6 dB");
+}
+
+{
+  const { context, created } = browser();
+  context.render(targetSnapshot());
+  const segments = presetSegments(created);
+  check("segments: one per preset, in list order", segments.map((node) => node.dataset.preset), ["0", "-3", "-6"]);
+  check("segments: labelled in dB", segments.map((node) => node.textContent), ["0 dB", "-3 dB", "-6 dB"]);
+  check("segments: labels are ASCII", segments.every((node) => /^[\x20-\x7e]*$/.test(node.textContent)), true);
+  check("segments: none is a keyed vocabulary button", segments.some((node) => node.dataset.key !== undefined), false);
+}
+
+{
+  const { context, created } = browser();
+  context.render(targetSnapshot({ presets_db: [-2, -5, -8], default_db: -2, db: -5, level: -500 }));
+  check(
+    "segments: a site's own list, in its own order",
+    presetSegments(created).map((node) => node.dataset.preset),
+    ["-2", "-5", "-8"],
+  );
+}
+
+{
+  const { context, created } = browser();
+  context.render(targetSnapshot());
+  const selected = () => presetSegments(created).filter((node) => node.classList.contains("selected"));
+  check("selected: exactly one segment", selected().map((node) => node.dataset.preset), ["0"]);
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  check("selected: a snapshot at another target moves it", selected().map((node) => node.dataset.preset), ["-3"]);
+  context.render(targetSnapshot({ db: -6, level: -600 }));
+  check("selected: and again", selected().map((node) => node.dataset.preset), ["-6"]);
+}
+
+{
+  // The tap's own feedback is the `sending` outline. Painting selected before
+  // the box has said so would show a change that a refusal or a lost packet
+  // did not make.
+  const { context, created, posted } = browser();
+  context.render(targetSnapshot());
+  posted.length = 0;
+  const minus3 = presetSegments(created).find((node) => node.dataset.preset === "-3");
+  minus3.onclick();
+  check("tap: posts to /api/target", posted.map((p) => p.path), ["/api/target"]);
+  check("tap: with the level as a number", posted[0].body.db, -3);
+  check("tap: and nothing else in the body but the stamp", Object.keys(posted[0].body).sort(), ["db", "tap"]);
+  check("tap: is not painted selected until a snapshot says so", minus3.classList.contains("selected"), false);
+  check("tap: the old segment is still the selected one", presetSegments(created)[0].classList.contains("selected"), true);
+  check("tap: shows the sending outline meanwhile", minus3.classList.contains("sending"), true);
+}
+
+{
+  // Same discipline as `renderedButtons`: never tear a control down under a
+  // thumb, since a tap landing on a detached node fires no click.
+  const { context, created } = browser();
+  context.render(targetSnapshot());
+  const before = created.length;
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  context.render(targetSnapshot({ db: -6, level: -600 }));
+  check("rebuild: the same list builds nothing new", created.length, before);
+  context.render(targetSnapshot({ presets_db: [-2, -5], default_db: -2, db: -2, level: -200 }));
+  check("rebuild: a different list does", presetSegments(created).length, 3 + 2);
+}
+
+{
+  const { context, nodes, created } = browser();
+  check("before any snapshot: no segments", presetSegments(created).length, 0);
+  // Nothing has asked for the chip yet, so read it the way the page would.
+  const chip = context.document.getElementById("target-level");
+  check("before any snapshot: the chip is empty", chip.textContent, "");
+  check("before any snapshot: and neutral", chip.classList.contains("off-default"), false);
+  void nodes;
+}
+
+{
+  // A box that predates #9 sends no `target`. Dereferencing it unguarded would
+  // throw inside render() and stop the page repainting - the same hazard the
+  // duty chip's guard is there for.
+  const { context, nodes, created } = browser();
+  const without = structuredClone(SNAPSHOTS["standing-down"]);
+  delete without.target;
+  let error = null;
+  try {
+    context.render(without);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no target does not throw", error, null);
+  check("and the rest of the page still renders", nodes.get("state").textContent, "STANDING DOWN");
+  check("and offers no segments", presetSegments(created).length, 0);
+}
+
+{
+  // #109: a tap in MORE leaves the operator on MORE.
+  const { context, nodes, created } = browser();
+  context.render(targetSnapshot());
+  nodes.get("tab-btn-more").onclick();
+  presetSegments(created).find((node) => node.dataset.preset === "-6").onclick();
+  check("a segment tap stays on MORE", nodes.get("tab-more").style.display, "");
+  check("and MAIN stays hidden", nodes.get("tab-main").style.display, "none");
+}
+
+for (const [label, fader] of [["unknown", { level_known: false }], ["known", { level_known: true }]]) {
+  // Changing the target moves nothing, so it is never greyed (#9). The ramp
+  // buttons are, and the chip does not follow them.
+  const { context, created } = browser();
+  context.render(targetSnapshot({}, fader));
+  check(`level ${label}: no segment is disabled`, presetSegments(created).some((node) => node.disabled), false);
+}
+
+{
+  // The vocabulary paint loop must not treat a segment as a keyed button: it
+  // would rewrite its label from an empty `dataset.label`.
+  const { context, created } = browser();
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  check(
+    "paint loop: segment labels survive a repaint",
+    presetSegments(created).map((node) => node.textContent),
+    ["0 dB", "-3 dB", "-6 dB"],
   );
 }
 

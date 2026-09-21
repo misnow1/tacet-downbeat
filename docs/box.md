@@ -127,6 +127,7 @@ Reaper, and where the log and queue are going:
   console     10.0.0.5:49900   DCA 3
               commanded, never confirmed - the DM7's OSC is write-only
   fade        2.0s close, fast open, 1.5s ride-in
+  target      0.0 dB   presets 0.0 / -3.0 / -6.0   cap 0.0 dB
   reaper      127.0.0.1   send 8000   feedback 9000
   log         /Users/you/games/<YYYY-MM-DD>.jsonl
   queue       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
@@ -258,6 +259,22 @@ can be heard. Retune the length with `fader.slow_open_seconds` or
 `--slow-open`; the other open buttons are unaffected. The shape itself is a
 guess until it is fitted against the hand rides on game 3's post-DCA reference
 channel, so it is not a config key.
+
+The **target** is where every open goes, and the operator picks it from a short
+list on the page (MORE > Target level). `fader.presets` is that list, in dB and
+in the order the page shows it, and **the first entry is the default**: the
+banner's `target` row says it first, and the page's readout goes amber whenever
+the target is anything else. `fader.max_target_db` is a cap on it, and **a
+preset above the cap refuses to start**, from the file and from
+`--presets` / `--max-target` alike, naming the value. The cap ships at 0 dB, so
+`+3` cannot exist by accident: raise it only after an on-site ring-out with the
+stands empty, since +3 dB costs 3 dB of feedback margin against a band PA that
+sits just behind the mics. A site that rings out to -2 dB writes
+`presets = [-2.0, -5.0, -8.0]` and the default follows. Changing the target on
+the page stores the value and sends nothing; the next open uses it, and the
+READY hold level follows it (`fader.hold_below_db` below it). With flags, a
+first preset that starts with a minus needs the equals form:
+`--presets=-3,-6`.
 
 ---
 
