@@ -394,8 +394,123 @@ class TestTheLevelIsKnownOrNot(WebTestCase):
         paths = {getattr(route.resource, "canonical", "") for route in self.server.app.router.routes()}
         for gone in ("/api/take-back-up", "/api/take-back-down"):
             self.assertNotIn(gone, paths)
-        for present in ("/api/close-now", "/api/report-ready", "/api/handoff", "/api/still-mine"):
+        for present in ("/api/close-now", "/api/report-ready", "/api/handoff", "/api/still-mine", "/api/target"):
             self.assertIn(present, paths)
+
+
+class TestTheTargetRoute(WebTestCase):
+    """#9: `POST /api/target {"db": -3.0}`. It stores a value and moves nothing,
+    so what it is held to is the shape of the request and the presets."""
+
+    def build_app(self, monotonic=time.monotonic):
+        self.clock = [5000.0]
+        return super().build_app(monotonic=lambda: self.clock[0])
+
+    async def post(self, body):
+        return await self.client.post("/api/target", json=body)
+
+    async def test_a_good_post_changes_the_target_and_the_response_shows_it(self):
+        response = await self.post({"db": -3.0})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertEqual(payload["target"]["db"], -3.0)
+        self.assertEqual(payload["target"]["level"], -300)
+        self.assertIsNone(payload["refusal"])
+        self.assertIn("target-set", self.entries())
+
+    async def test_a_whole_number_is_a_number(self):
+        payload = await (await self.post({"db": -6})).json()
+        self.assertEqual(payload["target"]["db"], -6.0)
+
+    async def test_a_good_post_sends_nothing_to_the_console(self):
+        await self.post({"db": -3.0})
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_the_fader_block_is_untouched_by_it(self):
+        before = (await (await self.client.get("/api/state")).json())["fader"]
+        payload = await (await self.post({"db": -3.0})).json()
+        for key in ("commanded", "level_known", "target", "moving"):
+            self.assertEqual(payload["fader"][key], before[key])
+
+    async def test_a_body_without_db_is_a_400_naming_the_field(self):
+        response = await self.post({})
+        self.assertEqual(response.status, 400)
+        self.assertIn("'db' is required", (await response.json())["error"])
+
+    async def test_a_db_that_is_not_a_number_is_a_400_naming_the_field(self):
+        for bad in (True, False, "loud", "-3", None, [], {}):
+            with self.subTest(bad=bad):
+                response = await self.post({"db": bad})
+                self.assertEqual(response.status, 400)
+                self.assertIn("'db' must be a number", (await response.json())["error"])
+        self.assertNotIn("target-set", self.entries())
+
+    async def test_a_non_finite_db_is_a_400(self):
+        # `json` accepts NaN and Infinity, which are not levels.
+        for text in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(text=text):
+                response = await self.client.post(
+                    "/api/target", data='{"db": ' + text + "}", headers={"Content-Type": "application/json"}
+                )
+                self.assertEqual(response.status, 400)
+                self.assertIn("'db' must be a number", (await response.json())["error"])
+
+    async def test_malformed_json_is_a_400(self):
+        response = await self.client.post("/api/target", data="{", headers={"Content-Type": "application/json"})
+        self.assertEqual(response.status, 400)
+
+    async def test_a_well_formed_non_preset_is_a_200_with_the_refusal_and_nothing_changed(self):
+        response = await self.post({"db": -2.5})
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertIn("-2.5", payload["refusal"])
+        self.assertEqual(payload["target"]["db"], 0.0)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertNotIn("target-set", self.entries())
+
+    async def test_it_works_while_the_level_is_unknown_and_standing_down(self):
+        # The production default at cold boot: nothing about the target waits
+        # on the box knowing where the fader is (#89, #107).
+        state_before = await (await self.client.get("/api/state")).json()
+        self.assertFalse(state_before["fader"]["level_known"])
+        payload = await (await self.post({"db": -6.0})).json()
+        self.assertEqual(payload["target"]["db"], -6.0)
+        self.assertEqual(payload["state"], "standing-down")
+
+    async def test_the_next_open_goes_to_it(self):
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        await self.post({"db": -3.0})
+        payload = await (await self.client.post("/api/trigger")).json()
+        self.assertEqual(payload["fader"]["commanded"], -300)
+
+    async def test_the_tap_stamp_reaches_the_log_entry(self):
+        body = {"db": -3.0, "tap": {"at": 5998.0, "offset": 1000.0, "uncertainty": 0.05}}
+        await self.post(body)
+        self.log.flush()
+        entry = [e for e in ann.read_entries(self.root / "game.jsonl") if e.event == "target-set"][-1]
+        want = {"tapped": 4998.0, "received": 5000.0, "delay": 2.0, "uncertainty": 0.05}
+        self.assertEqual(entry.data["tap"], want)
+
+    async def test_a_late_tap_is_still_applied(self):
+        # Not stale-checked: it moves nothing.
+        body = {"db": -3.0, "tap": {"at": 5000.0 + 1000.0 - 30.0, "offset": 1000.0, "uncertainty": 0.05}}
+        payload = await (await self.post(body)).json()
+        self.assertEqual(payload["target"]["db"], -3.0)
+        self.assertIsNone(payload["stale_tap"])
+
+    async def test_a_malformed_stamp_is_a_client_error_and_changes_nothing(self):
+        response = await self.post({"db": -3.0, "tap": {"at": "soon"}})
+        self.assertEqual(response.status, 400)
+        self.assertEqual(self.tacet.snapshot()["target"]["db"], 0.0)
+
+    async def test_the_page_is_pushed_the_new_target(self):
+        async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()  # the opening keepalive
+            await socket.receive()  # the initial snapshot
+            await self.post({"db": -3.0})
+            frame = json.loads((await socket.receive()).data)
+        self.assertEqual(frame["state"]["target"]["db"], -3.0)
 
 
 class TestAnnotation(WebTestCase):
