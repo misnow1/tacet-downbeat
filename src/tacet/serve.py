@@ -52,7 +52,7 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, reaper, taps, web
+from . import config, disk, dm7, mirror, reaper, taps, targets, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -105,6 +105,10 @@ class _Feedback(asyncio.DatagramProtocol):
 
 
 def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
+    # First, so a preset above the cap raises before the log or the queue is
+    # opened. The cap is held here as well as in the config file (#9): a flag
+    # can name a level the file never saw.
+    targets.build(args.presets, args.max_target)
     queue = mirror.MirrorQueue(args.queue).open() if args.queue else None
     log = AnnotationLog(args.log, mirror=queue).open()
     console = dm7.Dm7Client(
@@ -240,6 +244,13 @@ def _page_lines(listen: str, port: int) -> list[str]:
             _note("exactly like a firewall problem and is not one"),
         ]
     return [_row("page", f"http://{listen}:{port}")]
+
+
+def _target_row(args: argparse.Namespace) -> str:
+    """Where an open goes, the levels the page offers and the cap on them (#9).
+    The first preset is the default, so it is the one said first."""
+    presets = " / ".join(f"{db:.1f}" for db in args.presets)
+    return _row("target", f"{args.presets[0]:.1f} dB   presets {presets}   cap {args.max_target:.1f} dB")
 
 
 def _checklist(args: argparse.Namespace) -> list[str]:
@@ -394,6 +405,7 @@ def startup_lines(
         lines.append(_note("fader values snapped to Table 1"))
     lines.append(_row("fade", f"{args.fade:.1f}s close, fast open, {args.slow_open:.1f}s ride-in"))
     lines.append(_note(f"a fader tap arriving over {args.stale_tap:.1f}s late is not executed"))
+    lines.append(_target_row(args))
 
     if args.reaper_host:
         lines.append(
@@ -452,6 +464,8 @@ CONFIG_MAPPING = {
     "hold_below_db": "fader.hold_below_db",
     "ready_ride": "fader.ready_ride_seconds",
     "stale_tap": "fader.stale_tap_seconds",
+    "presets": "fader.presets",
+    "max_target": "fader.max_target_db",
     "listen": "ui.listen",
     "http_port": "ui.port",
 }
@@ -523,6 +537,20 @@ def parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="a fader tap that arrives later than this is logged and not executed",
     )
+    p.add_argument(
+        "--presets",
+        type=config.db_list,
+        default=targets.DEFAULT_PRESETS_DB,
+        metavar="DB,DB,...",
+        help="target levels the page offers, the first the default (--presets=-3,-6 if it starts with a minus)",
+    )
+    p.add_argument(
+        "--max-target",
+        type=float,
+        default=targets.DEFAULT_MAX_TARGET_DB,
+        metavar="DB",
+        help="cap: a preset above this refuses to start; set by the on-site ring-out",
+    )
     # BooleanOptionalAction, not store_true: a config file that sets
     # quantized = true has to be refusable from the command line, or the
     # precedence rule is a lie for this one flag.
@@ -559,6 +587,12 @@ def main(argv: list[str] | None = None) -> int:
     config.require(p, args, CONFIG_MAPPING, *REQUIRED)
     if args.log is None:
         p.error(LOG_REQUIRED)
+    # A preset above the cap is refused here, like any other bad flag, rather
+    # than as a traceback from `build` after the banner has said all is well.
+    try:
+        targets.build(args.presets, args.max_target)
+    except targets.TargetError as exc:
+        p.error(f"--presets / --max-target (fader.presets, fader.max_target_db): {exc}")
     # Said out loud, because a box configured from a file has no visible
     # command line: "why is it driving DCA 3" otherwise has no answer on the
     # day. Printed before anything binds, so it survives a failure to start.

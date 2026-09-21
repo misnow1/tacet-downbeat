@@ -76,6 +76,20 @@ ready_ride_seconds = 4.0    # --ready-ride
 # phrase. Generous, because the page's clock estimate is approximate. Retune
 # from the per-tap delays game 3 logs. Annotations are never refused.
 stale_tap_seconds = 2.0     # --stale-tap
+# The target levels the page offers on MORE > Target level (#9), in dB, in the
+# order the page lists them. The FIRST is the default: the open buttons go to
+# it until the operator picks another, and the page's readout goes amber when
+# the target is not this one. There is no separate default key to disagree
+# with the list. A site that rings out to -2 dB writes [-2.0, -5.0, -8.0] and
+# the default follows.
+presets = [0.0, -3.0, -6.0]  # --presets 0,-3,-6  (--presets=-3,-6 if it starts with a minus)
+# The cap on every preset: one above it refuses at load, in the file and as a
+# flag alike, so a level nobody has rung out cannot exist by accident. +3 dB
+# costs 3 dB of feedback margin against the band PA behind the mics, so this
+# ships at 0 dB and is raised only after an on-site ring-out with the stands
+# empty. Anything the operator taps is one of the presets, never an
+# arbitrary value.
+max_target_db = 0.0         # --max-target
 
 # The operator page.
 [ui]

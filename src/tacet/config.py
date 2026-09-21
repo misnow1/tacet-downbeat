@@ -38,12 +38,15 @@ CLAUDE.md, though nothing there needs it today.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from . import targets
 
 #: Environment variable naming a config file, checked after `--config`.
 CONFIG_ENV_VAR = "TACET_CONFIG"
@@ -82,7 +85,8 @@ class ConfigError(Exception):
 #: The value kinds a config key may take. `path` is `str` in the file and a
 #: `Path` afterwards, with `~` expanded, because every path here is typed by a
 #: human who will write `~/games`. `port` is an `int` in `PORT_MIN..PORT_MAX`.
-Kind = Literal["str", "int", "float", "bool", "path", "port"]
+#: `floats` is a non-empty list of numbers, held as a tuple of `float`.
+Kind = Literal["str", "int", "float", "floats", "bool", "path", "port"]
 
 
 @dataclass(frozen=True)
@@ -124,6 +128,8 @@ SCHEMA: tuple[Option, ...] = (
     Option("fader", "hold_below_db", "float", "how far below target READY's hold level sits"),
     Option("fader", "ready_ride_seconds", "float", "ride from idle to the READY hold level"),
     Option("fader", "stale_tap_seconds", "float", "a fader tap arriving later than this is not executed"),
+    Option("fader", "presets", "floats", "target levels the page offers; the first is the default"),
+    Option("fader", "max_target_db", "float", "cap: a preset above this refuses at load, set by the on-site ring-out"),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "port", "port the web UI binds to"),
 )
@@ -159,6 +165,10 @@ def _coerce(option: Option, value: object, *, where: str) -> object:
         if not isinstance(value, bool):
             raise ConfigError(f"{where}: {option.name} must be true or false, got {value!r}")
         return value
+    # Before the bool refusal below: a list is judged element by element, and a
+    # bare `true` where a list belongs gets the list wording.
+    if option.kind == "floats":
+        return _coerce_floats(option, value, where=where)
     if isinstance(value, bool):
         raise ConfigError(f"{where}: {option.name} must be {option.kind}, got {value!r}")
     if option.kind in ("int", "port"):
@@ -178,6 +188,38 @@ def _coerce(option: Option, value: object, *, where: str) -> object:
     return value
 
 
+def _coerce_floats(option: Option, value: object, *, where: str) -> tuple[float, ...]:
+    """A non-empty list of numbers. A bool is not one, for the reason `port =
+    true` is refused above, and the position of the first bad element is named."""
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"{where}: {option.name} must be a non-empty list of numbers, got {value!r}")
+    numbers: list[float] = []
+    for i, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, int | float):
+            raise ConfigError(f"{where}: {option.name}[{i}] must be a number, got {item!r}")
+        numbers.append(float(item))
+    return tuple(numbers)
+
+
+def _check_targets(values: Mapping[str, object], *, where: str) -> None:
+    """The one rule that spans two keys: a preset may not exceed the cap.
+
+    Checked here, at load, so a file that names a level nobody has rung out
+    refuses before the box starts (#9). A cap alone has nothing to check, and
+    presets with no cap are held to the built-in one.
+    """
+    presets = values.get("fader.presets")
+    if presets is None:
+        return
+    cap = values.get("fader.max_target_db", targets.DEFAULT_MAX_TARGET_DB)
+    assert isinstance(presets, tuple)
+    assert isinstance(cap, float)
+    try:
+        targets.build(presets, cap)
+    except targets.TargetError as exc:
+        raise ConfigError(f"{where}: fader.presets: {exc}") from exc
+
+
 def _in_port_range(value: int) -> bool:
     return PORT_MIN <= value <= PORT_MAX
 
@@ -192,6 +234,22 @@ def port(text: str) -> int:
     if not _in_port_range(value):
         raise argparse.ArgumentTypeError(f"{PORT_RANGE}, got {text!r}")
     return value
+
+
+def db_list(text: str) -> tuple[float, ...]:
+    """The argparse `type` for `--presets`: "0,-3,-6" as dB. Like `port`, so a
+    flag is held to the same shape as the key it overrides. A leading minus
+    needs the equals form (`--presets=-3,-6`), or argparse reads it as a flag."""
+    numbers: list[float] = []
+    for part in text.split(","):
+        try:
+            number = float(part)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"must be dB values separated by commas, got {text!r}") from None
+        if not math.isfinite(number):
+            raise argparse.ArgumentTypeError(f"must be dB values separated by commas, got {text!r}")
+        numbers.append(number)
+    return tuple(numbers)
 
 
 def values_from_mapping(data: Mapping[str, object], *, where: str = "config") -> dict[str, object]:
@@ -216,6 +274,7 @@ def values_from_mapping(data: Mapping[str, object], *, where: str = "config") ->
                 keys = ", ".join(item.key for item in known)
                 raise ConfigError(f"{where}: unknown key {key!r} in [{section}]. Known keys: {keys}")
             values[option.name] = _coerce(option, value, where=where)
+    _check_targets(values, where=where)
     return values
 
 

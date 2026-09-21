@@ -45,8 +45,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(built.levels, (300, 0, -300))
 
     def test_the_default_is_the_first_entry_not_the_loudest_and_not_the_cap(self):
-        built = targets.build((-2.0, -5.0, -8.0), 3.0)
-        self.assertEqual(built.default, -200)
+        built = targets.build((-5.0, -2.0, -8.0), 3.0)
+        self.assertEqual(built.default, -500)
         self.assertNotEqual(built.default, max(built.levels))
         self.assertNotEqual(built.default, built.max_level)
 
@@ -119,7 +119,7 @@ class TestTheTargetsObject(unittest.TestCase):
 
     def test_it_is_immutable(self):
         with self.assertRaises(AttributeError):
-            self.built.max_level = 300
+            self.built.max_level = 300  # type: ignore[misc]
 
 
 if __name__ == "__main__":
