@@ -492,7 +492,7 @@ def _opening(machine: Machine, event: Event, *, armed_by_operator: bool = False)
             stalled=False,
             riding_in=event.gradual,
             armed_by_operator=armed_by_operator,
-            # Every open ends at `open_level`, absolute, so the fader's place is
+            # Every open ends at the app's current target (#9), absolute, so the fader's place is
             # known from here whatever the box believed before (#107). Only
             # that: `_closing` and `_readying` are relative and never set this.
             # This is not a claim the packet was delivered - `step` is pure and

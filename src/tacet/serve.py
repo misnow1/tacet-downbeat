@@ -108,7 +108,7 @@ def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQu
     # First, so a preset above the cap raises before the log or the queue is
     # opened. The cap is held here as well as in the config file (#9): a flag
     # can name a level the file never saw.
-    targets.build(args.presets, args.max_target)
+    levels = targets.build(args.presets, args.max_target)
     queue = mirror.MirrorQueue(args.queue).open() if args.queue else None
     log = AnnotationLog(args.log, mirror=queue).open()
     console = dm7.Dm7Client(
@@ -127,6 +127,7 @@ def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQu
         hold_below_db=args.hold_below_db,
         ready_ride_seconds=args.ready_ride,
         stale_tap_seconds=args.stale_tap,
+        target_levels=levels,
     )
     return app, log, queue
 

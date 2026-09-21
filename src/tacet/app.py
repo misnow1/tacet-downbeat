@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, prompts, state, taps
+from . import dm7, prompts, state, taps, targets
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, record_refusal
 
@@ -83,6 +83,10 @@ TOOK_BACK = "took-back"
 #: Still worth a log entry, since it is a positive record that the operator
 #: was asked and confirmed nothing moved.
 STILL_MINE = "still-mine"
+#: The operator changed the standing target (#9). Written for a change that
+#: took, never for a refused one, and it moves nothing: the entry is the only
+#: record of which level an open was meant to go to.
+TARGET_SET = "target-set"
 #: The entries that say the box changed duty. The status the page shows,
 #: ARMED or STOOD DOWN, is timed from whichever of them was written last.
 _DUTY_ENTRIES = frozenset({ARMED, STOOD_DOWN})
@@ -93,6 +97,11 @@ STALE_REFUSAL = (
     "That tap was not done: it took {delay:.1f}s to reach the box, and a fader tap later than "
     "{threshold:.1f}s is not acted on. Look at the band, and tap again if you still mean it."
 )
+#: What the page says about a target level that is not one of the presets.
+#: Operator-facing, so it names the levels that do exist. Unreachable from the
+#: page, whose control offers only presets; it is what a stale page or a hand-
+#: made request meets.
+TARGET_NOT_A_PRESET = "{db:g} dB is not one of the target levels ({presets}). Nothing was changed."
 #: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
 #: this event and the box warns when a log already holds one, so all of them
 #: have to agree or the warning goes quiet.
@@ -179,7 +188,7 @@ class App:
         slow_open_seconds: float = dm7.DEFAULT_SLOW_OPEN_SECONDS,
         hold_below_db: float = dm7.DEFAULT_HOLD_BELOW_DB,
         ready_ride_seconds: float = dm7.DEFAULT_READY_RIDE_SECONDS,
-        open_level: int = dm7.UNITY,
+        target_levels: targets.Targets = targets.DEFAULT_TARGETS,
         monotonic: Callable[[], float] = time.monotonic,
         stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
     ) -> None:
@@ -191,7 +200,14 @@ class App:
         self._slow_open_seconds = slow_open_seconds
         self._hold_below_db = hold_below_db
         self._ready_ride_seconds = ready_ride_seconds
-        self._open_level = open_level
+        self._targets = target_levels
+        #: The standing target, in console units: where every open goes and what
+        #: READY's hold level is measured from (#9). Not `_move_target`, which is
+        #: where a move already in flight is heading - the two differ for as long
+        #: as a ride that started before a change is still running. Lives here
+        #: rather than in `state.Machine`, which knows no console units. Starts
+        #: at the first preset, and is only ever set to one of them.
+        self._target = self._targets.default
         self._monotonic = monotonic
         self._stale_tap_seconds = stale_tap_seconds
         #: The last fader tap refused as stale, until the next command. Shown
@@ -307,6 +323,46 @@ class App:
             self._record(STILL_MINE, data={"state": self.machine.state.value}, project_seconds=self._playhead())
             self._notify()
 
+    async def set_target(self, db: float, *, tap: taps.TapTiming | None = None) -> None:
+        """Change the standing target: the level the next open goes to (#9).
+
+        Stores the value and nothing else, in every state - no packet, no
+        machine step - so it is never refused by state, never held back while
+        the level is unknown, and deliberately not stale-checked: there is no
+        late move to guard, and a silently refused tap on a control that does
+        nothing yet is a dead end. A ride already under way keeps its original
+        destination and a fade still ends at -inf; READY's hold level and every
+        later open read the new value. Turning it into a ride is #128.
+
+        A level that is not one of the presets is refused, said on the page, and
+        not logged: nothing happened.
+        """
+        level = targets.level_for(db)
+        with _tapped(tap):
+            if not self._targets.allows(level):
+                self._last_refusal = TARGET_NOT_A_PRESET.format(db=db, presets=self._preset_names())
+                self._notify()
+                return
+            previous = self._target
+            self._target = level
+            self._last_refusal = None
+            self._record(
+                TARGET_SET,
+                data={
+                    "level": level,
+                    "db": _finite(dm7.to_db(level)),
+                    "previous_level": previous,
+                    "previous_db": _finite(dm7.to_db(previous)),
+                    "default": level == self._targets.default,
+                    "state": self.machine.state.value,
+                },
+                project_seconds=self._playhead(),
+            )
+            self._notify()
+
+    def _preset_names(self) -> str:
+        return ", ".join(f"{db:g}" for db in self._targets.db_values())
+
     def _stale_verdict(self, tap: taps.TapTiming | None) -> bool:
         """Whether this fader tap is too late to execute, noting it for the
         page if so. Every command clears the last one."""
@@ -388,11 +444,11 @@ class App:
 
     def _hold_level(self) -> int:
         """The READY hold level: short of target by `hold_below_db` (#6)."""
-        return dm7.clamp(self._open_level - round(self._hold_below_db * dm7.UNITS_PER_DB))
+        return dm7.clamp(self._target - round(self._hold_below_db * dm7.UNITS_PER_DB))
 
     def _fader_target(self, command: state.FaderCommand) -> int:
         if command is state.FaderCommand.OPEN:
-            return self._open_level
+            return self._target
         if command in (state.FaderCommand.READY, state.FaderCommand.REPORT_READY):
             return self._hold_level()
         # FADE and CLOSE_NOW.
@@ -426,25 +482,25 @@ class App:
         try:
             if command is state.FaderCommand.OPEN:
                 self._cancel_move()
-                if ride_seconds is None and not level_was_known and self._console.commanded_level == self._open_level:
+                if ride_seconds is None and not level_was_known and self._console.commanded_level == self._target:
                     # The box believes the fader is already there, and does not
                     # know that it is (#107): `open` ramps from the belief and
                     # says nothing to a target it is already at, which would
                     # mark the level known without the box ever having put the
                     # fader anywhere. Write it, so an open is absolute.
-                    self._console.send_level(self._open_level)
+                    self._console.send_level(self._target)
                 elif ride_seconds is None:
                     # The ordinary open, awaited: it is one packet and 20 ms,
                     # and a missed downbeat is unrecoverable, so it goes out
                     # before anything else gets a turn.
-                    await self._console.open(self._open_level)
+                    await self._console.open(self._target)
                 else:
                     # A ride-in takes over a second, and `annotate` deliberately
                     # moves the fader before writing the log. Awaiting it here
                     # would hold the annotation - and the playhead stamped on
                     # it - back by the whole length of the ramp, timestamping
                     # the tap where the ramp ended rather than where it began.
-                    self._start_ride_in(self._open_level, ride_seconds)
+                    self._start_ride_in(self._target, ride_seconds)
             elif command is state.FaderCommand.READY:
                 # Always a ride - there is no fast form of READY (#6) - and
                 # never held back for the same reason as the ride-in above.
@@ -1014,6 +1070,17 @@ class App:
             "duty": {
                 "armed": self.machine.state is not state.State.STANDING_DOWN,
                 "since": self._duty_since,
+            },
+            # The STANDING target: the level the next open goes to, set from MORE
+            # (#9). Not `fader.target`, which is where a move in flight is
+            # heading and is null when nothing is moving - the two differ while
+            # a ride that began before a change is still running. Commanded, like
+            # everything here, and never read back from the console.
+            "target": {
+                "level": self._target,
+                "db": _finite(dm7.to_db(self._target)),
+                "default_db": _finite(dm7.to_db(self._targets.default)),
+                "presets_db": list(self._targets.db_values()),
             },
             "fader": {
                 "commanded": self._console.commanded_level,

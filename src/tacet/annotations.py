@@ -217,6 +217,10 @@ VOCABULARY: tuple[EventType, ...] = (
     # The return prompt's negative answer: a pure confirmation that changes
     # nothing, tapped from the hand-off confirmation rather than a button in a grid.
     _instant("still-mine", "Still mine (no handoff)", Category.SESSION, button=False),
+    # The operator changed the standing target level (#9), from MORE. Nothing
+    # moved when it was written: the entry says which level the next open goes
+    # to, which the commanded entries alone cannot reconstruct.
+    _instant("target-set", "Target level set", Category.SESSION, button=False),
     # The arm / stand-down question (#19), written by the box and never tapped.
     # A prompt has five keys rather than one with an outcome field because each
     # instant becomes a Reaper marker named after its key (`SYS|<key>`), and a

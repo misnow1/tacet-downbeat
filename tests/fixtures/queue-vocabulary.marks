@@ -7,6 +7,7 @@ marker	SYS|stand-down-cancelled
 marker	SYS|handed-off
 marker	SYS|took-back
 marker	SYS|still-mine
+marker	SYS|target-set
 marker	SYS|prompt-raised
 marker	SYS|prompt-accepted
 marker	SYS|prompt-dismissed
