@@ -1331,7 +1331,8 @@ function grid(snapshots) {
   // Parsed fresh each time, exactly as a websocket frame arrives. The old guard
   // passed when handed the same object twice, which is why this matters.
   for (const snap of snapshots) context.render(JSON.parse(JSON.stringify(snap)));
-  return created.filter((node) => node.tag === "button");
+  // The vocabulary's buttons: the target segments (#9) are not among them.
+  return created.filter((node) => node.tag === "button" && node.dataset.preset === undefined);
 }
 
 const GRID = snapshot({}, {}, BUTTONS, []);
@@ -1374,7 +1375,7 @@ check(
   const { context, created } = browser();
   context.render(snapshot({}, {}, BUTTONS, []));
   context.render(snapshot({}, {}, BUTTONS, [open("q1", 2)]));
-  const buttons = created.filter((node) => node.tag === "button");
+  const buttons = created.filter((node) => node.tag === "button" && node.dataset.preset === undefined);
   const q1 = buttons.find((node) => node.dataset.key === "q1");
   check("an opened span still updates", q1.textContent, "Q1 (end)");
   check("and is still highlighted", q1.classList.contains("on"), true);
@@ -2007,8 +2008,8 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
   // The chip is amber only when the standing target is not the configured
   // default, so a leftover quiet setting is not forgotten.
   const { context, nodes } = browser();
-  const chip = nodes.get("target-level");
   context.render(targetSnapshot());
+  const chip = nodes.get("target-level");
   check("chip: reads the target at the default", chip.textContent, "target 0 dB");
   check("chip: no off-default at the default", chip.classList.contains("off-default"), false);
   context.render(targetSnapshot({ db: -3, level: -300 }));
@@ -2115,9 +2116,11 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
 {
   const { context, nodes, created } = browser();
   check("before any snapshot: no segments", presetSegments(created).length, 0);
-  check("before any snapshot: the chip is empty", nodes.get("target-level").textContent, "");
-  check("before any snapshot: and neutral", nodes.get("target-level").classList.contains("off-default"), false);
-  void context;
+  // Nothing has asked for the chip yet, so read it the way the page would.
+  const chip = context.document.getElementById("target-level");
+  check("before any snapshot: the chip is empty", chip.textContent, "");
+  check("before any snapshot: and neutral", chip.classList.contains("off-default"), false);
+  void nodes;
 }
 
 {

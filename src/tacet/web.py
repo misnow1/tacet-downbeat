@@ -553,6 +553,14 @@ font-size:13px}
    fader direction (see the open/release buttons below), and ARMED is not
    "open". */
 #strip > #duty{color:var(--dim);cursor:default}
+/* #9: the standing target's chip, straight after the duty chip and held to the
+   same `#strip >` rule for the same reason. Neutral while the target is the
+   configured default; amber only when it is not, so a leftover quiet setting is
+   not forgotten. The amber is the page's "attention" colour and the chip says
+   the same thing in words ("target -3 dB"), so it is never colour alone. This
+   is where the target is *shown*; where it is *changed* is MORE. */
+#strip > #target-level{color:var(--dim);cursor:default}
+#strip > #target-level.off-default{background:var(--fade);color:var(--fade-text);font-weight:700}
 #refusal{color:#ffb4a9;display:none}
 #refusal.loud{color:#fff;background:var(--warn);font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach
@@ -614,6 +622,17 @@ margin:4px 0 0}
 /* The Control grid's own gap is 8px; the same here puts the confirmation the
    same distance below the row as the buttons sit from each other. */
 #handoff-confirm{margin-top:8px}
+/* MORE > Target level (#9): one segment per preset, wrapping if a site offers
+   more than fit a row. 96 x 72 pt each, the size the UX review settled on for a
+   thumb: 96px wide is the label ("-3 dB") with room either side, 72px tall
+   matches the fader column's smallest button (score-reversed), so a tap here is
+   as easy to land as the ones that matter more. The selected segment is solid
+   and NEUTRAL, deliberately. Green and amber are the fader's direction (#5),
+   and this control moves nothing: it stores the level the next open goes to,
+   so it must not borrow the colour that means "up" or "down". */
+#target-control{display:flex;flex-wrap:wrap;gap:8px}
+#target-control button{width:96px;height:72px;font-size:16px;font-weight:700}
+#target-control button.selected{background:var(--text);color:var(--bg);border-color:var(--text)}
 /* Spans are a different kind of control from instants and must not look like
    them: one tap of these opens a region and the next one closes it. Not
    scoped to .grid: the fader column's buttons carry the same data attributes
@@ -737,6 +756,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </header>
 <div id="strip">
   <div id="duty"></div>
+  <div id="target-level"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>
@@ -786,6 +806,12 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       <button id="btn-handoff-no">No, still mine</button>
     </div>
   </div>
+  <!-- #9: the standing target level, from fader.presets. Below the hand-off
+       confirmation, never between it and its button (#108). The segments are
+       built by script from the snapshot; storing a level moves nothing and a
+       tap here leaves the operator on MORE (#109). -->
+  <h2>Target level</h2>
+  <div id="target-control"></div>
 </div>
 <div id="wake"></div>
 </div>

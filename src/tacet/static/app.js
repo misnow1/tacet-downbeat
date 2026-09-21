@@ -252,6 +252,71 @@ function renderButtons(buttons, orphans) {
   renderMoreTab(buttons, orphans);
 }
 
+// -- the standing target level (#9) ---------------------------------------------
+//
+// Two things in a snapshot are called a target, and they are not the same.
+// `snapshot.target` is the STANDING setting: the level the next open goes to and
+// the READY hold is measured from. It is what this section shows (the chip in
+// the strip) and changes (the segments in MORE > Target level). Changing it
+// stores a value and moves nothing. `snapshot.fader.target` is where a move
+// already in flight is heading, null when nothing is moving; the fader readout
+// below draws that as the arrow in "-10.00 dB -> 0.00 dB". A ride that began
+// before a change keeps going to its old destination, so for that second or so
+// the two disagree, and the chip says "(next open)" rather than let the readout
+// and the chip seem to contradict each other. A fade's destination is -inf, which
+// is not a competing target, so it adds nothing to the chip.
+//
+// Taps here leave the operator on MORE (#109) like every other tap in it. The
+// selected segment is painted from the snapshot on every render and never
+// optimistically: a refused or lost tap must not look like a change. The tap's
+// own feedback is the `sending` outline `post` puts on the node.
+
+// Pure: the chip's text. `nextOpenOnly` is true while a ride is heading
+// somewhere other than the standing target.
+function targetChipText(db, nextOpenOnly = false) {
+  return "target " + String(db) + " dB" + (nextOpenOnly ? " (next open)" : "");
+}
+
+// What the segments on screen were built from, compared before any rebuild for
+// the reason `renderedButtons` is: a tap landing on a node that was just
+// detached fires no click, and this control is one the operator taps while
+// looking at the field.
+let renderedPresets = null;
+let presetNodes = [];
+
+function buildPresetNode(db) {
+  const node = document.createElement("button");
+  node.textContent = String(db) + " dB";
+  // Deliberately no `dataset.key`: the vocabulary's own completeness check
+  // counts buttons by key, and this is not one of them.
+  node.dataset.preset = String(db);
+  node.onclick = () => post("/api/target", {db}, node);
+  return node;
+}
+
+function renderTargetControl(target) {
+  const signature = JSON.stringify(target.presets_db);
+  if (signature !== renderedPresets) {
+    const host = $("target-control");
+    host.innerHTML = "";
+    presetNodes = target.presets_db.map(buildPresetNode);
+    for (const node of presetNodes) host.appendChild(node);
+    renderedPresets = signature;
+  }
+  for (const node of presetNodes) {
+    node.classList.toggle("selected", Number(node.dataset.preset) === target.db);
+  }
+}
+
+function paintTarget(target, fader) {
+  // A ride to somewhere other than the standing target, and not a fade.
+  const ridingElsewhere = fader.target !== null && fader.target_db !== null && fader.target !== target.level;
+  const chip = $("target-level");
+  chip.textContent = targetChipText(target.db, ridingElsewhere);
+  chip.classList.toggle("off-default", target.db !== target.default_db);
+  renderTargetControl(target);
+}
+
 // -- MAIN / MORE ---------------------------------------------------------
 //
 // The fader column and the status strip are visible in both; only the two
@@ -425,6 +490,9 @@ function render(next) {
   // #19 sends no `duty` at all, and that must not throw and stop the whole
   // render - only leave the chip showing whatever it last did.
   if (next.duty) $("duty").textContent = dutyChip(next.duty, boxOffset(next));
+  // #9: guarded the same way. A box that predates the standing target sends no
+  // `target`, and that must not throw and stop the rest of the render.
+  if (next.target) paintTarget(next.target, next.fader);
   // A fader tap that arrived too late was not done. Nothing moved, so nothing
   // else on the page changes to say so, and the operator has to decide again
   // (#16).
@@ -515,8 +583,9 @@ function render(next) {
   for (const node of document.querySelectorAll(
     "#fader-top button, #fader-bottom button, #tab-main button, #tab-more-vocabulary button"
   )) {
-    // An orphan's label says what it does and never changes.
-    if (node.dataset.orphan) continue;
+    // An orphan's label says what it does and never changes, and a target
+    // segment is painted by `paintTarget`, not from the vocabulary (#9).
+    if (node.dataset.orphan || node.dataset.preset !== undefined) continue;
     const open = openSpan(next, node.dataset.key) !== undefined;
     node.classList.toggle("on", open);
     node.textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
