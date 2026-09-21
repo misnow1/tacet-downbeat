@@ -161,6 +161,40 @@ stop — it gets quiet. Any level-based measure reads the quiet section as a sto
 and begins closing, precisely when the mics are most needed and when
 band-to-crowd ratio is worst.
 
+**Pre-open on a score.** After a score the crowd cheers, and the operator rides
+the fader up during the cheering so it is already up when the band hits: the
+READY state and the `up-ready` button (#6, §6.3). The hard part is that the
+fader is up with no band. A detector trained on where the fader was would learn
+that crowd cheering means open, which is the amplitude failure §1 says a gate
+has already made; keeping the two apart is what §9 is for. As an operator act
+it is harmless, since the ball is dead. If the DJ or the other band plays
+instead (mostly Q4), it is pulled back quietly under the cheering with Score
+reversed, the ordinary 2 s fade. The box never does this by itself, in any
+phase (§6.4).
+
+**The cannon.** It fires on a touchdown or a field goal: a broadband
+simultaneous onset on all 14 mics, the same shape as the ensemble entrance §6.2
+opens on. The detector must **not** open on it. That is a design goal,
+discriminated and measured offline against captured scores (§7), not something
+to be accidentally right about. If it slips the cost is small: the ball is
+dead, and the 2 s fade closes it. That harmlessness does not hold in the state
+the cannon most often lands in, which is the reason to discriminate it anyway.
+It fires on exactly the scores that put the operator into READY, and from READY
+any trigger commits straight to OPEN from wherever the ride had got to
+(`tacet.state`, §6.3), a snap when the trigger is the detector's, not a ride.
+So a mistaken one there is a fast open from a fader already part-way up, with no
+band playing. There is no cannon button, deliberately - it fires in the busiest
+ten seconds of the night - so its instant is found offline, near a logged
+`touchdown` or `field-goal` (#14, §9).
+
+**Scoring songs repeat.** The band has a small repertoire, and the same song
+follows a field goal and a touchdown. The same music, many takes, across games,
+is the cheapest template available for testing hold-open offline, in particular
+whether a hold measure survives the PAT diminuendo above. That is the limit of
+it: offline test material only, never a runtime song classifier. The system
+decides whether sound is present and never why it stopped (§10); recognising
+which song is playing is a different system with a different failure mode.
+
 **Ragged stops.** When the band stops because a play is starting, it typically
 ravels out over a couple of seconds as the band works out what's happening.
 
@@ -682,14 +716,38 @@ STANDING DOWN ──(operator arms)──> IDLE
                                 (2 s fade)
 ```
 
+READY sits beside IDLE, entered only by the operator:
+
+```
+IDLE ──(operator: band likely)──> READY ──(any trigger)──> OPEN
+                                    |
+            score reversed, stand down, or a plain fade
+                                    v
+                              RELEASING (2 s fade)
+```
+
 - **STANDING DOWN** — boot state. Band not in the stands. Pregame with the other
   band on the field, halftime, exodus.
 - **IDLE** — armed, band in stands, DCA closed.
+- **READY** — the fader ridden to a hold level short of target with no band
+  playing yet: something good has just happened for the home team, the band is
+  likely and has not started (#6). Entered only by the operator - from IDLE, or
+  from STANDING DOWN, which it arms on the way (#89) - or reported with "It's at
+  ready level" when the box does not know where the fader is (§5.3). Never
+  entered by the detector, in any phase (§6.4). Any trigger commits it the rest
+  of the way to OPEN from wherever the ride had got to. Score reversed, a plain
+  fade and a stand-down take the ordinary 2 s fade rather than a snap (§5.3
+  covers the level-unknown case), because the fader is up and the box cannot be
+  sure the band has not quietly started.
 - **OPEN** — DCA at 0 dB. Held by tonality and envelope consensus, reinforced by
   on-grid whistle. **Must hold through the PAT diminuendo.**
 - **RELEASING** — 2 s fade. Any qualifying trigger snaps straight back to OPEN.
   This is what makes the reactive close survivable: the machine cannot see arms
   come down and will always trail the operator, and the fade absorbs that.
+
+READY is a fader-up-with-no-band span by construction, and the first one the
+log names. Game 3 is the first capture whose log carries them, which is why §9
+separates what the fader was doing from whether the band was playing.
 
 ### 6.4 Mode handling
 
@@ -727,6 +785,22 @@ raise the identical questions above once RTD exists, through the same
 second *source* for a question already fully specified here, never a new kind
 of question or a path that skips the accept tap.
 
+**Nothing but a person ever pre-opens (#6, #95).** READY is a prediction that
+something is about to play. Only someone watching can tell whether it will be
+the band, the DJ or the other band, and opening with no band sound is not "is
+sound present" at all. This is not the Phase 1/2 line a trigger sits on: a
+detector confirming that sound *is* present is exactly its Phase 2 job, but
+guessing that sound is about to start never becomes one. So `tacet.state`
+refuses a detector-sourced READY, and "It's at ready level" with it,
+unconditionally and before the phase gate, whatever `allow_detector` says; it is
+not a Phase 2 to-do. RTD changes the source of the question and nothing else
+(#95): a home score, a first down or a defensive stop can each raise a prompt
+in the same slot, answered by a thumb, with the decline logged too. Nothing
+moves the fader on RTD alone, in any phase, and §5.4's context-not-interlock
+rule holds here as it does for the play clock. Why write it here: "prompt, never
+act" reads like a Phase 1 caution that a better detector would retire, and it is
+not one. The fader would be going up on something nobody has heard yet.
+
 **Pregame.** STANDING DOWN as the boot state covers it. The two pregame channels
 are outside the DCA and unaffected; the automation only arms when the operator
 confirms the band is in the stands.
@@ -745,6 +819,10 @@ confirms the band is in the stands.
 - **Confirm the 10–20 ms delay is inaudible** in the live room, and whether hype
   and band paths need independent delay.
 - **Confirm the band whistle's fundamental** from multitrack.
+- **Measure the cannon** from a captured score and decide which of §6.2's
+  measures separates it from an ensemble entrance. §4 makes "the detector does
+  not open on the cannon" a design goal, and a goal like that has to be
+  discriminated deliberately and scored offline, not left to the 2 s fade.
 - ~~**Confirm DCA fader granularity.**~~ **Answered 2026-09-12: arbitrary
   hundredths.** The spec gives `min -32768 / max 1000 / scaling 100`, implying
   arbitrary hundredths of a dB, while the parameter notes point at Table 1 — a
@@ -983,6 +1061,8 @@ data is impossible and building the viewer later is easy.
    down. Every close is reactive. The fade is what makes that acceptable.
 4. **Never classify why the music stopped.** Fade the same way for all of them.
 5. **Announce, don't surprise.** Mode changes prompt; they don't happen silently.
+   Some things only ever prompt: nothing but a person puts the fader up before
+   the band plays (§6.4).
 6. **Structure, not level.** Level is the one dimension where the crowd wins.
 7. **Faders, never mutes.** The mics feed other mixes pre-fader, post-mute.
    Muting would take the band out of those mixes too.
