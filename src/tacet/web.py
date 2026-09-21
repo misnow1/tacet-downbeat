@@ -314,6 +314,33 @@ def _prompt_seq(payload: Mapping[str, Any]) -> int:
     return seq
 
 
+def _target_db(payload: Mapping[str, Any]) -> float:
+    """Which level the standing target is being set to (#9), in dB. A bool is
+    a number to Python and not to the page, and JSON's NaN and Infinity are not
+    levels, so both are refused here. Whether it is one of the *presets* is not
+    this function's business: that is a refusal on the snapshot, not a 400."""
+    if "db" not in payload:
+        raise _bad_request("'db' is required")
+    db = payload["db"]
+    if isinstance(db, bool) or not isinstance(db, int | float) or not math.isfinite(db):
+        raise _bad_request(f"'db' must be a number, got {db!r}")
+    return float(db)
+
+
+async def _set_target(request: web.Request) -> web.Response:
+    """Change the standing target level (#9). Stores the value and moves
+    nothing, in every state, so it is neither stale-checked nor refused by
+    state; a level that is not a preset comes back as a refusal on the
+    snapshot with a 200, like any other tap the box declines."""
+    app = request.app[_HUB].app
+    received = app.now()
+    payload = await _body(request)
+    db = _target_db(payload)
+    tap = _tap(payload, received)
+    await app.set_target(db, tap=tap)
+    return web.json_response(app.snapshot())
+
+
 def _prompt_route(name: str) -> Any:
     """An answer to the arm / stand-down question (#19). A `seq` that is not the
     open prompt's is not an error: it is the ordinary race between two
@@ -449,6 +476,7 @@ def create_app(
             web.post("/api/span/end", _span_end),
             # The arm / stand-down question (#19): one route for each answer,
             # like /api/handoff and /api/still-mine.
+            web.post("/api/target", _set_target),
             web.post("/api/prompt/accept", _prompt_route("accept_prompt")),
             web.post("/api/prompt/dismiss", _prompt_route("dismiss_prompt")),
             web.get("/ws", _websocket),

@@ -438,6 +438,7 @@ class TestTheTargetRoute(WebTestCase):
         self.assertIn("'db' is required", (await response.json())["error"])
 
     async def test_a_db_that_is_not_a_number_is_a_400_naming_the_field(self):
+        bad: object
         for bad in (True, False, "loud", "-3", None, [], {}):
             with self.subTest(bad=bad):
                 response = await self.post({"db": bad})
@@ -510,7 +511,7 @@ class TestTheTargetRoute(WebTestCase):
             await socket.receive()  # the initial snapshot
             await self.post({"db": -3.0})
             frame = json.loads((await socket.receive()).data)
-        self.assertEqual(frame["state"]["target"]["db"], -3.0)
+        self.assertEqual(frame["target"]["db"], -3.0)
 
 
 class TestAnnotation(WebTestCase):
