@@ -165,12 +165,11 @@ band-to-crowd ratio is worst.
 the fader up during the cheering so it is already up when the band hits: the
 READY state and the `up-ready` button (#6, §6.3). The hard part is that the
 fader is up with no band. A detector trained on where the fader was would learn
-that crowd cheering means open, which is the amplitude failure §1 says a gate
-has already made; keeping the two apart is what §9 is for. As an operator act
-it is harmless, since the ball is dead. If the DJ or the other band plays
-instead (mostly Q4), it is pulled back quietly under the cheering with Score
-reversed, the ordinary 2 s fade. The box never does this by itself, in any
-phase (§6.4).
+that crowd cheering means open, the amplitude failure §1 describes; keeping the
+two apart is what §9 is for. As an operator act it is harmless, since the ball
+is dead. If the DJ or the other band plays instead (mostly Q4), it is pulled
+back quietly under the cheering with Score reversed, the ordinary 2 s fade. The
+box never does this by itself, in any phase (§6.4).
 
 **The cannon.** It fires on a touchdown or a field goal: a broadband
 simultaneous onset on all 14 mics, the same shape as the ensemble entrance §6.2
@@ -192,8 +191,9 @@ follows a field goal and a touchdown. The same music, many takes, across games,
 is the cheapest template available for testing hold-open offline, in particular
 whether a hold measure survives the PAT diminuendo above. That is the limit of
 it: offline test material only, never a runtime song classifier. The system
-decides whether sound is present and never why it stopped (§10); recognising
-which song is playing is a different system with a different failure mode.
+decides whether sound is present and never why it stopped (§10, principle 4);
+recognising which song is playing is a different system with a different
+failure mode.
 
 **Ragged stops.** When the band stops because a play is starting, it typically
 ravels out over a couple of seconds as the band works out what's happening.
@@ -1031,12 +1031,13 @@ things, and the detector is trained on only one of them.
   target, and the only question this system answers (§1, §2). Spans over the
   capture timeline, with two values: present and absent. The PAT diminuendo is
   *inside* a present span: the band gets quiet, it does not stop (§4). No value
-  says why a span ended (§10), so there is no "breath mark" or "end of song"
-  value, ever. What else was sounding - the other band, the DJ, the PA - is
-  context, from the `other-band-on-field` annotation and from what #17 will
-  display and log, and is not a value of this label. It is binary by decision;
-  if a quiet-present value is ever wanted, that is a schema decision for the
-  label sidecar, not for this document.
+  says why a span ended (§10, principle 4), so there is no "breath mark" or
+  "end of song" value, ever. What else was sounding - the other band, the DJ,
+  the PA - is context, from the `other-band-on-field` annotation and from what
+  #17 will display and log, and is not a value of this label. It is binary by
+  decision; if a quiet-present value is ever wanted, that is a decision for
+  whatever format ends up holding the offline labels (below), not for this
+  document.
 - **`fader-state`** - where the DCA actually was, as three separable facts. The
   *applied gain over time*, recovered by comparing the post-DCA reference
   channel against the pre-fader mics: the truth of it, whoever was driving. The
@@ -1081,8 +1082,9 @@ Game 3:
 - *READY spans:* `commanded` entries carry `command` (`ready` or
   `report-ready`), `detail` (`up-ready` or `report-ready`), `state` (`"ready"`),
   `level` and `target`, and `move-landed` and `move-failed` carry where the ride
-  ended. A span ends at the next `commanded` entry whose `state` is no longer
-  `ready`.
+  ended. A span ends at the next entry whose `state` is no longer `ready`: a
+  `commanded` entry, or the `stood-down` that ends it when the level was unknown
+  and no fade was sent (§5.3).
 - *Why the operator got ready:* the game instants `touchdown`, `field-goal`,
   `first-down` and `defensive-stop`.
 - *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
