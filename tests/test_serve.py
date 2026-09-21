@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
-from tacet import annotations, disk, dm7, serve
+from tacet import annotations, disk, dm7, serve, targets
 
 
 class TestStopConfirmation(unittest.TestCase):
@@ -108,6 +108,17 @@ class TestStartupBannerSaysWhatItWasTold(unittest.TestCase):
         # #16: the threshold is a site value, so it is said out loud.
         self.assertIn("over 2.0s late is not executed", banner())
         self.assertIn("over 4.5s late", banner("--stale-tap", "4.5"))
+
+    def test_it_says_the_target_level_the_presets_and_the_cap(self):
+        # #9: the standing target is a site value, so it is said out loud, and
+        # the minus is ASCII because a level here gets copy-pasted.
+        text = banner()
+        self.assertIn("target", text)
+        self.assertIn("0.0 dB   presets 0.0 / -3.0 / -6.0   cap 0.0 dB", text)
+
+    def test_the_target_row_follows_the_flags(self):
+        text = banner("--presets=-2,-5,-8", "--max-target", "3")
+        self.assertIn("-2.0 dB   presets -2.0 / -5.0 / -8.0   cap 3.0 dB", text)
 
     def test_quantized_is_mentioned_only_when_it_is_on(self):
         self.assertNotIn("Table 1", banner())
@@ -395,6 +406,41 @@ class TestTheLogIsRequiredOnTheCommandLine(_RunMain):
         self.assertEqual(code, 2)
         self.assertIn("capture.log", stderr)
         self.assertNotIn("Traceback", stderr)
+
+
+class TestAPresetAboveTheCapStopsTheBoxInWords(_RunMain):
+    """#9: the cap is enforced when it arrives as a flag, not only in the file."""
+
+    ARGV = ("--console-host", "192.0.2.1", "--dca", "3")
+
+    def test_a_flag_above_the_cap_is_a_command_line_error_not_a_traceback(self):
+        code, stderr = self.run_main([*self.ARGV, "--log", str(self.log), "--presets", "3,0,-3"])
+        self.assertEqual(code, 2)
+        self.assertIn("3.0", stderr)
+        self.assertIn("--presets", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_a_raised_cap_flag_admits_it(self):
+        args = serve.parser().parse_args([*self.ARGV, "--presets", "3,0,-3", "--max-target", "3"])
+        self.assertEqual(targets.build(args.presets, args.max_target).default, 300)
+
+    def test_build_enforces_the_cap_before_it_opens_anything(self):
+        args = serve.parser().parse_args([*self.ARGV, "--log", str(self.log), "--presets", "3,0"])
+        with self.assertRaises(targets.TargetError):
+            serve.build(args)
+        self.assertFalse(self.log.exists())
+
+    def test_a_leading_minus_needs_the_equals_form(self):
+        # argparse reads `-3,-6` as a flag. The help says so; pinned so the
+        # spelling the runbook gives is the one that works.
+        args = serve.parser().parse_args([*self.ARGV, "--presets=-3,-6"])
+        self.assertEqual(args.presets, (-3.0, -6.0))
+
+    def test_a_config_above_its_own_cap_refuses_at_load(self):
+        self.config.write_text("[fader]\npresets = [1.0]\nmax_target_db = 0.0\n", encoding="utf-8")
+        code, stderr = self.run_main([*self.ARGV, "--log", str(self.log)])
+        self.assertEqual(code, 2)
+        self.assertIn("fader.presets", stderr)
 
 
 class TestAnUnreadableLogStopsTheBoxInWords(_RunMain):
