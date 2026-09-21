@@ -100,6 +100,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 | Fader | `unknown`, tagged **unknown**. The box does not know where the fader is at any boot, and says so rather than showing a number it cannot vouch for |
 | Recording | `unknown`, tagged **no feedback** (correct until something is recorded) |
 | Top of the screen | Nothing. No banner is the healthy state |
+| Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
 
@@ -247,6 +248,16 @@ button to end it.
 **The fader line is what the box commanded, never what the console reports**,
 with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
 answer, and a move made in StageMix will not appear on it.
+
+**The target** is the level every open goes to. The chip in the strip always
+reads it (`target 0 dB`) and goes amber when it is not the default - the first
+of the site's presets - so a quiet setting left over from earlier is not
+forgotten. Change it in MORE, under **Target level**: tap a segment, and the
+solid one is the target now. **Nothing moves when you tap it.** The fader stays
+where it is and the next open goes to the new level; **Ready**'s hold level is
+measured from it too. It works in every state, even while the fader reads
+`unknown`. If the chip adds `(next open)`, a ride that started before you
+changed it is still on its way to the old level, and the change waits.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
 the box does not know where it really is. Nothing that ramps from a level can be

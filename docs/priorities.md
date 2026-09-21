@@ -32,7 +32,10 @@ page and the docs that describe it (#125). #109 is done too: a tap in
 MORE now leaves the operator on MORE, and the tab moves only when they tap a
 tab button. #108 is done as well: the StageMix hand-off confirmation now
 renders under its button in MORE, and switching tabs cancels an unanswered
-one, so it can never suppress #19's question.
+one, so it can never suppress #19's question. #9 is built at a narrower scope
+than its body (a maintainer decision, 2026-09-20): Game 3 ships the standing
+target only - the presets, the cap, the control on MORE and the readout - and
+the mid-song retarget ride is split out as #128 for Game 4.
 
 ## Game 3 (2026-10-02)
 
@@ -57,14 +60,15 @@ Alongside, not in the build order above:
 - [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the fader-belief mechanism in operator terms. Unblocked: #107 has landed, so it describes what shipped. What it documents is `level_known` and absolute-vs-relative, not handoff/take-back - there is no take-back pair any more, and design.md 5.3 now carries the short version for it to build on.
 - ~~[#108](https://github.com/misnow1/tacet-downbeat/issues/108)~~ Done. The StageMix hand-off Yes / No confirmation now renders directly under the button in MORE instead of the top slot. Beyond the issue's wording, and decided in its comments: switching tabs cancels an unanswered confirmation and sends nothing, so an invisible one can never suppress #19's arm / stand-down question.
 - ~~[#109](https://github.com/misnow1/tacet-downbeat/issues/109)~~ Done. A tap in MORE, including Note, Arm / Stand down / Start recording and the StageMix answers, now leaves the operator on MORE; the tab moves only when they tap a tab button. Revisit if it turns out to be the wrong call once used in a game.
+- ~~[#9](https://github.com/misnow1/tacet-downbeat/issues/9)~~ Done, at its new scope: the standing target only. `fader.presets` (the first entry is the default, shipping `[0.0, -3.0, -6.0]`) and `fader.max_target_db` (shipping 0 dB until the on-site ring-out; a preset above it refuses at load), a runtime target on the app that every open and READY's hold level follow, MORE > Target level, and a strip readout that goes amber when the target is not the default. Changing it stores a value and sends nothing, in every state; the next open uses it. The mid-song retarget ride is #128, in Game 4.
 - ~~[#116](https://github.com/misnow1/tacet-downbeat/issues/116)/[#117](https://github.com/misnow1/tacet-downbeat/issues/117)/[#118](https://github.com/misnow1/tacet-downbeat/issues/118)~~ Done, together. #116: an absolute command whose send failed now un-knows the level again, instead of marking it known on a packet that never landed. #117: HANDOFF is now operator-only, so a detector can never un-know the level once Phase 2 is declared. #118: a hand-off always earns its `handed-off` entry, even when the level already reads unknown - the record a restart under StageMix could not otherwise leave.
 
 ## Proposed for Game 4
 
-- [#9](https://github.com/misnow1/tacet-downbeat/issues/9) Preset target levels. The safest of the operator page issues to defer: 0 dB is standard practice (design.md 4), and `+3` means nothing until the on-site ring-out. Still in the Game 3 milestone until the maintainer moves it.
+- [#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride: changing the target while the fader is open rides to the new level. Split from #9, which ships the standing target alone for Game 3. It is a real fader tap (stale-checked, refused while the level is unknown), which is why it is not folded in: #9 stores a value and moves nothing.
 
 The Game 4 milestone holds the rest: #17, #21, #42, #43, #44, #46, #47, #48,
-#49, #51, #66, #73.
+#49, #51, #66, #73, #128.
 
 ## Keeping this current
 

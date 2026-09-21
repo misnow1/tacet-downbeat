@@ -100,8 +100,8 @@ STALE_REFUSAL = (
 #: What the page says about a target level that is not one of the presets.
 #: Operator-facing, so it names the levels that do exist. Unreachable from the
 #: page, whose control offers only presets; it is what a stale page or a hand-
-#: made request meets.
-TARGET_NOT_A_PRESET = "{db:g} dB is not one of the target levels ({presets}). Nothing was changed."
+#: made request meets. Quoted in docs/troubleshooting.md, where a test holds it.
+TARGET_NOT_A_PRESET = "Not a target level: {db:g} dB is not one of the presets ({presets}). Nothing was changed."
 #: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
 #: this event and the box warns when a log already holds one, so all of them
 #: have to agree or the warning goes quiet.

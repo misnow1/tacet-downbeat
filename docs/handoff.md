@@ -292,6 +292,14 @@ Worth checking:
   `#duty` is a fixed first child of `#strip`, which wraps; whether a long
   refusal or the link banner pushes the chip onto a second line, and whether
   that reads fine at arm's length, is also unrendered arithmetic until now.
+  The strip now carries a third chip (#9), `#target-level`, right after
+  `#duty`, so whether duty + target + a banner still fit is the same
+  unrendered arithmetic with less room, and the amber `off-default` state is
+  the one to look at for legibility in sun. Also check that the target
+  segments at the bottom of MORE (**Target level**, 96 x 72 each) are not
+  below the fold on a short landscape screen: they sit under the Control row,
+  the hand-off confirmation and the whole vocabulary, so this wants a look on
+  the device rather than on the desktop.
 - **The hallway test #19 exists for:** arm first (accept the Arm question, or
   **Arm** in MORE) - `band-exits-stands` raises nothing from a boot that is
   already STANDING DOWN, and the point of this test is the guard, not a

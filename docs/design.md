@@ -293,8 +293,9 @@ hands.
 What the flag gates is absolute against relative:
 
 - An **absolute** command puts the fader in one known place whatever the box
-  believed: the snap open to unity, and the operator's instant close to -inf.
-  Neither waits on the belief, and both make the level known. The instant close
+  believed: the snap open to the current target, which defaults to unity, and
+  the operator's instant close to -inf. Neither waits on the belief, and both
+  make the level known. The instant close
   is available in every state; a snap open is too, except when the box already
   knows the fader is open and nothing is pending, where it would only repeat
   what is true. An absolute command whose send failed puts the belief back: the

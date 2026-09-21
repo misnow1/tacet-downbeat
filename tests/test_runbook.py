@@ -141,6 +141,14 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         # Quoted up to the first value filled in.
         self.assertIn(app.STALE_REFUSAL.split("{")[0].strip(), self.troubleshooting)
 
+    def test_the_runbook_quotes_the_target_refusal_and_the_log_entry(self) -> None:
+        # #9: quoted up to the first value filled in, which must not be empty
+        # or the assertion below would hold of any document.
+        quoted = app.TARGET_NOT_A_PRESET.split("{")[0].strip()
+        self.assertTrue(quoted)
+        self.assertIn(quoted, self.troubleshooting)
+        self.assertIn(f"`{app.TARGET_SET}`", self.troubleshooting)
+
     def test_the_runbook_quotes_every_unknown_level_refusal(self) -> None:
         # #107: quoted up to the semicolon, which is where each says what to do
         # about it and the runbook says that on its own.
