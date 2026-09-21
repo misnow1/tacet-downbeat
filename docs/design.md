@@ -300,9 +300,9 @@ The box therefore cannot:
 - confirm that the console acted on a command
 
 Consequences are handled in §5.5 — the UI shows *commanded*, not *confirmed* —
-and in §9, where Phase 1 ground truth comes from a post-DCA reference channel
-rather than from OSC. There is no contention over authority only in the weak
-sense that the console accepts the last write from any controller; nothing
+and in §9, where Phase 1's fader-state labels come from a post-DCA reference
+channel rather than from OSC. There is no contention over authority only in the
+weak sense that the console accepts the last write from any controller; nothing
 arbitrates, and neither side can see the other.
 
 The DM7 also speaks MIDI, and Yamaha consoles have historically emitted
@@ -992,7 +992,7 @@ Phase 0 also carries the annotation and recording transport of §5.9 — record
 arming, the event vocabulary of §5.6, and marker mirroring into Reaper. This is
 a deliberate widening of the original scope. It pays immediately: it means the
 *first* captured game is annotated even though no detector exists yet, and
-annotation is the one part of ground truth that cannot be reconstructed later.
+annotation is the one part of the labelling that cannot be reconstructed later.
 
 **Runtime: Python 3.11+.** The choice anticipates Phase 2, where the detector —
 inevitably numpy/scipy — has to share a process with fader control.
@@ -1014,20 +1014,107 @@ Captured per game:
 - DVS multitrack of all 14 channels (license already owned)
 - A **post-DCA reference channel** — one additional Dante channel carrying the
   band PA feed, recorded alongside the 14 mics. Compared against the pre-fader
-  mics it recovers the operator's fader moves, and **this is the ground truth
-  label set**. It replaces the OSC subscription originally planned here, which
-  the protocol does not support (§5.3). It is also the better measurement: it
-  captures gain as actually applied to the PA, and it is the only available
-  confirmation that a command reached the console at all.
+  mics it recovers the fader moves as applied, and **this is the source of the
+  fader-state labels** (below). It replaces the OSC subscription originally
+  planned here, which the protocol does not support (§5.3). It is also the
+  better measurement: it captures gain as actually applied to the PA, and it is
+  the only available confirmation that a command reached the console at all.
 - RTD stream, timestamped
 - Every detector decision the box would have made
-- **Live operator annotations** (§5.6) — the portion of ground truth that cannot
-  be reconstructed afterward
+- **Live operator annotations** (§5.6) — the portion of the labelling that
+  cannot be reconstructed afterward
+
+**Two label sets, and they are not the same set.** Phase 1 labels two different
+things, and the detector is trained on only one of them.
+
+- **`band-present`** - was the band sounding. This is the detector's training
+  target, and the only question this system answers (§1, §2). Spans over the
+  capture timeline, with two values: present and absent. The PAT diminuendo is
+  *inside* a present span: the band gets quiet, it does not stop (§4). No value
+  says why a span ended (§10), so there is no "breath mark" or "end of song"
+  value, ever. What else was sounding - the other band, the DJ, the PA - is
+  context, from the `other-band-on-field` annotation and from what #17 will
+  display and log, and is not a value of this label. It is binary by decision;
+  if a quiet-present value is ever wanted, that is a schema decision for the
+  label sidecar, not for this document.
+- **`fader-state`** - where the DCA actually was, as three separable facts. The
+  *applied gain over time*, recovered by comparing the post-DCA reference
+  channel against the pre-fader mics: the truth of it, whoever was driving. The
+  box's own *intent and cause*, from the `commanded` entries (`command`,
+  `detail`, `state`, `level`, `target`), which exist only where the box was
+  driving. And *who was holding the fader*, from `handed-off`, `took-back` and
+  `still-mine` (§5.3, #118).
+
+How the hard cases of §4 map onto the two:
+
+- **Pre-open, the READY span:** band absent. Fader up at the hold level, reached
+  by a ride (`state: "ready"`).
+- **Commit out of READY on the downbeat:** band flips to present at the true
+  first onset, which is earlier than the tap. Fader open.
+- **The cannon:** band absent, at a broadband onset instant. Fader usually
+  already up (READY), sometimes idle.
+- **PAT diminuendo:** band present. Fader open, while the level on the mics
+  looks like absence.
+- **Ragged stop:** band present, trailing to absent. Fader open, then
+  releasing.
+
+The rows where the two disagree are the valuable part: a fader that is up with
+no band, and a band that started before the fader did. `fader-state` is also the
+easy one to get - one channel, no human - and using it as the training target
+would teach the detector that crowd cheering means open, the amplitude failure
+§1 describes. The convenient label is the wrong one.
+
+**What produces each.** `fader-state` is derivable by machine from the capture
+and the log, with no human pass. `band-present` is not derivable from it at all:
+it comes from the live annotations (§5.6) plus one offline review pass over the
+14 mics. That squares with §5.6, which says most band state cannot be
+reconstructed afterwards. Whether the band was *sounding* is the exception, the
+one thing the multitrack really does carry, so it needs no live button, only
+someone to sit down with the audio once. What cannot be reconstructed is where
+the band was, whose timeout it was, and why a close happened. `false-open` and
+`missed-entrance` (§5.6) are the operator's judgement of what a detector would
+have got wrong: evidence for the review pass, not a label set of their own.
+
+**What the log already carries.** Nothing new is needed in the schema before
+Game 3:
+
+- *READY spans:* `commanded` entries carry `command` (`ready` or
+  `report-ready`), `detail` (`up-ready` or `report-ready`), `state` (`"ready"`),
+  `level` and `target`, and `move-landed` and `move-failed` carry where the ride
+  ended. A span ends at the next `commanded` entry whose `state` is no longer
+  `ready`.
+- *Why the operator got ready:* the game instants `touchdown`, `field-goal`,
+  `first-down` and `defensive-stop`.
+- *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
+  `score-reversed` or `out` for an abandon.
+- *Duty and where the band was:* `armed`, `stood-down`, `band-enters-stands`,
+  `band-exits-stands` and `halftime-exodus`.
+- *Control authority:* `handed-off`, `took-back` and `still-mine`.
+- *Taps that did not execute:* `stale-tap`, or a fader button's own entry marked
+  `executed: false`.
+- *The common clock:* Reaper's playhead on every entry (§5.6, §5.9).
+
+The one capture prerequisite is not a schema change: the post-DCA reference
+channel has to actually be patched and recorded (`docs/reaper.md`'s track list,
+#13's patch list). Game 2 had none, so its only fader labels are the `commanded`
+entries, and only where the box was driving; `fader-state` has not yet been
+recovered from a real capture. Game 2 also predates `up-ready`, so its pre-opens
+look like ordinary opens; telling them apart is for #21's corrections sidecar
+(Game 4).
+
+**The gap: nowhere for offline labels to live.** The box's log is live and
+append-only, and #21's corrections sidecar corrects the log rather than
+labelling the audio. `band-present` spans, and instants found offline like the
+cannon (which has no key, on purpose), are produced weeks later, from the audio.
+This document deliberately does not decide their format. It is wanted before the
+Game 3 capture is analysed, not before it is made, which is why it does not
+block the capture.
 
 After two or three games this yields real audio, real crowd, real touchdown
-sequences, and a labeled answer key. Candidate detectors can then be replayed
-against all of it offline at many times real speed, with thresholds and time
-constants tuned against reality instead of guessed.
+sequences, and audio labelled for whether the band was playing, once it has been
+reviewed. Candidate detectors can then be replayed against all of it offline at
+many times real speed, with thresholds and time constants tuned against reality
+instead of guessed.
 
 ### Phase 2 — Assisted
 
