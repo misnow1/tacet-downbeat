@@ -271,6 +271,87 @@ class TestPage(WebTestCase):
         self.assertNotIn('id="duty" style="display:none', body)
 
 
+class TestThePageCarriesTheTargetControl(WebTestCase):
+    """#9: the standing target's segmented control on MORE and its chip in the
+    strip. Both ship empty - the script fills them from the snapshot - and where
+    each sits is pinned, since #108 put the hand-off confirmation directly under
+    its button and nothing may come between them."""
+
+    async def body(self):
+        return await (await self.client.get("/")).text()
+
+    def rule(self, body, selector):
+        return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+    async def test_the_control_and_the_chip_ship_empty(self):
+        body = await self.body()
+        self.assertIn('<div id="target-control"></div>', body)
+        self.assertIn('<div id="target-level"></div>', body)
+
+    async def test_the_control_is_in_more_after_the_handoff_confirmation(self):
+        body = await self.body()
+        more = body.split('<div id="tab-more" ', 1)[1].split('<div id="wake">', 1)[0]
+        self.assertIn('id="target-control"', more)
+        self.assertLess(more.index('id="handoff-confirm"'), more.index('id="target-control"'))
+        # The confirmation stays directly under its button: the heading comes
+        # after the panel closes, not between the two.
+        self.assertLess(more.index('id="btn-handoff-no"'), more.index("<h2>Target level</h2>"))
+        self.assertLess(more.index("<h2>Target level</h2>"), more.index('id="target-control"'))
+
+    async def test_nothing_sits_between_the_button_and_its_confirmation(self):
+        body = await self.body()
+        between = body.split('id="btn-handoff"', 1)[1].split('id="handoff-confirm"', 1)[0]
+        self.assertNotIn("target", between)
+
+    async def test_both_are_before_the_fader_column(self):
+        body = await self.body()
+        column = body.index('id="fader-column"')
+        self.assertLess(body.index('id="target-control"'), column)
+        self.assertLess(body.index('id="target-level"'), column)
+
+    async def test_the_chip_is_in_the_strip_after_the_duty_chip(self):
+        body = await self.body()
+        strip = body.split('<div id="strip">', 1)[1].split('<div id="prompt">', 1)[0]
+        self.assertIn('id="target-level"', strip)
+        self.assertLess(strip.index('id="duty"'), strip.index('id="target-level"'))
+
+    async def test_the_chip_rules_are_scoped_to_the_strip_so_they_win(self):
+        # `#strip > div` is an id plus a type: an id alone would lose to it.
+        body = await self.body()
+        self.assertIn("#strip > #target-level{", body)
+        self.assertIn("cursor:default", self.rule(body, "#strip > #target-level"))
+        amber = self.rule(body, "#strip > #target-level.off-default")
+        self.assertIn("var(--fade)", amber)
+        self.assertIn("var(--fade-text)", amber)
+
+    async def test_the_segments_are_96_by_72(self):
+        body = await self.body()
+        rule = self.rule(body, "#target-control button")
+        self.assertIn("96px", rule)
+        self.assertIn("72px", rule)
+
+    async def test_the_selected_segment_is_neutral_because_this_control_moves_nothing(self):
+        # Green and amber are the fader's direction (#5); a segment that
+        # changes no level must not borrow either.
+        body = await self.body()
+        rule = self.rule(body, "#target-control button.selected")
+        self.assertNotIn("var(--open)", rule)
+        self.assertNotIn("var(--fade)", rule)
+        self.assertIn("var(--text)", rule)
+
+    async def test_the_new_rules_use_no_fixed_or_absolute_positioning(self):
+        body = await self.body()
+        for selector in ("#strip > #target-level", "#target-control", "#target-control button"):
+            rule = self.rule(body, selector)
+            self.assertNotIn("position:fixed", rule, selector)
+            self.assertNotIn("position:absolute", rule, selector)
+
+    async def test_the_script_and_the_page_agree_on_the_ids(self):
+        body = await self.body()
+        for element_id in ("target-control", "target-level"):
+            self.assertIn(f'$("{element_id}")', body)
+
+
 class TestThePageHasWhereTapsReport(WebTestCase):
     async def test_the_tap_line_is_on_the_page(self):
         # The script writes a failed tap here (#11); a page without it throws
