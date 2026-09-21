@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-09-20.** #5 is built (the pinned fader column, the fixed
+**Last updated 2026-09-21.** #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -35,7 +35,14 @@ renders under its button in MORE, and switching tabs cancels an unanswered
 one, so it can never suppress #19's question. #9 is built at a narrower scope
 than its body (a maintainer decision, 2026-09-20): Game 3 ships the standing
 target only - the presets, the cap, the control on MORE and the readout - and
-the mid-song retarget ride is split out as #128 for Game 4.
+the mid-song retarget ride is split out as #128 for Game 4. #15 is done:
+design.md section 4 now carries the pre-open, the cannon and the repeating
+scoring songs, 6.3 defines READY, 6.4 records that nothing but a person ever
+pre-opens in any phase (#6, #95, and state.py's unconditional refusal), and 9
+separates band-present from fader-state, the point of the issue. One follow-up
+falls out and is not yet filed: where offline labels live, since the box's log
+is append-only and #21's sidecar corrects the log rather than labelling the
+audio - wanted before the Game 3 capture is analysed, not before it is made.
 
 ## Game 3 (2026-10-02)
 
@@ -55,7 +62,7 @@ In build order. Each step says why it comes where it does.
 Alongside, not in the build order above:
 
 - [#13](https://github.com/misnow1/tacet-downbeat/issues/13) gameday.md: game 3 patch list, network plan, stale sections. Needs site information; must land before game day regardless. Includes setting `capture.audio_path` and `capture.channels` in the box's `tacet.toml` (#53).
-- [#15](https://github.com/misnow1/tacet-downbeat/issues/15) design.md: pre-open and cannon hard cases, now also READY (#6) as a fader-up-no-band span Phase 1 has to be able to exclude. Documentation; any time.
+- ~~[#15](https://github.com/misnow1/tacet-downbeat/issues/15)~~ Done. design.md now carries the pre-open, cannon and repeating-scoring-song hard cases, READY in 6.3, the rule that only a person ever pre-opens in 6.4, and section 9's split into band-present and fader-state labels. The format for offline labels is deliberately left undecided (the log is append-only; #21's sidecar corrects it, it does not label audio) and is wanted before the Game 3 capture is analysed.
 - [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. The first pass is written up in `docs/research/dm7-fader-readback.md`: no documented readback path exists, but Yamaha's own Crestron module for the DM7 points at a second, TCP protocol on 49280 that answers reads, and the OSC spec does define one `get` (`sscurrentt_ex`, scenes), so design.md 5.3's "no `get`" needs correcting. Still open: whether to ask Yamaha for the protocol document, and one read-only capture of a free client to see whether the console notifies observers of an OSC-originated fader move. If it does, #107 gets simpler; nothing here reaches the control path this season.
 - [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the fader-belief mechanism in operator terms. Unblocked: #107 has landed, so it describes what shipped. What it documents is `level_known` and absolute-vs-relative, not handoff/take-back - there is no take-back pair any more, and design.md 5.3 now carries the short version for it to build on.
 - ~~[#108](https://github.com/misnow1/tacet-downbeat/issues/108)~~ Done. The StageMix hand-off Yes / No confirmation now renders directly under the button in MORE instead of the top slot. Beyond the issue's wording, and decided in its comments: switching tabs cancels an unanswered confirmation and sends nothing, so an invisible one can never suppress #19's arm / stand-down question.
