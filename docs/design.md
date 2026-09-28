@@ -161,6 +161,40 @@ stop — it gets quiet. Any level-based measure reads the quiet section as a sto
 and begins closing, precisely when the mics are most needed and when
 band-to-crowd ratio is worst.
 
+**Pre-open on a score.** After a score the crowd cheers, and the operator rides
+the fader up during the cheering so it is already up when the band hits: the
+READY state and the `up-ready` button (#6, §6.3). The hard part is that the
+fader is up with no band. A detector trained on where the fader was would learn
+that crowd cheering means open, the amplitude failure §1 describes; keeping the
+two apart is what §9 is for. As an operator act it is harmless, since the ball
+is dead. If the DJ or the other band plays instead (mostly Q4), it is pulled
+back quietly under the cheering with Score reversed, the ordinary 2 s fade. The
+box never does this by itself, in any phase (§6.4).
+
+**The cannon.** It fires on a touchdown or a field goal: a broadband
+simultaneous onset on all 14 mics, the same shape as the ensemble entrance §6.2
+opens on. The detector must **not** open on it. That is a design goal,
+discriminated and measured offline against captured scores (§7), not something
+to be accidentally right about. If it slips the cost is small: the ball is
+dead, and the 2 s fade closes it. That harmlessness does not hold in the state
+the cannon most often lands in, which is the reason to discriminate it anyway.
+It fires on exactly the scores that put the operator into READY, and from READY
+any trigger commits straight to OPEN from wherever the ride had got to
+(`tacet.state`, §6.3), a snap when the trigger is the detector's, not a ride.
+So a mistaken one there is a fast open from a fader already part-way up, with no
+band playing. There is no cannon button, deliberately - it fires in the busiest
+ten seconds of the night - so its instant is found offline, near a logged
+`touchdown` or `field-goal` (#14, §9).
+
+**Scoring songs repeat.** The band has a small repertoire, and the same song
+follows a field goal and a touchdown. The same music, many takes, across games,
+is the cheapest template available for testing hold-open offline, in particular
+whether a hold measure survives the PAT diminuendo above. That is the limit of
+it: offline test material only, never a runtime song classifier. The system
+decides whether sound is present and never why it stopped (§10, principle 4);
+recognising which song is playing is a different system with a different
+failure mode.
+
 **Ragged stops.** When the band stops because a play is starting, it typically
 ravels out over a couple of seconds as the band works out what's happening.
 
@@ -266,9 +300,9 @@ The box therefore cannot:
 - confirm that the console acted on a command
 
 Consequences are handled in §5.5 — the UI shows *commanded*, not *confirmed* —
-and in §9, where Phase 1 ground truth comes from a post-DCA reference channel
-rather than from OSC. There is no contention over authority only in the weak
-sense that the console accepts the last write from any controller; nothing
+and in §9, where Phase 1's fader-state labels come from a post-DCA reference
+channel rather than from OSC. There is no contention over authority only in the
+weak sense that the console accepts the last write from any controller; nothing
 arbitrates, and neither side can see the other.
 
 The DM7 also speaks MIDI, and Yamaha consoles have historically emitted
@@ -682,14 +716,38 @@ STANDING DOWN ──(operator arms)──> IDLE
                                 (2 s fade)
 ```
 
+READY sits beside IDLE, entered only by the operator:
+
+```
+IDLE ──(operator: band likely)──> READY ──(any trigger)──> OPEN
+                                    |
+            score reversed, stand down, or a plain fade
+                                    v
+                              RELEASING (2 s fade)
+```
+
 - **STANDING DOWN** — boot state. Band not in the stands. Pregame with the other
   band on the field, halftime, exodus.
 - **IDLE** — armed, band in stands, DCA closed.
+- **READY** — the fader ridden to a hold level short of target with no band
+  playing yet: something good has just happened for the home team, the band is
+  likely and has not started (#6). Entered only by the operator - from IDLE, or
+  from STANDING DOWN, which it arms on the way (#89) - or reported with "It's at
+  ready level" when the box does not know where the fader is (§5.3). Never
+  entered by the detector, in any phase (§6.4). Any trigger commits it the rest
+  of the way to OPEN from wherever the ride had got to. Score reversed, a plain
+  fade and a stand-down take the ordinary 2 s fade rather than a snap (§5.3
+  covers the level-unknown case), because the fader is up and the box cannot be
+  sure the band has not quietly started.
 - **OPEN** — DCA at 0 dB. Held by tonality and envelope consensus, reinforced by
   on-grid whistle. **Must hold through the PAT diminuendo.**
 - **RELEASING** — 2 s fade. Any qualifying trigger snaps straight back to OPEN.
   This is what makes the reactive close survivable: the machine cannot see arms
   come down and will always trail the operator, and the fade absorbs that.
+
+READY is a fader-up-with-no-band span by construction, and the first one the
+log names. Game 3 is the first capture whose log carries them, which is why §9
+separates what the fader was doing from whether the band was playing.
 
 ### 6.4 Mode handling
 
@@ -727,6 +785,22 @@ raise the identical questions above once RTD exists, through the same
 second *source* for a question already fully specified here, never a new kind
 of question or a path that skips the accept tap.
 
+**Nothing but a person ever pre-opens (#6, #95).** READY is a prediction that
+something is about to play. Only someone watching can tell whether it will be
+the band, the DJ or the other band, and opening with no band sound is not "is
+sound present" at all. This is not the Phase 1/2 line a trigger sits on: a
+detector confirming that sound *is* present is exactly its Phase 2 job, but
+guessing that sound is about to start never becomes one. So `tacet.state`
+refuses a detector-sourced READY, and "It's at ready level" with it,
+unconditionally and before the phase gate, whatever `allow_detector` says; it is
+not a Phase 2 to-do. RTD changes the source of the question and nothing else
+(#95): a home score, a first down or a defensive stop can each raise a prompt
+in the same slot, answered by a thumb, with the decline logged too. Nothing
+moves the fader on RTD alone, in any phase, and §5.4's context-not-interlock
+rule holds here as it does for the play clock. Why write it here: "prompt, never
+act" reads like a Phase 1 caution that a better detector would retire, and it is
+not one. The fader would be going up on something nobody has heard yet.
+
 **Pregame.** STANDING DOWN as the boot state covers it. The two pregame channels
 are outside the DCA and unaffected; the automation only arms when the operator
 confirms the band is in the stands.
@@ -745,6 +819,10 @@ confirms the band is in the stands.
 - **Confirm the 10–20 ms delay is inaudible** in the live room, and whether hype
   and band paths need independent delay.
 - **Confirm the band whistle's fundamental** from multitrack.
+- **Measure the cannon** from a captured score and decide which of §6.2's
+  measures separates it from an ensemble entrance. §4 makes "the detector does
+  not open on the cannon" a design goal, and a goal like that has to be
+  discriminated deliberately and scored offline, not left to the 2 s fade.
 - ~~**Confirm DCA fader granularity.**~~ **Answered 2026-09-12: arbitrary
   hundredths.** The spec gives `min -32768 / max 1000 / scaling 100`, implying
   arbitrary hundredths of a dB, while the parameter notes point at Table 1 — a
@@ -914,7 +992,7 @@ Phase 0 also carries the annotation and recording transport of §5.9 — record
 arming, the event vocabulary of §5.6, and marker mirroring into Reaper. This is
 a deliberate widening of the original scope. It pays immediately: it means the
 *first* captured game is annotated even though no detector exists yet, and
-annotation is the one part of ground truth that cannot be reconstructed later.
+annotation is the one part of the labelling that cannot be reconstructed later.
 
 **Runtime: Python 3.11+.** The choice anticipates Phase 2, where the detector —
 inevitably numpy/scipy — has to share a process with fader control.
@@ -936,20 +1014,109 @@ Captured per game:
 - DVS multitrack of all 14 channels (license already owned)
 - A **post-DCA reference channel** — one additional Dante channel carrying the
   band PA feed, recorded alongside the 14 mics. Compared against the pre-fader
-  mics it recovers the operator's fader moves, and **this is the ground truth
-  label set**. It replaces the OSC subscription originally planned here, which
-  the protocol does not support (§5.3). It is also the better measurement: it
-  captures gain as actually applied to the PA, and it is the only available
-  confirmation that a command reached the console at all.
+  mics it recovers the fader moves as applied, and **this is the source of the
+  fader-state labels** (below). It replaces the OSC subscription originally
+  planned here, which the protocol does not support (§5.3). It is also the
+  better measurement: it captures gain as actually applied to the PA, and it is
+  the only available confirmation that a command reached the console at all.
 - RTD stream, timestamped
 - Every detector decision the box would have made
-- **Live operator annotations** (§5.6) — the portion of ground truth that cannot
-  be reconstructed afterward
+- **Live operator annotations** (§5.6) — the portion of the labelling that
+  cannot be reconstructed afterward
+
+**Two label sets, and they are not the same set.** Phase 1 labels two different
+things, and the detector is trained on only one of them.
+
+- **`band-present`** - was the band sounding. This is the detector's training
+  target, and the only question this system answers (§1, §2). Spans over the
+  capture timeline, with two values: present and absent. The PAT diminuendo is
+  *inside* a present span: the band gets quiet, it does not stop (§4). No value
+  says why a span ended (§10, principle 4), so there is no "breath mark" or
+  "end of song" value, ever. What else was sounding - the other band, the DJ,
+  the PA - is context, from the `other-band-on-field` annotation and from what
+  #17 will display and log, and is not a value of this label. It is binary by
+  decision; if a quiet-present value is ever wanted, that is a decision for
+  whatever format ends up holding the offline labels (below), not for this
+  document.
+- **`fader-state`** - where the DCA actually was, as three separable facts. The
+  *applied gain over time*, recovered by comparing the post-DCA reference
+  channel against the pre-fader mics: the truth of it, whoever was driving. The
+  box's own *intent and cause*, from the `commanded` entries (`command`,
+  `detail`, `state`, `level`, `target`), which exist only where the box was
+  driving. And *who was holding the fader*, from `handed-off`, `took-back` and
+  `still-mine` (§5.3, #118).
+
+How the hard cases of §4 map onto the two:
+
+- **Pre-open, the READY span:** band absent. Fader up at the hold level, reached
+  by a ride (`state: "ready"`).
+- **Commit out of READY on the downbeat:** band flips to present at the true
+  first onset, which is earlier than the tap. Fader open.
+- **The cannon:** band absent, at a broadband onset instant. Fader usually
+  already up (READY), sometimes idle.
+- **PAT diminuendo:** band present. Fader open, while the level on the mics
+  looks like absence.
+- **Ragged stop:** band present, trailing to absent. Fader open, then
+  releasing.
+
+The rows where the two disagree are the valuable part: a fader that is up with
+no band, and a band that started before the fader did. `fader-state` is also the
+easy one to get - one channel, no human - and using it as the training target
+would teach the detector that crowd cheering means open, the amplitude failure
+§1 describes. The convenient label is the wrong one.
+
+**What produces each.** `fader-state` is derivable by machine from the capture
+and the log, with no human pass. `band-present` is not derivable from it at all:
+it comes from the live annotations (§5.6) plus one offline review pass over the
+14 mics. That squares with §5.6, which says most band state cannot be
+reconstructed afterwards. Whether the band was *sounding* is the exception, the
+one thing the multitrack really does carry, so it needs no live button, only
+someone to sit down with the audio once. What cannot be reconstructed is where
+the band was, whose timeout it was, and why a close happened. `false-open` and
+`missed-entrance` (§5.6) are the operator's judgement of what a detector would
+have got wrong: evidence for the review pass, not a label set of their own.
+
+**What the log already carries.** Nothing new is needed in the schema before
+Game 3:
+
+- *READY spans:* `commanded` entries carry `command` (`ready` or
+  `report-ready`), `detail` (`up-ready` or `report-ready`), `state` (`"ready"`),
+  `level` and `target`, and `move-landed` and `move-failed` carry where the ride
+  ended. A span ends at the next entry whose `state` is no longer `ready`: a
+  `commanded` entry, or the `stood-down` that ends it when the level was unknown
+  and no fade was sent (§5.3).
+- *Why the operator got ready:* the game instants `touchdown`, `field-goal`,
+  `first-down` and `defensive-stop`.
+- *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
+  `score-reversed` or `out` for an abandon.
+- *Duty and where the band was:* `armed`, `stood-down`, `band-enters-stands`,
+  `band-exits-stands` and `halftime-exodus`.
+- *Control authority:* `handed-off`, `took-back` and `still-mine`.
+- *Taps that did not execute:* `stale-tap`, or a fader button's own entry marked
+  `executed: false`.
+- *The common clock:* Reaper's playhead on every entry (§5.6, §5.9).
+
+The one capture prerequisite is not a schema change: the post-DCA reference
+channel has to actually be patched and recorded (`docs/reaper.md`'s track list,
+#13's patch list). Game 2 had none, so its only fader labels are the `commanded`
+entries, and only where the box was driving; `fader-state` has not yet been
+recovered from a real capture. Game 2 also predates `up-ready`, so its pre-opens
+look like ordinary opens; telling them apart is for #21's corrections sidecar
+(Game 4).
+
+**The gap: nowhere for offline labels to live.** The box's log is live and
+append-only, and #21's corrections sidecar corrects the log rather than
+labelling the audio. `band-present` spans, and instants found offline like the
+cannon (which has no key, on purpose), are produced weeks later, from the audio.
+This document deliberately does not decide their format. It is wanted before the
+Game 3 capture is analysed, not before it is made, which is why it does not
+block the capture.
 
 After two or three games this yields real audio, real crowd, real touchdown
-sequences, and a labeled answer key. Candidate detectors can then be replayed
-against all of it offline at many times real speed, with thresholds and time
-constants tuned against reality instead of guessed.
+sequences, and audio labelled for whether the band was playing, once it has been
+reviewed. Candidate detectors can then be replayed against all of it offline at
+many times real speed, with thresholds and time constants tuned against reality
+instead of guessed.
 
 ### Phase 2 — Assisted
 
@@ -983,6 +1150,8 @@ data is impossible and building the viewer later is easy.
    down. Every close is reactive. The fade is what makes that acceptable.
 4. **Never classify why the music stopped.** Fade the same way for all of them.
 5. **Announce, don't surprise.** Mode changes prompt; they don't happen silently.
+   Some things only ever prompt: nothing but a person puts the fader up before
+   the band plays (§6.4).
 6. **Structure, not level.** Level is the one dimension where the crowd wins.
 7. **Faders, never mutes.** The mics feed other mixes pre-fader, post-mute.
    Muting would take the band out of those mixes too.

@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-09-20.** #5 is built (the pinned fader column, the fixed
+**Last updated 2026-09-21.** #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -35,7 +35,19 @@ renders under its button in MORE, and switching tabs cancels an unanswered
 one, so it can never suppress #19's question. #9 is built at a narrower scope
 than its body (a maintainer decision, 2026-09-20): Game 3 ships the standing
 target only - the presets, the cap, the control on MORE and the readout - and
-the mid-song retarget ride is split out as #128 for Game 4.
+the mid-song retarget ride is split out as #128 for Game 4. #15 is done:
+design.md section 4 now carries the pre-open, the cannon and the repeating
+scoring songs, 6.3 defines READY, 6.4 records that nothing but a person ever
+pre-opens in any phase (#6, #95, and state.py's unconditional refusal), and 9
+separates band-present from fader-state, the point of the issue. One follow-up
+falls out, now #133 (Game 4): where offline labels live, since the box's log
+is append-only and #21's sidecar corrects the log rather than labelling the
+audio - wanted before the Game 3 capture is analysed, not before it is made.
+Three more small ones came out of the same review and the #18 note: #132
+(CLAUDE.md still calls the post-DCA channel "the ground truth labels" and omits
+READY), #134 (design.md 5.3 says the OSC spec has no `get`, and it has one) and
+#136 (a principle-numbering slip), all Game 3; and #135 (rename `fader.target`,
+which #9 made ambiguous), Game 4.
 
 ## Game 3 (2026-10-02)
 
@@ -54,10 +66,13 @@ In build order. Each step says why it comes where it does.
 
 Alongside, not in the build order above:
 
-- [#13](https://github.com/misnow1/tacet-downbeat/issues/13) gameday.md: game 3 patch list, network plan, stale sections. Needs site information; must land before game day regardless. Includes setting `capture.audio_path` and `capture.channels` in the box's `tacet.toml` (#53).
-- [#15](https://github.com/misnow1/tacet-downbeat/issues/15) design.md: pre-open and cannon hard cases, now also READY (#6) as a fader-up-no-band span Phase 1 has to be able to exclude. Documentation; any time.
-- [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. The first pass is written up in `docs/research/dm7-fader-readback.md`: no documented readback path exists, but Yamaha's own Crestron module for the DM7 points at a second, TCP protocol on 49280 that answers reads, and the OSC spec does define one `get` (`sscurrentt_ex`, scenes), so design.md 5.3's "no `get`" needs correcting. Still open: whether to ask Yamaha for the protocol document, and one read-only capture of a free client to see whether the console notifies observers of an OSC-originated fader move. If it does, #107 gets simpler; nothing here reaches the control path this season.
+- [#13](https://github.com/misnow1/tacet-downbeat/issues/13) gameday.md: game 3 patch list, network plan, stale sections. Needs site information; must land before game day regardless. Includes setting `capture.audio_path` and `capture.channels` in the box's `tacet.toml` (#53), holding the console's firmware through game day (#18), and patching the post-DCA reference channel, which the fader-state labels depend on.
+- ~~[#15](https://github.com/misnow1/tacet-downbeat/issues/15)~~ Done. design.md now carries the pre-open, cannon and repeating-scoring-song hard cases, READY in 6.3, the rule that only a person ever pre-opens in 6.4, and section 9's split into band-present and fader-state labels. The format for offline labels is deliberately left undecided (the log is append-only; #21's sidecar corrects it, it does not label audio) and is wanted before the Game 3 capture is analysed (#133).
+- [#18](https://github.com/misnow1/tacet-downbeat/issues/18) Research: DM7 fader readback. The first pass is written up in `docs/research/dm7-fader-readback.md`: no documented readback path exists, but Yamaha's own Crestron module for the DM7 points at a second, TCP protocol on 49280 that answers reads, and the OSC spec does define one `get` (`sscurrentt_ex`, scenes), so design.md 5.3's "no `get`" needs correcting (#134). Decided 2026-09-21: not asking Yamaha yet; a passive bench capture with a free client (Bitfocus Companion or DM Editor, sync DM7->PC only) is approved, to see whether the console notifies an observer of an OSC-originated fader move; no Mixing Station licence yet; and the console stays on its current firmware through Game 3 (V2.00 cannot be rolled back, see #13). If the capture says it does notify, #107 gets simpler; nothing here reaches the control path this season. The issue stays open for the capture.
 - [#103](https://github.com/misnow1/tacet-downbeat/issues/103) design.md: document the fader-belief mechanism in operator terms. Unblocked: #107 has landed, so it describes what shipped. What it documents is `level_known` and absolute-vs-relative, not handoff/take-back - there is no take-back pair any more, and design.md 5.3 now carries the short version for it to build on.
+- [#132](https://github.com/misnow1/tacet-downbeat/issues/132) CLAUDE.md: narrow "the ground truth labels" to the fader-state labels, add READY to the state machine, and carry the never-pre-open rule. Project instructions, so its own PR; land it after #131.
+- [#134](https://github.com/misnow1/tacet-downbeat/issues/134) design.md 5.3 says the OSC spec has no `get`; it defines `sscurrentt_ex` for the current scene number. Found by the #18 note; does not change the fader conclusion.
+- [#136](https://github.com/misnow1/tacet-downbeat/issues/136) design.md 5.5 and 5.6 call "announce, don't surprise" principle 4; in section 10 it is principle 5. Tiny; can ride with #132.
 - ~~[#108](https://github.com/misnow1/tacet-downbeat/issues/108)~~ Done. The StageMix hand-off Yes / No confirmation now renders directly under the button in MORE instead of the top slot. Beyond the issue's wording, and decided in its comments: switching tabs cancels an unanswered confirmation and sends nothing, so an invisible one can never suppress #19's arm / stand-down question.
 - ~~[#109](https://github.com/misnow1/tacet-downbeat/issues/109)~~ Done. A tap in MORE, including Note, Arm / Stand down / Start recording and the StageMix answers, now leaves the operator on MORE; the tab moves only when they tap a tab button. Revisit if it turns out to be the wrong call once used in a game.
 - ~~[#9](https://github.com/misnow1/tacet-downbeat/issues/9)~~ Done, at its new scope: the standing target only. `fader.presets` (the first entry is the default, shipping `[0.0, -3.0, -6.0]`) and `fader.max_target_db` (shipping 0 dB until the on-site ring-out; a preset above it refuses at load), a runtime target on the app that every open and READY's hold level follow, MORE > Target level, and a strip readout that goes amber when the target is not the default. Changing it stores a value and sends nothing, in every state; the next open uses it. The mid-song retarget ride is #128, in Game 4.
@@ -68,7 +83,7 @@ Alongside, not in the build order above:
 - [#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride: changing the target while the fader is open rides to the new level. Split from #9, which ships the standing target alone for Game 3. It is a real fader tap (stale-checked, refused while the level is unknown), which is why it is not folded in: #9 stores a value and moves nothing.
 
 The Game 4 milestone holds the rest: #17, #21, #42, #43, #44, #46, #47, #48,
-#49, #51, #66, #73, #128.
+#49, #51, #66, #73, #128, #133, #135.
 
 ## Keeping this current
 
