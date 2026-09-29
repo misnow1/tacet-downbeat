@@ -21,26 +21,89 @@ version, in the order it happens on the day, is in [gameday.md](gameday.md).
 
 ## Tracks to record
 
-Agreed after game 2 (see [game-2.md](game-2.md), "Capture: patch list", and
-#13). Every feed gets a **fixed track name**, so offline tools find it by name
-rather than position, and **every track is present from the moment recording
-starts** - a feed patched in during Q2, as the scoreboard PA was at game 2,
-leaves pregame and Q1 with nothing to compare against.
+Agreed for game 3 (see #13; game 2's list is in [game-2.md](game-2.md),
+"Capture: patch list"). Every feed gets a **fixed track name**, so offline
+tools find it by name rather than position, and **every track is present from
+the moment recording starts** - a feed patched in mid-game leaves everything
+before it with nothing to compare against.
 
-| Priority | Track | Source | Notes |
+| DVS rx | Track | Source | Notes |
 |---|---|---|---|
-| Required | The 14 band mics (`MV ...`) | As at game 2 | Unchanged |
-| Required | Post-DCA band reference | New console bus | Post-DCA, **pre-ducker**. Fix the existing routing loop first, and do not feed the bus from the band PA loop-back input. Unity, no extra gain. **Prove it before the gates open:** pull the DCA down and watch the track go silent in Reaper. This is the ground truth for every fader move; OSC cannot supply it |
-| Required | Scoreboard PA mix | Existing (`MV Spare 2`) | From the start, not from Q2. Event timeline and transcription source |
-| Required | DJ direct | Existing (`DJ TMMPO`) | Unchanged |
-| If patchable | Announcer mic | Channel direct out | Dry speech transcribes far better than the mix |
-| If patchable | Video playback | Channel direct out | Needed if program-aware context (#6) goes anywhere |
-| If patchable | Ref and MC mics | Axient, already on Dante | A patch away |
+| 1 | MV Conductor | Rio ch 1, Dante split (pre-delay) | Console ch 37 |
+| 2 | MV Spare | Rio ch 2, Dante split (pre-delay) | Console ch 38 |
+| 3 | MV Snare | Rio ch 3, Dante split (pre-delay) | Console ch 39 |
+| 4 | MV Bd | Rio ch 4, Dante split (pre-delay) | Console ch 40 |
+| 5 | MV Sax 1 | Rio ch 5, Dante split (pre-delay) | Console ch 41 |
+| 6 | MV Sax 2 | Rio ch 6, Dante split (pre-delay) | Console ch 42 |
+| 7 | MV Clarinets 1 | Rio ch 7, Dante split (pre-delay) | Console ch 43 |
+| 8 | MV Clarinets 2 | Rio ch 8, Dante split (pre-delay) | Console ch 44 |
+| 9 | MV Horns 1 | Rio ch 9, Dante split (pre-delay) | Console ch 45 |
+| 10 | MV Horns 2 | Rio ch 10, Dante split (pre-delay) | Console ch 46 |
+| 11 | MV Horns 3 | Rio ch 11, Dante split (pre-delay) | Console ch 47 |
+| 12 | MV Horns 4 | Rio ch 12, Dante split (pre-delay) | Console ch 48 |
+| 13 | MV Front Near | Rio ch 13, Dante split (pre-delay) | Console ch 49 |
+| 14 | MV Front Far | Rio ch 14, Dante split (pre-delay) | Console ch 50 |
+| 15 | DJ TMMPO (Split) | Rio ch 15, Dante split (pre-delay) | Console ch 51 |
+| 16 | Rio 16 Spare | Rio ch 16, Dante split (pre-delay) | Console ch 52 |
+| 17 | Announcer Mic Dry | Console ch 1 direct out | Dante out 39. Dry speech transcribes far better than the mix |
+| 18 | Laptop | Console ch 2 direct out | Dante out 40 |
+| 19 | Ref Primary | Dante split (Axient) | |
+| 20 | Ref Backup | Dante split (Axient) | |
+| 21 | HH Red | Dante split (Axient) | |
+| 22 | HH Blue | Dante split (Axient) | |
+| 23 | DJ TMMPO (Channel) | Console ch 7 direct out | Dante out 41. From the channel's own direct out, not the split, because the DJ's input can move |
+| 24 | Truck FX | Console ch 11 direct out | Dante out 42. Same reason: it can move |
+| 25 | Crowd 1 | Console ch 15 direct out | Dante out 43 |
+| 26 | DCA Level Reference | Console ch 53 direct out, **Post Fader** | Dante out 53. Source is Reaper's pilot tone, injected on DVS send 27. See "The DCA reference: a pilot tone" below |
+| 27 | Hype PA Mix | Console matrix out | Dante out 37 (also Rio output 1) |
+| 28 | Main PA Mix | Console matrix out | Dante out: `__________` (fill in on the day) |
+| 29 | Band Mix (Pre-Ducker) | Console group out | Dante out listed as 39, which collides with Announcer Mic Dry (track 17) - must be resolved on the day; 44 is likely free but unverified. Context only, not a DCA reference; see below |
 
-That is **17 tracks required**, and about **22** with everything patchable
-patched. Uncompressed 48 kHz / 24-bit mono is 144 kB/s a track: **8.8 GB an
-hour at 17 tracks, 11.4 GB at 22.** Game 2's 16 tracks came to 39.7 GB, which
-matches the arithmetic.
+That is **29 tracks**. Uncompressed 48 kHz / 24-bit mono is 144 kB/s a track:
+**about 15 GB an hour at 29 tracks.** A 5-hour game, plus the box's 10%
+disk-check margin ([box.md](box.md#room-for-the-game)), is about 83 GB.
+
+### The DCA reference: a pilot tone
+
+Track 26 is the ground truth for every fader move (design.md 9); OSC cannot
+supply it, because it is write-only. Game 2 had no reference at all.
+
+It is **not** the band PA (track 29, now context only): every band channel but
+the DJ carries an expander or a 5045 in its first dynamics slot, so the PA
+level follows the dynamics as well as the DCA, and the DCA's own contribution
+cannot be recovered reliably from it. Instead the reference is a steady pilot
+tone that only the DCA (and nothing downstream of it) can touch:
+
+1. **Reaper**: Cockos's stock JS **Tone Generator** (under Synthesis) on its
+   own track. Master send **off** - it must never reach the PA. Hardware
+   output to DVS send channel 27.
+2. **Dante Controller**: route DVS send 27 to console input channel 53.
+3. **Console channel 53**: assigned to the band DCA and nothing else.
+   Dynamics and EQ bypassed. No stereo, mix or matrix sends - the DM7 defaults
+   new channels **TO STEREO on**; turn it off. Fader fixed at 0 dB. Name it
+   something like `DCA REF`.
+4. **Direct out**: set to **Post Fader**, console Dante out 53, patched to DVS
+   receive 26 (track 26 above). Per the DM7 block diagram the Post Fader tap
+   sits after LEVEL/DCA and before ON, so it follows the fader and the DCA but
+   not mute - consistent with faders-only (design.md 5.3).
+
+The DM7's internal oscillator was considered and ruled out: it is one global
+oscillator, so the console operator could never use or switch it off without
+killing the reference.
+
+Suggested tone: around 1 kHz at about -20 dBFS (the DCA's +10 dB max peaks
+near -10 dBFS).
+
+**Checks, before the gates open:**
+
+- The tone generator keeps running with Reaper's transport stopped. If it does
+  not, arm the track with input monitoring, or enable "Run FX when stopped"
+  on the track.
+- **Proof test**: pull the DCA down and watch track 26 go silent in Reaper.
+  Then confirm the tone shows on no other console output meter.
+
+A box-generated tone with measured readback, so the box can confirm its own
+commands instead of inferring them from a recording, is future work (#137).
 
 ---
 
@@ -154,13 +217,13 @@ kickoff, so most of that countdown is a set of empty stands.
 
 Record it anyway.
 
-| Start at | Runs for | 17 tracks | 22 tracks |
-|---|---|---|---|
-| Doors, T-150 | ~6 h | ~53 GB | ~68 GB |
-| Band enters stadium, T-60 | ~4.5 h | ~40 GB | ~51 GB |
+| Start at | Runs for | 29 tracks |
+|---|---|---|
+| Doors, T-150 | ~6 h | ~90 GB |
+| Band enters stadium, T-60 | ~4.5 h | ~68 GB |
 
-The difference between them is 13-17 GB, which is not a reason to do anything.
-Two things are:
+The difference between them is about 22 GB, which is not a reason to do
+anything. Two things are:
 
 - **The empty stands are not empty of data.** A stadium filling up with no band
   playing is the cleanest negative sample available - the crowd competing on

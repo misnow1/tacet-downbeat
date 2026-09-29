@@ -241,8 +241,10 @@ is attractive for simplicity, but the detector needs per-channel access for
 onset simultaneity and inter-channel consensus. Plan for individual channels, or
 purpose-built sub-mixes, not a single sum.
 
-Phase 1 additionally needs one **post-DCA reference channel** carrying the
-band PA feed (§9). Budget 14 + 1.
+Phase 1 additionally needs one **post-DCA reference channel**: a pilot tone,
+not the band PA feed, since every band channel but the DJ carries an expander
+or 5045 that would confound a PA-based reading of the DCA (section 9). Budget
+14 + 1.
 
 **Tap pre-delay.** The console's alignment delays exist to serve the mix. For
 detection, earliest arrival wins, since there is no lookahead available. Tapping
@@ -1012,13 +1014,18 @@ it is today.
 Captured per game:
 
 - DVS multitrack of all 14 channels (license already owned)
-- A **post-DCA reference channel** — one additional Dante channel carrying the
-  band PA feed, recorded alongside the 14 mics. Compared against the pre-fader
-  mics it recovers the fader moves as applied, and **this is the source of the
-  fader-state labels** (below). It replaces the OSC subscription originally
-  planned here, which the protocol does not support (§5.3). It is also the
-  better measurement: it captures gain as actually applied to the PA, and it is
-  the only available confirmation that a command reached the console at all.
+- A **post-DCA reference channel** - a pilot tone injected on a console channel
+  assigned only to the band DCA (dynamics and other sends bypassed) and tapped
+  at its Post Fader direct out, recorded alongside the 14 mics. It is a pilot
+  tone rather than the band PA feed because every band channel but the DJ
+  carries an expander or 5045 in its first dynamics slot, so the PA level does
+  not track the DCA alone. Comparing the tone's recorded level against its
+  known injected level recovers the fader moves as applied, and **this is the
+  source of the fader-state labels** (below). It replaces the OSC subscription
+  originally planned here, which the protocol does not support (5.3). It is
+  also the better measurement: it captures gain as actually applied downstream
+  of the DCA, and it is the only available confirmation that a command reached
+  the console at all.
 - RTD stream, timestamped
 - Every detector decision the box would have made
 - **Live operator annotations** (§5.6) — the portion of the labelling that
@@ -1040,7 +1047,8 @@ things, and the detector is trained on only one of them.
   document.
 - **`fader-state`** - where the DCA actually was, as three separable facts. The
   *applied gain over time*, recovered by comparing the post-DCA reference
-  channel against the pre-fader mics: the truth of it, whoever was driving. The
+  channel's pilot tone against its known injected level: the truth of it,
+  whoever was driving. The
   box's own *intent and cause*, from the `commanded` entries (`command`,
   `detail`, `state`, `level`, `target`), which exist only where the box was
   driving. And *who was holding the fader*, from `handed-off`, `took-back` and
@@ -1097,8 +1105,9 @@ Game 3:
 - *The common clock:* Reaper's playhead on every entry (§5.6, §5.9).
 
 The one capture prerequisite is not a schema change: the post-DCA reference
-channel has to actually be patched and recorded (`docs/reaper.md`'s track list,
-#13's patch list). Game 2 had none, so its only fader labels are the `commanded`
+channel - a pilot tone on a channel assigned to the band DCA, not the band PA -
+has to actually be patched and recorded (`docs/reaper.md`'s track list, #13's
+patch list). Game 2 had none, so its only fader labels are the `commanded`
 entries, and only where the box was driving; `fader-state` has not yet been
 recovered from a real capture. Game 2 also predates `up-ready`, so its pre-opens
 look like ordinary opens; telling them apart is for #21's corrections sidecar
