@@ -179,7 +179,7 @@ The same goes for halftime. The stand mics then carry your band on the field,
 the visiting band on the field, and cadences on the way out and back -- music
 present while the fader must stay **closed**, which is the single hardest case
 the detector has to learn and the reason `other-band-on-field` is in the
-vocabulary at all. A halftime is 20-30 minutes, about 3-6 GB at the track counts
+vocabulary at all. A halftime is 20-30 minutes, about 5-7.5 GB at the track count
 above. If space ever genuinely bites, trim the `halftime` span afterwards; it is
 already delimited in the log.
 
