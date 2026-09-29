@@ -1048,11 +1048,10 @@ things, and the detector is trained on only one of them.
 - **`fader-state`** - where the DCA actually was, as three separable facts. The
   *applied gain over time*, recovered by comparing the post-DCA reference
   channel's pilot tone against its known injected level: the truth of it,
-  whoever was driving. The
-  box's own *intent and cause*, from the `commanded` entries (`command`,
-  `detail`, `state`, `level`, `target`), which exist only where the box was
-  driving. And *who was holding the fader*, from `handed-off`, `took-back` and
-  `still-mine` (§5.3, #118).
+  whoever was driving. The box's own *intent and cause*, from the `commanded`
+  entries (`command`, `detail`, `state`, `level`, `target`), which exist only
+  where the box was driving. And *who was holding the fader*, from
+  `handed-off`, `took-back` and `still-mine` (5.3, #118).
 
 How the hard cases of §4 map onto the two:
 

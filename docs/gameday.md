@@ -31,13 +31,14 @@ nobody wrote it down, not that nobody knows.
 | Band DCA number | `17` | The console's DCA layout |
 | Recording path | `~/Reaper Audio` | Laptop's local disk. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
 | Channels recorded | `29` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
-| Box address, control VLAN | `192.168.20.123` | `ipconfig getifaddr en0` on the control-VLAN adapter - see "Network" below |
-| Box address, Dante Primary | `192.168.1.123` | `ipconfig getifaddr` on the adapter wired to DVS |
+| Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
+| Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
 
-The three addresses above are currently DHCP-assigned, not reserved. Get them
-reserved or set static: the iPad's bookmark to the page goes stale the first
-time DHCP hands the box a different address, which is not a thing to discover
-at kickoff.
+The box's two addresses above are currently DHCP-assigned, not reserved (the
+console's is set on the console itself, not the box's to reserve). Get the
+box's two reserved or set static: the iPad's bookmark to the page goes stale
+the first time DHCP hands the box a different address, which is not a thing to
+discover at kickoff.
 
 Put them in `tacet.toml` on the box too, so the startup command below is one
 line. See [box.md](box.md#tacettoml).
@@ -72,6 +73,11 @@ Fixes to game 2's routing, agreed for game 3 (#13):
 3. Put the ducker on that new matrix, keyed from the announce group.
 4. Route that matrix to Dante 37 (Rio output 1).
 
+**Set up the DCA reference channel**: console channel 53 assigned to the band
+DCA only, dynamics and EQ bypassed, TO STEREO off, no other sends, direct out
+Post Fader on Dante 53; in Dante Controller, route DVS send 27 to console ch
+53. Detail in [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
+
 **Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
 ships at 0 dB, and raising it costs feedback margin against a band PA that sits
 just behind the mics ([box.md](box.md#reading-the-page)).
@@ -102,8 +108,10 @@ copied to the NAS after the game, not recorded to it directly. **Do not start
 recording yet.**
 
 Prove the [DCA reference](reaper.md#the-dca-reference-a-pilot-tone): pull the
-DCA down and watch its track go silent in Reaper, and confirm the pilot tone
-generator keeps running with the transport stopped.
+DCA down and watch its track go silent in Reaper, confirm the pilot tone
+generator keeps running with the transport stopped, and - the check that
+matters most - confirm the tone shows on no other console output meter. It
+must never reach a PA.
 
 ### 2. Load and run the ReaScript
 

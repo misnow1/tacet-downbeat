@@ -60,8 +60,10 @@ before it with nothing to compare against.
 | 29 | Band Mix (Pre-Ducker) | Console group out | Dante out listed as 39, which collides with Announcer Mic Dry (track 17) - must be resolved on the day; 44 is likely free but unverified. Context only, not a DCA reference; see below |
 
 That is **29 tracks**. Uncompressed 48 kHz / 24-bit mono is 144 kB/s a track:
-**about 15 GB an hour at 29 tracks.** A 5-hour game, plus the box's 10%
-disk-check margin ([box.md](box.md#room-for-the-game)), is about 83 GB.
+**about 15 GB an hour at 29 tracks.** Recording from doors, as below (~6 h),
+plus the box's 10% disk-check margin ([box.md](box.md#room-for-the-game)), is
+about 99 GB - which is why `game_hours = 6.0` there, not the on-field game
+length.
 
 ### The DCA reference: a pilot tone
 
@@ -97,8 +99,8 @@ near -10 dBFS).
 **Checks, before the gates open:**
 
 - The tone generator keeps running with Reaper's transport stopped. If it does
-  not, arm the track with input monitoring, or enable "Run FX when stopped"
-  on the track.
+  not, arm the track with input monitoring on, which keeps it processing while
+  stopped.
 - **Proof test**: pull the DCA down and watch track 26 go silent in Reaper.
   Then confirm the tone shows on no other console output meter.
 
