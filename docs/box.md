@@ -48,13 +48,18 @@ tracks this game records:
 
 ```
 [capture]
-audio_path = "/Volumes/band"
-channels = 22
-game_hours = 5.0
+audio_path = "/Users/you/Reaper Audio"
+channels = 29
+game_hours = 6.0
 ```
 
-The size is `channels x 144 kB/s x game_hours`, plus 10%: 22 channels over 5
-hours needs about 63 GB. The banner's `disk` row shows free space against that.
+`game_hours` is the length of the whole recording, not the on-field game -
+match it to whichever start time
+[reaper.md](reaper.md#when-to-start-the-recording) recommends, not to kickoff,
+or the check passes a disk that runs out before the recording does.
+
+The size is `channels x 144 kB/s x game_hours`, plus 10%: 29 channels over 6
+hours needs about 99 GB. The banner's `disk` row shows free space against that.
 It also refuses if `audio_path` is not there (an unmounted share), or not set,
 or if the disk holding the log and queue is nearly full. Each refusal names
 `--no-disk-check`, a flag only, which starts the box anyway and says so in the
@@ -295,11 +300,14 @@ recording**; Reaper is still rolling and is stopped in Reaper.
 
 Honest state of things, so nothing here reads as more settled than it is.
 
-- **The console under a full cycle.** The write path is proven (2026-09-12:
-  addresses, IP, port and DCA all confirmed, arbitrary levels accepted, a 2 s
-  fade watched gliding). What has still never happened is the box driving that
-  fader through a whole game while an operator works, which is a different
-  claim from a bench probe on a quiet afternoon.
+- **The console under a full cycle, wired.** The write path is proven
+  (2026-09-12: addresses, IP, port and DCA all confirmed, arbitrary levels
+  accepted, a 2 s fade watched gliding), and the box has since driven that
+  fader through a whole game while an operator worked it (game 2) - but over
+  wifi, both hops, because the wired adapter for the control VLAN went missing
+  on the day (game-2.md). Driving it over the wired control path, under a full
+  cycle, has not happened yet, which is a different claim from a bench probe or
+  a game over wifi.
 - **The console's packet-rate headroom.** The ramp sends 50 levels a second and
   nothing has measured whether any are dropped. The observed fade was smooth on
   StageMix, whose refresh is slower than the ramp, so a fine stagger would not
@@ -311,19 +319,17 @@ Honest state of things, so nothing here reads as more settled than it is.
   first moves - no score until someone scores. Pressing `STOP` on the scoreboard
   console forces a full dump. So either the capture starts before the console
   comes up, or someone presses `STOP` once during pregame. See design.md 8.
-- **The post-DCA reference channel.** Not captured yet; it is what supplies the
-  ground-truth fader labels. It is on the patch list in
-  [reaper.md](reaper.md#tracks-to-record).
+- **The DCA reference channel.** Not captured yet; it is what supplies the
+  ground-truth fader labels. Planned for game 3 as a pilot tone, not the band
+  PA - see [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
 
-- **The iPad.** The page has been rendered in a desktop browser and looked
-  right, but no tablet has run it, so button sizing at arm's length and the
-  Auto-Lock advice on iPadOS Safari are both unverified. See handoff.md, which
-  also explains why the laptop shows a different wake-lock reading than the iPad
-  will. The readout stack (the level, the console fault, the refusal or the
+- **The iPad.** The page ran on an iPad through game 2 (game-2.md), so the
+  device itself is proven. The layout has moved on since: the pinned fader
+  column, the readout stack (the level, the console fault, the refusal or the
   "Greyed: they ramp from an unknown level" note, and the belief row of Close
   now / It's at ready level, all in the 96px readout gap) and the height of the
-  fader column (760px, sized for a 768px-tall landscape iPad) are unverified
-  too: both need an eyeball on the iPad before game 3.
+  fader column (760px, sized for a 768px-tall landscape iPad) have not been
+  eyeballed on the device since #5's layout landed. Do that before game 3.
 
 Reaper, the mirror script and the page itself have all been run against the real
 thing.

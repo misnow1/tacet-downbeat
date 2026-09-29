@@ -22,20 +22,71 @@ Read `design.md` for why any of it is shaped this way.
 
 ## Site values to fill in
 
-These live here and nowhere else in the repo. As of 2026-09-12 the console has
-been reached, so the IP and the DCA number are both known good - write them in.
-An empty row below now means nobody wrote it down, not that nobody knows.
+These live here and nowhere else in the repo. An empty row below now means
+nobody wrote it down, not that nobody knows.
 
 | | Value | Where it comes from |
 |---|---|---|
-| Console IP | `__________` | DM7: Setup > Network > For Mixer Control |
-| Band DCA number | `__________` | The console's DCA layout |
-| Recording path | `__________` | NAS share; never the repo (`audio/` is gitignored) |
-| Channels recorded | `__________` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
-| Box address on the VLAN | `__________` | `ipconfig getifaddr en0` |
+| Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control |
+| Band DCA number | `17` | The console's DCA layout |
+| Recording path | `~/Reaper Audio` | Laptop's local disk. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
+| Channels recorded | `29` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
+| Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
+| Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
+
+The box's two addresses above are currently DHCP-assigned, not reserved (the
+console's is set on the console itself, not the box's to reserve). Get the
+box's two reserved or set static: the iPad's bookmark to the page goes stale
+the first time DHCP hands the box a different address, which is not a thing to
+discover at kickoff.
 
 Put them in `tacet.toml` on the box too, so the startup command below is one
 line. See [box.md](box.md#tacettoml).
+
+---
+
+## Network
+
+The laptop runs two wired adapters: one on the **control VLAN** (console, the
+box, the control AP), one on **Dante Primary** (DVS). There is no Dante
+Secondary connection. The control AP is itself on the control VLAN, so the
+iPad is one wifi hop from the box.
+
+**Carry a spare adapter.** Game 2 lost one and the box ended up on wifi for the
+whole game - see [game-2.md](game-2.md).
+
+`reaper.host = "127.0.0.1"`, always: a Dante-side address works today and
+vanishes the moment that cable comes out.
+
+**If the iPad's link degrades, fall back to the page on the laptop, not to
+StageMix**, so annotation continues. Assume the page's wifi link in the bowl is
+unreliable - it was at game 2.
+
+---
+
+## Console: fix before the game
+
+Fixes to game 2's routing, agreed for game 3 (#13):
+
+1. Unassign the DJ from group 37; assign it to group 38 (DJ to Hype PA).
+2. Assign the groups to a new matrix.
+3. Put the ducker on that new matrix, keyed from the announce group.
+4. Route that matrix to Dante 37 (Rio output 1).
+
+**Set up the DCA reference channel**: console channel 53 assigned to the band
+DCA only, dynamics and EQ bypassed, TO STEREO off, no other sends, direct out
+Post Fader on Dante 53; in Dante Controller, route DVS send 27 to console ch
+53. Detail in [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
+
+**Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
+ships at 0 dB, and raising it costs feedback margin against a band PA that sits
+just behind the mics ([box.md](box.md#reading-the-page)).
+
+**Hold the console firmware.** DM7 V2.00 shipped 2026-09-10 and cannot be
+rolled back below V1.76; whether its OSC behavior matches what this box was
+built and tested against is not established. **Do not update the console
+before game day.** If it has been updated anyway, re-run `verify_dm7`
+([box.md](box.md#the-console)) before kickoff.
 
 Check the config before leaving for the stadium: `tacet-serve --log
 ~/games/<YYYY-MM-DD>.jsonl --check` prints the banner or the refusal and starts
@@ -51,10 +102,16 @@ path matching between them.
 ### 1. Reaper
 
 Open the game project and confirm DVS is the audio device. Check every track on
-[the patch list](reaper.md#tracks-to-record) is there, named, and **armed** -
-including the post-DCA band reference, proven by pulling the DCA down and
-watching its track go silent. Point the record path at the NAS. **Do not start
+[the patch list](reaper.md#tracks-to-record) is there, named, and **armed**.
+Point the record path at the local recording path (Site values, above) - it is
+copied to the NAS after the game, not recorded to it directly. **Do not start
 recording yet.**
+
+Prove the [DCA reference](reaper.md#the-dca-reference-a-pilot-tone): pull the
+DCA down and watch its track go silent in Reaper, confirm the pilot tone
+generator keeps running with the transport stopped, and - the check that
+matters most - confirm the tone shows on no other console output meter. It
+must never reach a PA.
 
 ### 2. Load and run the ReaScript
 
@@ -310,9 +367,23 @@ recording nor the log depends on the page or the markers working.
 2. Save the project.
 3. Stop `tacet-serve` with **Ctrl-C twice**. It never fades on the way out, and
    stopping the box does not stop the recording.
-4. Copy to the NAS: the multitrack, the project, and the annotation log. The
-   log is small and the one thing that cannot be recreated.
+4. Copy to the NAS from the local recording path (Site values, above): the
+   multitrack, the project, and the annotation log. The log is small and the
+   one thing that cannot be recreated.
 
 Four streams have to end up on the NAS together (design.md 9): the DVS
-multitrack, the post-DCA reference channel, the RTD capture, and the annotation
-log.
+multitrack, the DCA reference (a pilot tone, not the band PA), the RTD capture,
+and the annotation log.
+
+---
+
+## Fill in on the day
+
+Blanks nobody could pin down in advance. Write the answer here so it is not
+lost again.
+
+| | Value | Notes |
+|---|---|---|
+| Band Mix (Pre-Ducker) Dante out | `__________` | Collides with Announcer Mic Dry on 39 ([reaper.md](reaper.md#tracks-to-record)) - resolve on site. 44 is likely free but unverified |
+| Main PA Mix Dante out | `__________` | |
+| Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |
