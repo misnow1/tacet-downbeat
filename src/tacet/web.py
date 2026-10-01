@@ -497,6 +497,20 @@ PAGE = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- Standalone, so the page is launched from a Home Screen icon and not a
+     Safari tab (#140). In a tab, iOS keeps the tab bar and toolbar on screen -
+     roughly 100-140px of a 768px-tall landscape iPad - against a fader column
+     that budgets 760px, so the column overflowed and the page scrolled, which
+     is the failure #5 exists to remove. black-translucent rather than default
+     because viewport-fit=cover is already set and .left and #fader-column
+     already pad with env(safe-area-inset-*): the content runs under the status
+     bar and that padding keeps the controls clear of it. Every client that
+     does not understand these ignores them, so the phone and laptop cases are
+     unaffected. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="tacet">
 <title>tacet-downbeat</title>
 <style>
 /* #5: black text on a bright amber (about 11:1) rather than white on the old,
@@ -512,9 +526,18 @@ font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 -webkit-text-size-adjust:100%}
 /* Landscape, right thumb (#5): the fader column is a fixed-width flex sibling
    of everything else, so nothing that grows on the left - the why line, an
-   expanded status chip, MAIN's content - can ever move a fader button. */
-.app{display:flex;min-height:100vh;min-height:100dvh}
-.left{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;overflow-y:auto;
+   expanded status chip, MAIN's content - can ever move a fader button.
+   height, not min-height (#140): min-height is a floor, so a MAIN grid taller
+   than the screen stretched .app past the viewport instead of scrolling
+   inside .left, and the page scrolled as a whole - which drags the column's
+   last button, Faded out, below the fold. That is the same failure sideways
+   protection was bought to prevent. A definite height is also what makes
+   .left's overflow-y:auto do anything: a flex item stretched by a container
+   with no ceiling is exactly as tall as its content, so it never scrolls.
+   min-height:0 on .left for the same reason one step down - a flex item's
+   automatic minimum size is its content, which would re-break the scroll. */
+.app{display:flex;height:100vh;height:100dvh}
+.left{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow-y:auto;
 padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 /* MORE is reached less often and never mid-play; the tint says at a glance
    which tab is showing without having to read either tab button. */
@@ -681,6 +704,19 @@ padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
 border-left:1px solid var(--line);background:var(--bg)}
 #fader-top,#fader-bottom{display:contents}
 #fader-column button{width:100%;flex:0 0 auto;font-size:16px}
+/* The heights below are the reviewed list and are what a screen with room
+   gets, exactly. Shorter than that, these six give way together rather than
+   the column overflowing and putting the last of them - Faded out - under the
+   fold (#140): flex-shrink spreads the deficit in proportion to those heights,
+   so the hallway-tested ordering of sizes survives, and min-height is the
+   floor it stops at. 64px is comfortably above the 44pt Apple asks for, and
+   the column has to lose over 200px before anything reaches it.
+   Scoped to the two groups, NOT to #fader-column button, which also matches
+   the belief row's two: a floor on those grows the row from 43.6px to 64 and
+   takes the difference out of the one line above it, which is the column note
+   - the readout gap has no spare to give. The readout itself does not shrink
+   either (its own min-height holds), so the belief row is never clipped. */
+#fader-top button,#fader-bottom button{flex:0 1 auto;min-height:64px}
 #fader-column button[data-key="up-whistle"]{height:112px}
 #fader-column button[data-key="up-drums"]{height:112px}
 #fader-column button[data-key="up-slow"]{height:80px}
@@ -689,8 +725,12 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="out"]{height:136px}
 /* The readout gap: exactly 96px of room, never more asked for. The column is 592
    of buttons + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
-   iPad; growing it makes the page scroll, the failure #5 was built to remove
-   (#107 put the belief row in here without changing that). Level/target/refusal
+   iPad (#107 put the belief row in here without changing that). Since #140 a
+   shorter screen takes the difference out of the buttons rather than scrolling
+   the page, but this gap is not part of that: it does not shrink, because what
+   sits at the bottom of it is the belief row, and the budget below has no spare
+   to give. Growing it therefore still costs button height on every short
+   screen, so the sum below still has to come in under 96. Level/target/refusal
    are repeated here because the header carrying #refusal is on the far side of
    the screen from this thumb; the age of the last command (#12) rides on
    #level itself. Budget, top to bottom:

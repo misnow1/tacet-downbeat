@@ -141,6 +141,14 @@ refusal: [troubleshooting.md](troubleshooting.md#the-terminal).
 Open `http://<box address>:8080`. The page needs nothing installed and
 reconnects on its own if the box restarts.
 
+**Launch it from the Home Screen, not a Safari tab.** Open the address once in
+Safari, Share > Add to Home Screen, then use that icon from then on. In a tab,
+Safari's own bars take about 120px of screen height and the fader column does
+not fit, so the page scrolls and the close button can end up below the fold -
+the one failure the pinned column exists to prevent. From the icon the page
+gets the whole screen. Do this before kickoff, not during: the icon is a
+one-time setup per iPad, and it survives restarts.
+
 **Turn Auto-Lock off**: Settings > Display and Brightness > Auto-Lock > Never.
 An iPad that locks its screen stops being an operator interface, and nobody
 finds out until they look down at a black slab in the middle of a drive. The
