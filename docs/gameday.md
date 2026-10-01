@@ -30,7 +30,7 @@ nobody wrote it down, not that nobody knows.
 | Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control |
 | Band DCA number | `17` | The console's DCA layout |
 | Recording path | `~/Reaper Audio` | Laptop's local disk. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
-| Channels recorded | `29` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
+| Channels recorded | `30` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
 
@@ -75,7 +75,7 @@ Fixes to game 2's routing, agreed for game 3 (#13):
 
 **Set up the DCA reference channel**: console channel 53 assigned to the band
 DCA only, dynamics and EQ bypassed, TO STEREO off, no other sends, direct out
-Post Fader on Dante 53; in Dante Controller, route DVS send 27 to console ch
+Post Fader on Dante 78; in Dante Controller, route DVS send 1 to console ch
 53. Detail in [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
 
 **Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
@@ -102,7 +102,8 @@ path matching between them.
 ### 1. Reaper
 
 Open the game project and confirm DVS is the audio device. Check every track on
-[the patch list](reaper.md#tracks-to-record) is there, named, and **armed**.
+[the patch list](reaper.md#tracks-to-record) is there, named, and **armed** -
+all but `Pilot`, the tone source, which records nothing.
 Point the record path at the local recording path (Site values, above) - it is
 copied to the NAS after the game, not recorded to it directly. **Do not start
 recording yet.**
@@ -112,6 +113,11 @@ DCA down and watch its track go silent in Reaper, confirm the pilot tone
 generator keeps running with the transport stopped, and - the check that
 matters most - confirm the tone shows on no other console output meter. It
 must never reach a PA.
+
+Talk-check the four Axient tracks - Ref Primary, Ref BU, HH Red, HH Blue -
+once their packs are on, before kickoff. Three of them were digital silence
+for the whole 2026-09-30 runthrough, and a dead feed looks like a quiet one
+until someone listens back.
 
 ### 2. Load and run the ReaScript
 
@@ -393,6 +399,6 @@ lost again.
 
 | | Value | Notes |
 |---|---|---|
-| Band Mix (Pre-Ducker) Dante out | `__________` | Collides with Announcer Mic Dry on 39 ([reaper.md](reaper.md#tracks-to-record)) - resolve on site. 44 is likely free but unverified |
-| Main PA Mix Dante out | `__________` | |
+| Band Group Dante out | `17` | Resolved at the 2026-09-30 runthrough (#145). Was listed as 39, colliding with Announcer Mic Dry, which is now on 65 |
+| Main PA Output Dante out | `50` | Resolved at the 2026-09-30 runthrough (#145) |
 | Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |
