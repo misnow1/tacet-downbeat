@@ -2031,6 +2031,27 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
 }
 
 {
+  // #139: the default need not be the first preset either. app.js itself does
+  // not change for this - snapshot.target.default_db already carries whatever
+  // the box configured - but this pins that claim rather than leaving it a
+  // reading.
+  const { context, nodes } = browser();
+  const site = { presets_db: [3, 0, -3], default_db: 0, db: 0, level: 0 };
+  context.render(targetSnapshot(site));
+  check(
+    "chip: neutral at a default that is not the first preset",
+    nodes.get("target-level").classList.contains("off-default"),
+    false,
+  );
+  context.render(targetSnapshot({ ...site, db: 3, level: 300 }));
+  check(
+    "chip: amber at the first (louder) preset, which is not the default",
+    nodes.get("target-level").classList.contains("off-default"),
+    true,
+  );
+}
+
+{
   // The chip and the fader readout do not fight (see the section comment in
   // app.js). A ride to the old target still shows its own arrow in the readout;
   // the chip says the standing target is for the NEXT open.

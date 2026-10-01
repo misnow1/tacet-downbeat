@@ -207,7 +207,8 @@ class App:
         #: where a move already in flight is heading - the two differ for as long
         #: as a ride that started before a change is still running. Lives here
         #: rather than in `state.Machine`, which knows no console units. Starts
-        #: at the first preset, and is only ever set to one of them.
+        #: at the configured default, which is one of the presets, and is only
+        #: ever set to one of them (#139).
         self._target = self._targets.default
         self._monotonic = monotonic
         self._stale_tap_seconds = stale_tap_seconds

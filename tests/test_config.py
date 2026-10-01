@@ -445,6 +445,12 @@ class TestTargetPresets(_TempConfig):
     number is set by an on-site ring-out. A file that names a preset above it
     must refuse at load, naming the key and the value, rather than start a box
     that offers a level nobody has rung out.
+
+    #139 adds a third key, `fader.default_target_db`: optional, and checked
+    against the presets (the file's, or the built-in ones when the file names
+    no presets of its own) the same way the cap is - at load, naming the value
+    and the list, rather than booting a box to a level the operator cannot get
+    back to from the page.
     """
 
     def values(self, **fader):
@@ -516,10 +522,74 @@ class TestTargetPresets(_TempConfig):
         values = config.load(TestTheExampleFile.EXAMPLE)
         self.assertEqual(values["fader.presets"], targets.DEFAULT_PRESETS_DB)
         self.assertEqual(values["fader.max_target_db"], targets.DEFAULT_MAX_TARGET_DB)
+        self.assertEqual(values["fader.default_target_db"], targets.DEFAULT_PRESETS_DB[0])
+
+    def test_a_default_that_is_one_of_the_presets_loads(self):
+        values = self.values(presets=[0.0, -3.0, -6.0], default_target_db=-3.0)
+        self.assertEqual(values["fader.default_target_db"], -3.0)
+
+    def test_a_default_outside_the_presets_refuses_naming_the_value_and_the_list(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            self.values(presets=[0.0, -3.0, -6.0], default_target_db=-1.5)
+        message = str(caught.exception)
+        self.assertIn("-1.5", message)
+        self.assertIn("0.0, -3.0, -6.0", message)
+
+    def test_a_default_alone_is_checked_against_the_built_in_presets(self):
+        # No `presets` key here at all: the built-in list is what a lone
+        # default is judged against, not skipped for lack of a list to check.
+        self.assertIn(-3.0, targets.DEFAULT_PRESETS_DB)
+        self.assertEqual(self.values(default_target_db=-3.0)["fader.default_target_db"], -3.0)
+        self.assertNotIn(-4.0, targets.DEFAULT_PRESETS_DB)
+        with self.assertRaises(config.ConfigError):
+            self.values(default_target_db=-4.0)
+
+    def test_a_lone_default_against_a_low_cap_names_the_cap_not_the_default(self):
+        # The default (0.0, a built-in preset) is innocent; the cap is what
+        # actually refuses it, against the implicit built-in presets. Naming
+        # only fader.default_target_db here would blame the wrong key.
+        self.assertIn(0.0, targets.DEFAULT_PRESETS_DB)
+        with self.assertRaises(config.ConfigError) as caught:
+            self.values(default_target_db=0.0, max_target_db=-3.0)
+        self.assertIn("fader.max_target_db", str(caught.exception))
+
+    def test_a_cap_alone_still_has_nothing_to_check(self):
+        # The subtlest regression: widening the early return to admit a lone
+        # default must not also widen it to fire on a lone cap. A negative cap
+        # - below every built-in preset - would be the first thing refused if
+        # the early return ever substituted the built-in presets here too.
+        self.assertEqual(self.values(max_target_db=-10.0), {"fader.max_target_db": -10.0})
+
+    def test_a_whole_number_default_becomes_a_float(self):
+        values = self.values(presets=[0, -3, -6], default_target_db=0)
+        self.assertEqual(values["fader.default_target_db"], 0.0)
+        self.assertIsInstance(values["fader.default_target_db"], float)
+
+    def test_a_default_that_is_not_a_number_refuses(self):
+        for bad in ("0 dB", True, [0.0]):
+            with self.subTest(bad=bad), self.assertRaises(config.ConfigError) as caught:
+                self.values(default_target_db=bad)
+            self.assertIn("fader.default_target_db", str(caught.exception))
+
+    def test_a_default_refusal_names_the_file(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"fader": {"presets": [0.0], "default_target_db": 1.0}}, where="/etc/tacet.toml")
+        self.assertIn("/etc/tacet.toml", str(caught.exception))
+
+    def test_a_file_carrying_all_three_keys_loads_through_load(self):
+        path = self.write("[fader]\npresets = [-2.0, -5.0, -8.0]\nmax_target_db = 3.0\ndefault_target_db = -5.0\n")
+        self.assertEqual(config.load(path)["fader.default_target_db"], -5.0)
 
 
 #: SAMPLE with the two target keys added to its own [fader] table.
 WITH_PRESETS = SAMPLE.replace("fade_seconds = 2.5", "fade_seconds = 2.5\npresets = [-2.0, -5.0]\nmax_target_db = -1.0")
+
+#: SAMPLE with all three target keys, the default named explicitly rather than
+#: left to fall back to the first preset.
+WITH_DEFAULT = SAMPLE.replace(
+    "fade_seconds = 2.5",
+    "fade_seconds = 2.5\npresets = [3.0, 0.0, -3.0]\nmax_target_db = 3.0\ndefault_target_db = 0.0",
+)
 
 
 class TestTargetFlags(_TempConfig):
@@ -562,6 +632,38 @@ class TestTargetFlags(_TempConfig):
         with self.assertRaises(SystemExit), redirect_stderr(stderr):
             serve.parser().parse_args(["--presets", "loud"])
         self.assertIn("--presets", stderr.getvalue())
+
+    def test_an_unset_default_target_stays_none(self):
+        # What makes the fallback to the first preset work through
+        # `set_defaults`: the flag's own default must be `None`, not a value
+        # that would silently win over a file's `default_target_db`.
+        args = self.resolve([])
+        self.assertIsNone(args.default_target)
+
+    def test_the_file_supplies_the_default_target(self):
+        args = self.resolve([], text=WITH_DEFAULT)
+        self.assertEqual(args.default_target, 0.0)
+
+    def test_the_default_target_flag_beats_the_file(self):
+        args = self.resolve(["--default-target", "-3"], text=WITH_DEFAULT)
+        self.assertEqual(args.default_target, -3.0)
+
+    def test_a_cli_preset_list_is_judged_against_the_file_default(self):
+        # The file's default_target_db validates alone, against the built-in
+        # presets, when the file is loaded (#139's widened early return). A
+        # --presets flag overriding the list afterwards is never rechecked
+        # here: config.resolve is per-source. Only serve.main's post-resolve
+        # targets.build (tests/test_serve.py) can catch that clash.
+        path = self.write("[fader]\ndefault_target_db = -6.0\n")
+        args, _ = config.resolve(serve.parser(), serve.CONFIG_MAPPING, ["--presets", "0,-3"], environ={}, search=[path])
+        self.assertEqual(args.presets, (0.0, -3.0))
+        self.assertEqual(args.default_target, -6.0)
+
+    def test_a_negative_default_target_parses_as_a_value_not_a_flag(self):
+        # Same trap as --max-target: argparse would read a bare `-3` as an
+        # option if the parser had one spelled like a number.
+        args = self.resolve(["--default-target", "-3.0"])
+        self.assertEqual(args.default_target, -3.0)
 
 
 class TestTheExampleFile(unittest.TestCase):

@@ -120,6 +120,12 @@ class TestStartupBannerSaysWhatItWasTold(unittest.TestCase):
         text = banner("--presets=-2,-5,-8", "--max-target", "3")
         self.assertIn("-2.0 dB   presets -2.0 / -5.0 / -8.0   cap 3.0 dB", text)
 
+    def test_the_target_row_says_the_configured_default_first(self):
+        # #139: the default need not be the first preset any more, and the
+        # banner has to say the one actually configured.
+        text = banner("--presets=3,0,-3", "--max-target", "3", "--default-target", "0")
+        self.assertIn("0.0 dB   presets 3.0 / 0.0 / -3.0   cap 3.0 dB", text)
+
     def test_quantized_is_mentioned_only_when_it_is_on(self):
         self.assertNotIn("Table 1", banner())
         self.assertIn("Table 1", banner("--quantized"))
@@ -441,6 +447,68 @@ class TestAPresetAboveTheCapStopsTheBoxInWords(_RunMain):
         code, stderr = self.run_main([*self.ARGV, "--log", str(self.log)])
         self.assertEqual(code, 2)
         self.assertIn("fader.presets", stderr)
+
+
+class TestTheDefaultTargetMustBeAPreset(_RunMain):
+    """#139: a default outside the presets would boot the box to a level the
+    operator cannot select again, since the page's control offers presets
+    only."""
+
+    ARGV = ("--console-host", "192.0.2.1", "--dca", "3")
+
+    def test_target_refusal_names_every_flag_and_key(self):
+        # Pinned directly, like LOG_REQUIRED: a refusal that silently dropped
+        # one of the three ways a mismatched target can arrive - the file,
+        # either flag - would leave someone staring at a message that does
+        # not mention the thing they actually set.
+        for flag in ("--presets", "--max-target", "--default-target"):
+            self.assertIn(flag, serve.TARGET_REFUSAL)
+        for key in ("fader.presets", "fader.max_target_db", "fader.default_target_db"):
+            self.assertIn(key, serve.TARGET_REFUSAL)
+
+    def test_a_default_flag_outside_the_presets_is_a_command_line_error_not_a_traceback(self):
+        code, stderr = self.run_main([*self.ARGV, "--log", str(self.log), "--default-target", "-1.5"])
+        self.assertEqual(code, 2)
+        self.assertIn("-1.5", stderr)
+        self.assertIn("--default-target", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_a_config_default_outside_its_own_presets_refuses(self):
+        self.config.write_text("[fader]\npresets = [0.0, -3.0]\ndefault_target_db = -6.0\n", encoding="utf-8")
+        code, stderr = self.run_main([*self.ARGV, "--log", str(self.log)])
+        self.assertEqual(code, 2)
+        self.assertIn("fader.default_target_db", stderr)
+        self.assertIn("-6.0", stderr)
+
+    def test_a_file_default_outside_a_cli_preset_list_refuses(self):
+        # Only serve.main's post-resolve targets.build can catch this: the
+        # file's default_target_db validates fine on its own (-6.0 is one of
+        # the built-in presets, asserted below so this premise cannot rot
+        # silently), and the clash only exists once the flag has overridden
+        # the preset list. The second assertion discriminates the layer: a
+        # refusal at config load reads "<path>: fader.default_target_db: ...",
+        # a refusal here reads serve.TARGET_REFUSAL, which names --presets.
+        # Without it, a change that made config.load catch this instead would
+        # still pass - same exit code, same value in stderr - while silently
+        # losing the behaviour this test exists to cover.
+        self.assertIn(-6.0, targets.DEFAULT_PRESETS_DB)
+        self.config.write_text("[fader]\ndefault_target_db = -6.0\n", encoding="utf-8")
+        code, stderr = self.run_main([*self.ARGV, "--log", str(self.log), "--presets", "0,-3"])
+        self.assertEqual(code, 2)
+        self.assertIn("-6.0", stderr)
+        self.assertIn("--presets", stderr)
+
+    def test_a_named_default_in_the_middle_of_the_list_is_admitted(self):
+        args = serve.parser().parse_args(
+            [*self.ARGV, "--log", str(self.log), "--presets", "3,0,-3", "--max-target", "3", "--default-target", "0"]
+        )
+        self.assertEqual(targets.build(args.presets, args.max_target, args.default_target).default, 0)
+
+    def test_an_unset_default_still_takes_the_first_preset(self):
+        args = serve.parser().parse_args(
+            [*self.ARGV, "--log", str(self.log), "--presets", "3,0,-3", "--max-target", "3"]
+        )
+        self.assertEqual(targets.build(args.presets, args.max_target, args.default_target).default, 300)
 
 
 class TestAnUnreadableLogStopsTheBoxInWords(_RunMain):

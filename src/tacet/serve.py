@@ -105,10 +105,11 @@ class _Feedback(asyncio.DatagramProtocol):
 
 
 def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
-    # First, so a preset above the cap raises before the log or the queue is
-    # opened. The cap is held here as well as in the config file (#9): a flag
-    # can name a level the file never saw.
-    levels = targets.build(args.presets, args.max_target)
+    # First, so a preset above the cap, or a default that is not one of the
+    # presets, raises before the log or the queue is opened. Held here as well
+    # as in the config file (#9, #139): a flag can name values the file never
+    # saw.
+    levels = targets.build(args.presets, args.max_target, args.default_target)
     queue = mirror.MirrorQueue(args.queue).open() if args.queue else None
     log = AnnotationLog(args.log, mirror=queue).open()
     console = dm7.Dm7Client(
@@ -249,9 +250,11 @@ def _page_lines(listen: str, port: int) -> list[str]:
 
 def _target_row(args: argparse.Namespace) -> str:
     """Where an open goes, the levels the page offers and the cap on them (#9).
-    The first preset is the default, so it is the one said first."""
+    The configured default is said first, which is the first preset only when
+    nothing names another (#139)."""
     presets = " / ".join(f"{db:.1f}" for db in args.presets)
-    return _row("target", f"{args.presets[0]:.1f} dB   presets {presets}   cap {args.max_target:.1f} dB")
+    default = args.presets[0] if args.default_target is None else args.default_target
+    return _row("target", f"{default:.1f} dB   presets {presets}   cap {args.max_target:.1f} dB")
 
 
 def _checklist(args: argparse.Namespace) -> list[str]:
@@ -466,6 +469,7 @@ CONFIG_MAPPING = {
     "ready_ride": "fader.ready_ride_seconds",
     "stale_tap": "fader.stale_tap_seconds",
     "presets": "fader.presets",
+    "default_target": "fader.default_target_db",
     "max_target": "fader.max_target_db",
     "listen": "ui.listen",
     "http_port": "ui.port",
@@ -480,6 +484,12 @@ REQUIRED = ("console_host", "dca")
 #: because no config file can supply it (#20), so the generic message - which
 #: offers a config key - would send someone looking for one.
 LOG_REQUIRED = "--log is required on the command line, a fresh one each game: --log ~/games/<YYYY-MM-DD>.jsonl"
+
+#: Named when the three target keys disagree, so the message covers every
+#: way the value could have arrived - the file, the flag, or neither.
+TARGET_REFUSAL = (
+    "--presets / --max-target / --default-target (fader.presets, fader.max_target_db, fader.default_target_db)"
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -543,7 +553,17 @@ def parser() -> argparse.ArgumentParser:
         type=config.db_list,
         default=targets.DEFAULT_PRESETS_DB,
         metavar="DB,DB,...",
-        help="target levels the page offers, the first the default (--presets=-3,-6 if it starts with a minus)",
+        help=(
+            "target levels the page offers, the first the default unless --default-target names "
+            "another (--presets=-3,-6 if it starts with a minus)"
+        ),
+    )
+    p.add_argument(
+        "--default-target",
+        type=float,
+        default=None,
+        metavar="DB",
+        help="the preset every open goes to until the operator picks another (default: the first preset)",
     )
     p.add_argument(
         "--max-target",
@@ -588,12 +608,15 @@ def main(argv: list[str] | None = None) -> int:
     config.require(p, args, CONFIG_MAPPING, *REQUIRED)
     if args.log is None:
         p.error(LOG_REQUIRED)
-    # A preset above the cap is refused here, like any other bad flag, rather
-    # than as a traceback from `build` after the banner has said all is well.
+    # A preset above the cap, or a default that is not one of the presets, is
+    # refused here, like any other bad flag, rather than as a traceback from
+    # `build` after the banner has said all is well. This is also the only
+    # place a file's default and a flag's preset list can be checked against
+    # each other, since config.resolve validates each source on its own.
     try:
-        targets.build(args.presets, args.max_target)
+        targets.build(args.presets, args.max_target, args.default_target)
     except targets.TargetError as exc:
-        p.error(f"--presets / --max-target (fader.presets, fader.max_target_db): {exc}")
+        p.error(f"{TARGET_REFUSAL}: {exc}")
     # Said out loud, because a box configured from a file has no visible
     # command line: "why is it driving DCA 3" otherwise has no answer on the
     # day. Printed before anything binds, so it survives a failure to start.

@@ -2264,6 +2264,37 @@ class TestTheStandingTarget(AppTestCase):
         await app.trigger()
         self.assertEqual(self.console.commanded_level, -200)
 
+    async def test_a_site_whose_default_is_not_the_first_preset_opens_to_it(self):
+        self.build()
+        app = tacet_app.App(
+            console=self.console,
+            log=self.log,
+            target_levels=targets.build((3.0, 0.0, -3.0), 3.0, 0.0),
+            machine=state.Machine(level_known=True),
+        )
+        target = app.snapshot()["target"]
+        self.assertEqual(target["db"], 0.0)
+        self.assertEqual(target["default_db"], 0.0)
+        self.assertEqual(target["presets_db"], [3.0, 0.0, -3.0])
+        await app.arm()
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, 0)
+
+    async def test_target_set_records_default_against_the_configured_default_not_the_first_preset(self):
+        self.build()
+        app = tacet_app.App(
+            console=self.console,
+            log=self.log,
+            target_levels=targets.build((3.0, 0.0, -3.0), 3.0, 0.0),
+            machine=state.Machine(level_known=True),
+        )
+        await app.set_target(3.0)
+        entry = [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
+        self.assertFalse(entry.data["default"])
+        await app.set_target(0.0)
+        entry = [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
+        self.assertTrue(entry.data["default"])
+
     async def test_setting_the_target_sends_no_packet_and_leaves_the_commanded_level_alone(self):
         for label, prepare in (
             ("standing down", None),
