@@ -102,6 +102,32 @@ class TestPage(WebTestCase):
         body = await (await self.client.get("/")).text()
         self.assertIn('<div class="panel" id="handoff-confirm" style="display:none">', body)
 
+    async def test_the_page_asks_ios_for_standalone_so_the_column_gets_the_whole_screen(self):
+        # #140: the column's 760px budget below assumes it has the screen. In a
+        # Safari tab it does not - the tab bar and toolbar take roughly 100-140px
+        # of a 768px-tall landscape iPad - and no amount of shaving the column
+        # wins that back. These let iOS offer standalone from the Home Screen,
+        # and a client that does not understand them ignores them.
+        body = await (await self.client.get("/")).text()
+        for meta in (
+            '<meta name="apple-mobile-web-app-capable" content="yes">',
+            '<meta name="mobile-web-app-capable" content="yes">',
+            '<meta name="apple-mobile-web-app-title" content="tacet">',
+        ):
+            self.assertIn(meta, body, meta)
+
+    async def test_the_status_bar_is_translucent_so_the_safe_area_padding_governs(self):
+        # black-translucent, not default: viewport-fit=cover is already set and
+        # both columns already pad with env(safe-area-inset-*), so the content
+        # runs under the status bar and that existing padding is what keeps the
+        # controls clear of it. "default" would letterbox instead and the
+        # padding would be dead weight.
+        body = await (await self.client.get("/")).text()
+        self.assertIn('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">', body)
+        self.assertIn("viewport-fit=cover", body)
+        for rule in ("#fader-column{", ".left{"):
+            self.assertIn("env(safe-area-inset-", body.split(rule, 1)[1].split("}", 1)[0], rule)
+
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
         # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
         # 12px gaps between its seven children (72) and the readout gap. At

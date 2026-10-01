@@ -497,6 +497,20 @@ PAGE = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- Standalone, so the page is launched from a Home Screen icon and not a
+     Safari tab (#140). In a tab, iOS keeps the tab bar and toolbar on screen -
+     roughly 100-140px of a 768px-tall landscape iPad - against a fader column
+     that budgets 760px, so the column overflowed and the page scrolled, which
+     is the failure #5 exists to remove. black-translucent rather than default
+     because viewport-fit=cover is already set and .left and #fader-column
+     already pad with env(safe-area-inset-*): the content runs under the status
+     bar and that padding keeps the controls clear of it. Every client that
+     does not understand these ignores them, so the phone and laptop cases are
+     unaffected. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="tacet">
 <title>tacet-downbeat</title>
 <style>
 /* #5: black text on a bright amber (about 11:1) rather than white on the old,
