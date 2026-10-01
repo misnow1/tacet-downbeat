@@ -66,12 +66,15 @@ unreliable - it was at game 2.
 
 ## Console: fix before the game
 
-Fixes to game 2's routing, agreed for game 3 (#13):
+Fixes to game 2's routing, agreed for game 3 (#13) and in place since the
+2026-09-30 runthrough (#145). Check they are still there:
 
-1. Unassign the DJ from group 37; assign it to group 38 (DJ to Hype PA).
-2. Assign the groups to a new matrix.
-3. Put the ducker on that new matrix, keyed from the announce group.
-4. Route that matrix to Dante 37 (Rio output 1).
+1. Group 37 is the **Band Group**, pre-ducking. The DJ is not on it.
+2. Group 38 is everything else bound for the Hype PA - currently just the
+   delayed TMMPO input.
+3. Both groups feed **Matrix 8**, which carries the ducker, keyed from the
+   announce group.
+4. Matrix 8 goes out on Dante out 56 to the Hype PA.
 
 **Set up the DCA reference channel**: console channel 53 assigned to the band
 DCA only, dynamics and EQ bypassed, TO STEREO off, no other sends, direct out
