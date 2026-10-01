@@ -33,6 +33,9 @@ nobody wrote it down, not that nobody knows.
 | Channels recorded | `29` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
+| Target levels offered | `[3.0, 0.0, -3.0, -6.0]` dB | `fader.presets`, in the order the page lists them. Ordered loudest first so the page reads like a fader; the default is the row below, not the first entry |
+| Default target | `0.0` dB | `fader.default_target_db`. Where every open goes and what Ready's hold level is measured down from. 0 dB suits most games; +3 dB is one tap away on the page for a very loud crowd |
+| Target cap | `+6.0` dB | `fader.max_target_db`. A preset above it refuses to start. **Set from an on-site ring-out - see the ring-out row under "Fill in on the day", which is still blank** |
 
 The box's two addresses above are currently DHCP-assigned, not reserved (the
 console's is set on the console itself, not the box's to reserve). Get the
@@ -81,6 +84,15 @@ Post Fader on Dante 53; in Dante Controller, route DVS send 27 to console ch
 **Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
 ships at 0 dB, and raising it costs feedback margin against a band PA that sits
 just behind the mics ([box.md](box.md#reading-the-page)).
+
+The box is currently set to a cap of **+6.0 dB**, six above where it ships.
+**Which ring-out produced that number is not written down** - see the ring-out
+row under "Fill in on the day". Until it is, the cap is a number nobody can
+point at a measurement for, and the margin it spends is spent in the quiet
+section under a PAT, which is exactly where it runs out. Either record the
+ring-out that supports +6, or bring the cap down to one that has been measured.
+The presets in use top out at +3, so lowering the cap to +3 costs nothing that
+is being used today.
 
 **Hold the console firmware.** DM7 V2.00 shipped 2026-09-10 and cannot be
 rolled back below V1.76; whether its OSC behavior matches what this box was
@@ -396,3 +408,6 @@ lost again.
 | Band Mix (Pre-Ducker) Dante out | `__________` | Collides with Announcer Mic Dry on 39 ([reaper.md](reaper.md#tracks-to-record)) - resolve on site. 44 is likely free but unverified |
 | Main PA Mix Dante out | `__________` | |
 | Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |
+| Ring-out date | `__________` | Stands empty. The measurement `fader.max_target_db` comes from |
+| Ring-out headroom measured | `__________` dB | Where it started to ring, relative to unity. The cap goes at or below this, never above |
+| Cap the ring-out justifies | `__________` dB | What `fader.max_target_db` should be. The box is set to `+6.0` with no measurement recorded behind it - see "Console: fix before the game" |
