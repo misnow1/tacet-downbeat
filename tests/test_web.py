@@ -128,6 +128,21 @@ class TestPage(WebTestCase):
         for rule in ("#fader-column{", ".left{"):
             self.assertIn("env(safe-area-inset-", body.split(rule, 1)[1].split("}", 1)[0], rule)
 
+    async def test_a_tall_left_panel_cannot_push_the_fader_column_off_the_screen(self):
+        # #140: .app took min-height, which is a floor, so a MAIN grid taller
+        # than the screen stretched the whole row and the page scrolled as one -
+        # putting Faded out, last in the column, below the fold. A definite
+        # height is the ceiling that makes .left scroll inside itself instead,
+        # and min-height:0 is what stops a flex item's automatic minimum size
+        # (its content) from re-breaking that.
+        body = await (await self.client.get("/")).text()
+        app = body.split(".app{", 1)[1].split("}", 1)[0]
+        self.assertIn("height:100dvh", app)
+        self.assertNotIn("min-height", app)
+        left = body.split(".left{", 1)[1].split("}", 1)[0]
+        self.assertIn("min-height:0", left)
+        self.assertIn("overflow-y:auto", left)
+
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
         # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
         # 12px gaps between its seven children (72) and the readout gap. At
