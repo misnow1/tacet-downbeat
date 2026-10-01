@@ -22,17 +22,21 @@ version, in the order it happens on the day, is in [gameday.md](gameday.md).
 ## Tracks to record
 
 Agreed for game 3 (see #13; game 2's list is in [game-2.md](game-2.md),
-"Capture: patch list"). Every feed gets a **fixed track name**, so offline
-tools find it by name rather than position, and **every track is present from
-the moment recording starts** - a feed patched in mid-game leaves everything
-before it with nothing to compare against.
+"Capture: patch list") and corrected at the 2026-09-30 media runthrough
+(#145). The source of truth is the **"MV Recording Routing"** sheet in Drive,
+whose names match the Reaper template exactly. The stadium's DM7 I/O master
+sheet is out of date: where the two disagree, the routing sheet wins. Every
+feed gets a **fixed track name**, so offline tools find it by name rather than
+position, and **every track is present from the moment recording starts** - a
+feed patched in mid-game leaves everything before it with nothing to compare
+against.
 
-| DVS rx | Track | Source | Notes |
+| Reaper / DVS rx | Track | Source | Notes |
 |---|---|---|---|
 | 1 | MV Conductor | Rio ch 1, Dante split (pre-delay) | Console ch 37 |
 | 2 | MV Spare | Rio ch 2, Dante split (pre-delay) | Console ch 38 |
 | 3 | MV Snare | Rio ch 3, Dante split (pre-delay) | Console ch 39 |
-| 4 | MV Bd | Rio ch 4, Dante split (pre-delay) | Console ch 40 |
+| 4 | MV BD | Rio ch 4, Dante split (pre-delay) | Console ch 40 |
 | 5 | MV Sax 1 | Rio ch 5, Dante split (pre-delay) | Console ch 41 |
 | 6 | MV Sax 2 | Rio ch 6, Dante split (pre-delay) | Console ch 42 |
 | 7 | MV Clarinets 1 | Rio ch 7, Dante split (pre-delay) | Console ch 43 |
@@ -41,29 +45,36 @@ before it with nothing to compare against.
 | 10 | MV Horns 2 | Rio ch 10, Dante split (pre-delay) | Console ch 46 |
 | 11 | MV Horns 3 | Rio ch 11, Dante split (pre-delay) | Console ch 47 |
 | 12 | MV Horns 4 | Rio ch 12, Dante split (pre-delay) | Console ch 48 |
-| 13 | MV Front Near | Rio ch 13, Dante split (pre-delay) | Console ch 49 |
-| 14 | MV Front Far | Rio ch 14, Dante split (pre-delay) | Console ch 50 |
-| 15 | DJ TMMPO (Split) | Rio ch 15, Dante split (pre-delay) | Console ch 51 |
-| 16 | Rio 16 Spare | Rio ch 16, Dante split (pre-delay) | Console ch 52 |
-| 17 | Announcer Mic Dry | Console ch 1 direct out | Dante out 39. Dry speech transcribes far better than the mix |
-| 18 | Laptop | Console ch 2 direct out | Dante out 40 |
+| 13 | MV Near | Rio ch 13, Dante split (pre-delay) | Console ch 49 |
+| 14 | MV Far | Rio ch 14, Dante split (pre-delay) | Console ch 50 |
+| 15 | TMMPO L Split | Rio ch 15, Dante split (pre-delay) | Console ch 51 |
+| 16 | TMMPO R Split | Rio ch 16, Dante split (pre-delay) | Console ch 52 |
+| 17 | Announcer Mic Dry | Console ch 1 direct out | Dante out 65. Dry speech transcribes far better than the mix |
+| 18 | Laptop | Console ch 2 direct out | Dante out 74 |
 | 19 | Ref Primary | Dante split (Axient) | |
-| 20 | Ref Backup | Dante split (Axient) | |
+| 20 | Ref BU | Dante split (Axient) | |
 | 21 | HH Red | Dante split (Axient) | |
 | 22 | HH Blue | Dante split (Axient) | |
-| 23 | DJ TMMPO (Channel) | Console ch 7 direct out | Dante out 41. From the channel's own direct out, not the split, because the DJ's input can move |
-| 24 | Truck FX | Console ch 11 direct out | Dante out 42. Same reason: it can move |
-| 25 | Crowd 1 | Console ch 15 direct out | Dante out 43 |
-| 26 | DCA Level Reference | Console ch 53 direct out, **Post Fader** | Dante out 53. Source is Reaper's pilot tone, injected on DVS send 27. See "The DCA reference: a pilot tone" below |
-| 27 | Hype PA Mix | Console matrix out | Dante out 37 (also Rio output 1) |
-| 28 | Main PA Mix | Console matrix out | Dante out: `__________` (fill in on the day) |
-| 29 | Band Mix (Pre-Ducker) | Console group out | Dante out listed as 39, which collides with Announcer Mic Dry (track 17) - must be resolved on the day; 44 is likely free but unverified. Context only, not a DCA reference; see below |
+| 23 | DJ TMMPO Direct Out | Console ch 7 direct out | Dante out 75. From the channel's own direct out, not the split, because the DJ's input can move |
+| 24 | HokieVision | Console ch 11 direct out | Dante out 76. New at the 2026-09-30 runthrough |
+| 25 | TruckFX | Console ch 15 direct out | Dante out 77. Same reason as track 23: it can move |
+| 26 | Pilot Reference | Console ch 53 direct out, **Post Fader** | Dante out 78. Source is the Pilot track's tone (track 31), injected on DVS send 1. See "The DCA reference: a pilot tone" below |
+| 27 | Hype PA Output | Console Matrix 8 out | Dante out 56. Band Group plus the other Hype PA group, post-ducker: what the Hype PA actually plays |
+| 28 | Main PA Output | Console matrix out | Dante out 50 |
+| 29 | Band Group | Console Band Group out, pre-ducker | Dante out 17. Context only, not a DCA reference; see below |
+| 30 | PJ Playback | Dante split | New at the 2026-09-30 runthrough |
+| 31 | Pilot | Reaper's tone generator, out on DVS send 1 | **Not armed; records nothing.** A Reaper track with no DVS receive: the source for track 26. See below |
 
-That is **29 tracks**. Uncompressed 48 kHz / 24-bit mono is 144 kB/s a track:
-**about 15 GB an hour at 29 tracks.** Recording from doors, as below (~6 h),
-plus the box's 10% disk-check margin ([box.md](box.md#room-for-the-game)), is
-about 99 GB - which is why `game_hours = 6.0` there, not the on-field game
-length.
+That is **30 recorded tracks**, plus the unarmed Pilot. Uncompressed 48 kHz /
+24-bit mono is 144 kB/s a track: **about 15.6 GB an hour at 30 tracks.**
+Recording from doors, as below (~6 h), plus the box's 10% disk-check margin
+([box.md](box.md#room-for-the-game)), is about 103 GB - which is why
+`game_hours = 6.0` there, not the on-field game length.
+
+Ref Primary, Ref BU and HH Red were digital silence for the whole 2026-09-30
+runthrough, while HH Blue carried signal - probably transmitters off on a
+media day, but in a recording a dead feed and a quiet one look the same.
+Talk-check all four before kickoff.
 
 ### The DCA reference: a pilot tone
 
@@ -77,14 +88,16 @@ cannot be recovered reliably from it. Instead the reference is a steady pilot
 tone that only the DCA (and nothing downstream of it) can touch:
 
 1. **Reaper**: Cockos's stock JS **Tone Generator** (under Synthesis) on its
-   own track. Master send **off** - it must never reach the PA. Hardware
-   output to DVS send channel 27.
-2. **Dante Controller**: route DVS send 27 to console input channel 53.
+   own track, `Pilot` (track 31), **not armed**. Master send **off** - it must
+   never reach the PA. The 2026-09-30 template had it on, harmless only
+   because the master has no hardware outputs; turn it off anyway. Hardware
+   output to DVS send channel 1.
+2. **Dante Controller**: route DVS send 1 to console input channel 53.
 3. **Console channel 53**: assigned to the band DCA and nothing else.
    Dynamics and EQ bypassed. No stereo, mix or matrix sends - the DM7 defaults
    new channels **TO STEREO on**; turn it off. Fader fixed at 0 dB. Name it
    something like `DCA REF`.
-4. **Direct out**: set to **Post Fader**, console Dante out 53, patched to DVS
+4. **Direct out**: set to **Post Fader**, console Dante out 78, patched to DVS
    receive 26 (track 26 above). Per the DM7 block diagram the Post Fader tap
    sits after LEVEL/DCA and before ON, so it follows the fader and the DCA but
    not mute - consistent with faders-only (design.md 5.3).
@@ -96,16 +109,34 @@ killing the reference.
 Suggested tone: around 1 kHz at about -20 dBFS (the DCA's +10 dB max peaks
 near -10 dBFS).
 
+**Verified at the 2026-09-30 runthrough**, end to end: the generator ran at
+1 kHz, -12 dB, and track 26 carried it at about -14.4 dBFS with the DCA open,
+digital silence (-inf) with it closed, and the DCA's moves in between.
+
 **Checks, before the gates open:**
 
 - The tone generator keeps running with Reaper's transport stopped. If it does
   not, arm the track with input monitoring on, which keeps it processing while
-  stopped.
+  stopped - and then records it too, so add one to `capture.channels`.
 - **Proof test**: pull the DCA down and watch track 26 go silent in Reaper.
   Then confirm the tone shows on no other console output meter.
 
 A box-generated tone with measured readback, so the box can confirm its own
 commands instead of inferring them from a recording, is future work (#137).
+
+### The files Reaper writes
+
+Reaper splits every track's recording at about 1 GiB, which at 144 kB/s is
+about 2 h 04 min - so a ~6 h game is three files a track. Within a track the
+pieces are contiguous. Across tracks they are not split at the same instant:
+at the 2026-09-30 runthrough the split point differed by one 512-sample
+buffer (about 10.7 ms) between tracks, which is the scale of the onset timing
+the detector compares across channels. So offline tools must place every file
+by its item **position** in the `.RPP`, never by concatenating in file order
+or assuming the Nth file of every track starts together.
+
+File names carry the record date and time (`YYMMDD_HHMM`), not the project's
+name, so a project named for one day can hold files stamped with another.
 
 ---
 
@@ -179,7 +210,7 @@ The same goes for halftime. The stand mics then carry your band on the field,
 the visiting band on the field, and cadences on the way out and back -- music
 present while the fader must stay **closed**, which is the single hardest case
 the detector has to learn and the reason `other-band-on-field` is in the
-vocabulary at all. A halftime is 20-30 minutes, about 5-7.5 GB at the track count
+vocabulary at all. A halftime is 20-30 minutes, about 5-8 GB at the track count
 above. If space ever genuinely bites, trim the `halftime` span afterwards; it is
 already delimited in the log.
 
@@ -219,12 +250,12 @@ kickoff, so most of that countdown is a set of empty stands.
 
 Record it anyway.
 
-| Start at | Runs for | 29 tracks |
+| Start at | Runs for | 30 tracks |
 |---|---|---|
-| Doors, T-150 | ~6 h | ~90 GB |
-| Band enters stadium, T-60 | ~4.5 h | ~68 GB |
+| Doors, T-150 | ~6 h | ~93 GB |
+| Band enters stadium, T-60 | ~4.5 h | ~70 GB |
 
-The difference between them is about 22 GB, which is not a reason to do
+The difference between them is about 23 GB, which is not a reason to do
 anything. Two things are:
 
 - **The empty stands are not empty of data.** A stadium filling up with no band
