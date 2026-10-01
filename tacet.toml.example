@@ -27,6 +27,7 @@ host = "10.0.0.5"           # --console-host  (verify_dm7: --host)
 port = 49900                # --console-port  (verify_dm7: --port)
 # The band DCA. Getting this wrong rides somebody else's fader.
 dca = 3                     # --dca
+
 # Leave false until verify_dm7 --granularity has shown the console rounds.
 # Override on the day with --quantized / --no-quantized.
 quantized = false
@@ -60,29 +61,43 @@ game_hours = 5.0            # --game-hours
 [fader]
 # The close fade. Asymmetric by design: fast open, slow close.
 fade_seconds = 2.0          # --fade
+
 # The ride-in for the "up slow" button, used when the first phrase was
 # missed and a snap open would be audible under a phrase already going.
 # Tapered: fast through the bottom, slow through the top. This sets the
 # length; the shape is fixed. The other two open buttons still snap.
 slow_open_seconds = 1.5     # --slow-open
+
 # READY: something good happened for the home team, the fader rides to a hold
 # level short of target and waits to see whether the band starts (#6). The
 # hold level is an offset below target, not an absolute level, so it follows
 # whatever preset is in force rather than meaning less as the target moves.
 hold_below_db = 15.0        # --hold-below-db
 ready_ride_seconds = 4.0    # --ready-ride
+
 # A fader tap that reaches the box later than this is logged and not executed:
 # a late open brings the PA up after the music stopped, a late fade cuts a
 # phrase. Generous, because the page's clock estimate is approximate. Retune
 # from the per-tap delays game 3 logs. Annotations are never refused.
 stale_tap_seconds = 2.0     # --stale-tap
+
 # The target levels the page offers on MORE > Target level (#9), in dB, in the
-# order the page lists them. The FIRST is the default: the open buttons go to
-# it until the operator picks another, and the page's readout goes amber when
-# the target is not this one. There is no separate default key to disagree
-# with the list. A site that rings out to -2 dB writes [-2.0, -5.0, -8.0] and
-# the default follows.
+# order the page lists them: the FIRST is the default unless default_target_db
+# below names another. The open buttons go to the default until the operator
+# picks another, and the page's readout goes amber when the target is not
+# this one. A site that rings out to -2 dB writes [-2.0, -5.0, -8.0] and the
+# default follows, with no second edit.
 presets = [0.0, -3.0, -6.0]  # --presets 0,-3,-6  (--presets=-3,-6 if it starts with a minus)
+
+# The default: the level the open buttons go to until the operator picks
+# another, and the one the page's readout is neutral at - amber means "not
+# this". Optional; leave it out and the FIRST preset is the default, which is
+# what every box did before #139. It must be one of the presets above or the
+# box refuses to start: the page offers presets only, so a default outside the
+# list is a level the operator cannot choose again. Order the list by level and
+# name the default here - 0 dB most games, +3 dB for a very loud crowd.
+default_target_db = 0.0     # --default-target
+
 # The cap on every preset: one above it refuses at load, in the file and as a
 # flag alike, so a level nobody has rung out cannot exist by accident. +3 dB
 # costs 3 dB of feedback margin against the band PA behind the mics, so this

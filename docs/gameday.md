@@ -315,9 +315,10 @@ with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
 answer, and a move made in StageMix will not appear on it.
 
 **The target** is the level every open goes to. The chip in the strip always
-reads it (`target 0 dB`) and goes amber when it is not the default - the first
-of the site's presets - so a quiet setting left over from earlier is not
-forgotten. Change it in MORE, under **Target level**: tap a segment, and the
+reads it (`target 0 dB`) and goes amber when it is not the default -
+`fader.default_target_db`, or the first preset when the site does not set one
+- so a quiet setting left over from earlier is not forgotten. Change it in
+MORE, under **Target level**: tap a segment, and the
 solid one is the target now. **Nothing moves when you tap it.** The fader stays
 where it is and the next open goes to the new level; **Ready**'s hold level is
 measured from it too. It works in every state, even while the fader reads

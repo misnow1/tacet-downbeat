@@ -14,9 +14,15 @@ console units. This module is on the control path (`tests/test_dependency_
 policy.py`) since the level it decides is the one the fader is sent to, so it
 imports the standard library and `dm7` only.
 
-The default target is the first preset. One list rather than a list and a
-separate default, so the two cannot disagree: a site that rings out to -2 writes
-`presets = [-2.0, -5.0, -8.0]` and the default follows with no second edit.
+The page lists the presets in the order they are written, and an open goes
+to the *default*: `default_db` when the site names one, and the first
+preset otherwise. Until #139 the list did both jobs, which was right while
+the default was an end of the range and wrong once the cap could exceed
+unity - 0 dB suits most games and +3 dB a very loud crowd, so page order
+and the default became two different requirements. They still cannot
+disagree, because a default that is not one of the presets is refused
+here: the page's control offers presets only, so a box booted anywhere
+else is at a level the operator cannot get back to.
 
 Everything is compared in console units. The DM7 resolves 0.01 dB
 (`dm7.UNITS_PER_DB`), so two spellings of one level are one level - a duplicate
@@ -45,18 +51,16 @@ class TargetError(Exception):
 
 @dataclass(frozen=True)
 class Targets:
-    """The levels the page offers and the ceiling they were checked against.
+    """The levels the page offers, the ceiling they were checked against, and
+    the one of them a fresh open goes to.
 
-    `levels` are console units in page order, the first being the default.
+    `levels` are console units in page order; `default` is one of them, but
+    not necessarily `levels[0]` (#139).
     """
 
     levels: tuple[int, ...]
     max_level: int
-
-    @property
-    def default(self) -> int:
-        """The level a fresh box opens to: the first preset."""
-        return self.levels[0]
+    default: int
 
     def allows(self, level: int) -> bool:
         """Whether `level` is one of the presets, in console units."""
@@ -86,11 +90,12 @@ def _level_in_range(name: str, db: float) -> int:
     return level
 
 
-def build(presets_db: Iterable[float], max_db: float) -> Targets:
+def build(presets_db: Iterable[float], max_db: float, default_db: float | None = None) -> Targets:
     """Check a list of presets against the cap and turn it into `Targets`.
 
     Pure. Raises `TargetError` naming the offender for an empty list, a value
-    the console cannot take, a duplicate, or a preset above the cap.
+    the console cannot take, a duplicate, a preset above the cap, or a default
+    that is not one of the presets.
     """
     values = tuple(presets_db)
     if not values:
@@ -104,7 +109,15 @@ def build(presets_db: Iterable[float], max_db: float) -> Targets:
         if level in levels:
             raise TargetError(f"preset {db!r} dB appears twice")
         levels.append(level)
-    return Targets(levels=tuple(levels), max_level=max_level)
+    levels_tuple = tuple(levels)
+    if default_db is None:
+        default = levels_tuple[0]
+    else:
+        default = _level_in_range("the default target", default_db)
+        if default not in levels_tuple:
+            listed = ", ".join(repr(db) for db in values)
+            raise TargetError(f"default target {default_db!r} dB is not one of the presets ({listed})")
+    return Targets(levels=levels_tuple, max_level=max_level, default=default)
 
 
 DEFAULT_TARGETS: Targets = build(DEFAULT_PRESETS_DB, DEFAULT_MAX_TARGET_DB)

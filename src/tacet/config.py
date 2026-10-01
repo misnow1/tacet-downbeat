@@ -128,7 +128,13 @@ SCHEMA: tuple[Option, ...] = (
     Option("fader", "hold_below_db", "float", "how far below target READY's hold level sits"),
     Option("fader", "ready_ride_seconds", "float", "ride from idle to the READY hold level"),
     Option("fader", "stale_tap_seconds", "float", "a fader tap arriving later than this is not executed"),
-    Option("fader", "presets", "floats", "target levels the page offers; the first is the default"),
+    Option(
+        "fader",
+        "presets",
+        "floats",
+        "target levels the page offers; the first is the default unless default_target_db names another",
+    ),
+    Option("fader", "default_target_db", "float", "the preset an open goes to; defaults to the first preset"),
     Option("fader", "max_target_db", "float", "cap: a preset above this refuses at load, set by the on-site ring-out"),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "port", "port the web UI binds to"),
@@ -201,23 +207,35 @@ def _coerce_floats(option: Option, value: object, *, where: str) -> tuple[float,
     return tuple(numbers)
 
 
-def _check_targets(values: Mapping[str, object], *, where: str) -> None:
-    """The one rule that spans two keys: a preset may not exceed the cap.
+#: The two keys `_check_targets` reads, in the order a refusal names them.
+_TARGET_KEYS: tuple[str, ...] = ("fader.presets", "fader.default_target_db")
 
-    Checked here, at load, so a file that names a level nobody has rung out
-    refuses before the box starts (#9). A cap alone has nothing to check, and
-    presets with no cap are held to the built-in one.
+
+def _check_targets(values: Mapping[str, object], *, where: str) -> None:
+    """The rule that spans the target keys: a preset may not exceed the cap,
+    and the default (named or not) must be one of the presets (#139).
+
+    Checked here, at load, so a file that names a level nobody has rung out,
+    or a default the page could never offer again, refuses before the box
+    starts. A cap alone has nothing to check: that early return is still here,
+    widened only to cover the default too. Presets with no cap, or a default
+    with no presets, are held to the built-in ones.
     """
     presets = values.get("fader.presets")
-    if presets is None:
+    default = values.get("fader.default_target_db")
+    if presets is None and default is None:
         return
+    if presets is None:
+        presets = targets.DEFAULT_PRESETS_DB
     cap = values.get("fader.max_target_db", targets.DEFAULT_MAX_TARGET_DB)
     assert isinstance(presets, tuple)
     assert isinstance(cap, float)
+    assert default is None or isinstance(default, float)
     try:
-        targets.build(presets, cap)
+        targets.build(presets, cap, default)
     except targets.TargetError as exc:
-        raise ConfigError(f"{where}: fader.presets: {exc}") from exc
+        named = ", ".join(name for name in _TARGET_KEYS if name in values)
+        raise ConfigError(f"{where}: {named}: {exc}") from exc
 
 
 def _in_port_range(value: int) -> bool:

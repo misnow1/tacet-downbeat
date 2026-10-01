@@ -92,6 +92,54 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(targets.build((-6.0, 0.0, -3.0), 0.0).levels, (-600, 0, -300))
 
 
+class TestTheDefaultTarget(unittest.TestCase):
+    """#139: the default stopped being `presets[0]` once the cap could exceed
+    unity. 0 dB suits most games and +3 dB a very loud crowd, so the page order
+    and the default are two different requirements."""
+
+    def test_an_unset_default_is_still_the_first_preset(self):
+        self.assertEqual(targets.build((-5.0, -2.0, -8.0), 3.0).default, -500)
+
+    def test_the_shipped_targets_still_default_to_unity(self):
+        self.assertEqual(targets.DEFAULT_TARGETS.default, dm7.UNITY)
+
+    def test_a_named_default_need_not_be_the_first_preset(self):
+        built = targets.build((3.0, 0.0, -3.0, -6.0), 3.0, 0.0)
+        self.assertEqual(built.default, 0)
+        self.assertEqual(built.levels, (300, 0, -300, -600))
+
+    def test_the_default_may_be_the_quietest_preset(self):
+        self.assertEqual(targets.build((0.0, -3.0, -6.0), 0.0, -6.0).default, -600)
+
+    def test_a_default_that_is_not_a_preset_raises_naming_the_value_and_the_list(self):
+        with self.assertRaises(targets.TargetError) as caught:
+            targets.build((0.0, -3.0, -6.0), 0.0, -1.5)
+        message = str(caught.exception)
+        self.assertIn("-1.5", message)
+        self.assertIn("0.0, -3.0, -6.0", message)
+        self.assertIn("default", message)
+
+    def test_a_default_above_the_cap_is_refused_because_it_is_not_a_preset(self):
+        with self.assertRaises(targets.TargetError) as caught:
+            targets.build((0.0, -3.0), 0.0, 3.0)
+        self.assertIn("3.0", str(caught.exception))
+
+    def test_a_non_finite_default_raises_rather_than_overflowing(self):
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(bad=bad), self.assertRaises(targets.TargetError):
+                targets.build((0.0,), 10.0, bad)
+
+    def test_a_default_outside_the_console_range_raises(self):
+        with self.assertRaises(targets.TargetError):
+            targets.build((0.0,), 0.0, -400.0)
+
+    def test_two_spellings_of_one_level_are_one_default(self):
+        self.assertEqual(targets.build((0.0, -3.0), 0.0, -3.001).default, -300)
+
+    def test_the_default_is_stored_not_derived(self):
+        self.assertIn("default", targets.Targets.__dataclass_fields__)
+
+
 class TestLevelFor(unittest.TestCase):
     def test_minus_three_db_is_exactly_minus_three_hundred(self):
         self.assertEqual(targets.level_for(-3.0), -300)
@@ -120,6 +168,8 @@ class TestTheTargetsObject(unittest.TestCase):
     def test_it_is_immutable(self):
         with self.assertRaises(AttributeError):
             self.built.max_level = 300  # type: ignore[misc]
+        with self.assertRaises(AttributeError):
+            self.built.default = 0  # type: ignore[misc]
 
 
 if __name__ == "__main__":
