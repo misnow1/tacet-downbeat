@@ -704,6 +704,19 @@ padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
 border-left:1px solid var(--line);background:var(--bg)}
 #fader-top,#fader-bottom{display:contents}
 #fader-column button{width:100%;flex:0 0 auto;font-size:16px}
+/* The heights below are the reviewed list and are what a screen with room
+   gets, exactly. Shorter than that, these six give way together rather than
+   the column overflowing and putting the last of them - Faded out - under the
+   fold (#140): flex-shrink spreads the deficit in proportion to those heights,
+   so the hallway-tested ordering of sizes survives, and min-height is the
+   floor it stops at. 64px is comfortably above the 44pt Apple asks for, and
+   the column has to lose over 200px before anything reaches it.
+   Scoped to the two groups, NOT to #fader-column button, which also matches
+   the belief row's two: a floor on those grows the row from 43.6px to 64 and
+   takes the difference out of the one line above it, which is the column note
+   - the readout gap has no spare to give. The readout itself does not shrink
+   either (its own min-height holds), so the belief row is never clipped. */
+#fader-top button,#fader-bottom button{flex:0 1 auto;min-height:64px}
 #fader-column button[data-key="up-whistle"]{height:112px}
 #fader-column button[data-key="up-drums"]{height:112px}
 #fader-column button[data-key="up-slow"]{height:80px}
@@ -712,8 +725,12 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="out"]{height:136px}
 /* The readout gap: exactly 96px of room, never more asked for. The column is 592
    of buttons + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
-   iPad; growing it makes the page scroll, the failure #5 was built to remove
-   (#107 put the belief row in here without changing that). Level/target/refusal
+   iPad (#107 put the belief row in here without changing that). Since #140 a
+   shorter screen takes the difference out of the buttons rather than scrolling
+   the page, but this gap is not part of that: it does not shrink, because what
+   sits at the bottom of it is the belief row, and the budget below has no spare
+   to give. Growing it therefore still costs button height on every short
+   screen, so the sum below still has to come in under 96. Level/target/refusal
    are repeated here because the header carrying #refusal is on the far side of
    the screen from this thumb; the age of the last command (#12) rides on
    #level itself. Budget, top to bottom:

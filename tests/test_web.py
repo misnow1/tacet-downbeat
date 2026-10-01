@@ -143,6 +143,44 @@ class TestPage(WebTestCase):
         self.assertIn("min-height:0", left)
         self.assertIn("overflow-y:auto", left)
 
+    async def test_the_column_buttons_give_way_together_on_a_screen_too_short_for_them(self):
+        # #140: 760px is what the column wants, and a press box iPad in
+        # standalone was measured at 723. Fixed heights made the difference
+        # overflow and put Faded out, last in the column, under the fold.
+        # flex-shrink spreads it across the buttons in proportion to the
+        # reviewed heights, so their ordering survives and a screen with room
+        # still gets those heights exactly. min-height is the floor.
+        body = await (await self.client.get("/")).text()
+        rule = body.split("#fader-top button,#fader-bottom button{", 1)[1].split("}", 1)[0]
+        self.assertIn("flex:0 1 auto", rule)
+        self.assertIn("min-height:64px", rule)
+
+    async def test_the_shrink_floor_is_not_put_on_the_belief_row(self):
+        # #fader-column button also matches the belief row's two. A 64px floor
+        # on those grows the row from 43.6px to 64 and the readout gap has no
+        # spare, so the difference comes out of the column note above it -
+        # measured at 8.8px against a 15px line, i.e. clipped. The floor is
+        # scoped to the two groups holding the six column buttons instead.
+        body = await (await self.client.get("/")).text()
+        self.assertNotIn("min-height", body.split("#fader-column button{", 1)[1].split("}", 1)[0])
+        self.assertNotIn("min-height", body.split("#belief button{", 1)[1].split("}", 1)[0])
+
+    async def test_the_readout_is_not_what_gives_way(self):
+        # The belief row sits at the bottom of the readout gap, so if the gap
+        # shrank it would be the thing clipped. Its min-height holds at every
+        # screen height; only the buttons above and below it move.
+        body = await (await self.client.get("/")).text()
+        self.assertIn("#readout{flex:1 1 96px;min-height:96px;", body)
+        self.assertIn("flex:none", body.split("#belief{", 1)[1].split("}", 1)[0])
+
+    async def test_the_shrink_floor_clears_the_minimum_tap_target(self):
+        # 44pt is what Apple asks for. The floor is well above it, so a column
+        # squeezed to its limit is still tappable with a thumb in a hurry.
+        body = await (await self.client.get("/")).text()
+        floor = body.split("#fader-top button,#fader-bottom button{", 1)[1].split("}", 1)[0]
+        floor_px = int(floor.split("min-height:", 1)[1].split("px", 1)[0])
+        self.assertGreaterEqual(floor_px, 44)
+
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
         # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
         # 12px gaps between its seven children (72) and the readout gap. At
