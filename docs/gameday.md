@@ -69,9 +69,9 @@ unreliable - it was at game 2.
 Fixes to game 2's routing, agreed for game 3 (#13) and in place since the
 2026-09-30 runthrough (#145). Check they are still there:
 
-1. Group 37 is the **Band Group**, pre-ducking. The DJ is not on it.
-2. Group 38 is everything else bound for the Hype PA - currently just the
-   delayed TMMPO input.
+1. One group is the **Band Group**, pre-ducking. The DJ is not on it.
+2. A second group is everything else bound for the Hype PA - currently just the
+   delayed TMMPO input. Group numbers: see "Fill in on the day".
 3. Both groups feed **Matrix 8**, which carries the ducker, keyed from the
    announce group.
 4. Matrix 8 goes out on Dante out 56 to the Hype PA.
@@ -404,4 +404,5 @@ lost again.
 |---|---|---|
 | Band Group Dante out | `17` | Resolved at the 2026-09-30 runthrough (#145). Was listed as 39, colliding with Announcer Mic Dry, which is now on 65 |
 | Main PA Output Dante out | `50` | Resolved at the 2026-09-30 runthrough (#145) |
+| Hype PA group numbers | `__ / __` | Band Group / everything else, both into Matrix 8. 17/18 or 37/38 - read them off the console and put them on the routing sheet (#145) |
 | Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |

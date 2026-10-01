@@ -59,9 +59,9 @@ against.
 | 24 | HokieVision | Console ch 11 direct out | Dante out 76. New at the 2026-09-30 runthrough |
 | 25 | TruckFX | Console ch 15 direct out | Dante out 77. Same reason as track 23: it can move |
 | 26 | Pilot Reference | Console ch 53 direct out, **Post Fader** | Dante out 78. Source is the Pilot track's tone (track 31), injected on DVS send 1. See "The DCA reference: a pilot tone" below |
-| 27 | Hype PA Output | Console Matrix 8 out | Dante out 56. Groups 37 and 38, post-ducker: what the Hype PA actually plays |
+| 27 | Hype PA Output | Console Matrix 8 out | Dante out 56. Band Group plus the other Hype PA group, post-ducker: what the Hype PA actually plays |
 | 28 | Main PA Output | Console matrix out | Dante out 50 |
-| 29 | Band Group | Console group 37 out, pre-ducker | Dante out 17. Context only, not a DCA reference; see below |
+| 29 | Band Group | Console Band Group out, pre-ducker | Dante out 17. Context only, not a DCA reference; see below |
 | 30 | PJ Playback | Dante split | New at the 2026-09-30 runthrough |
 | 31 | Pilot | Reaper's tone generator, out on DVS send 1 | **Not armed; records nothing.** A Reaper track with no DVS receive: the source for track 26. See below |
 
