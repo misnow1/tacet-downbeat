@@ -122,7 +122,9 @@ class TestTheDefaultTarget(unittest.TestCase):
     def test_a_default_above_the_cap_is_refused_because_it_is_not_a_preset(self):
         with self.assertRaises(targets.TargetError) as caught:
             targets.build((0.0, -3.0), 0.0, 3.0)
-        self.assertIn("3.0", str(caught.exception))
+        # Not just "3.0" - the presets include -3.0, so that substring alone
+        # would still match if the offending value vanished from the message.
+        self.assertIn("default target 3.0", str(caught.exception))
 
     def test_a_non_finite_default_raises_rather_than_overflowing(self):
         for bad in (float("nan"), float("inf"), float("-inf")):

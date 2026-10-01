@@ -85,8 +85,9 @@ stale_tap_seconds = 2.0     # --stale-tap
 # order the page lists them: the FIRST is the default unless default_target_db
 # below names another. The open buttons go to the default until the operator
 # picks another, and the page's readout goes amber when the target is not
-# this one. A site that rings out to -2 dB writes [-2.0, -5.0, -8.0] and the
-# default follows, with no second edit.
+# this one. A site that rings out to -2 dB writes [-2.0, -5.0, -8.0] and
+# either sets default_target_db = -2.0 below or deletes that key and lets
+# the first entry serve.
 presets = [0.0, -3.0, -6.0]  # --presets 0,-3,-6  (--presets=-3,-6 if it starts with a minus)
 
 # The default: the level the open buttons go to until the operator picks

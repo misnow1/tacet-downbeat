@@ -316,15 +316,15 @@ answer, and a move made in StageMix will not appear on it.
 
 **The target** is the level every open goes to. The chip in the strip always
 reads it (`target 0 dB`) and goes amber when it is not the default -
-`fader.default_target_db`, or the first preset when the site does not set one
-- so a quiet setting left over from earlier is not forgotten. Change it in
-MORE, under **Target level**: tap a segment, and the
-solid one is the target now. **Nothing moves when you tap it.** The fader stays
-where it is and the next open goes to the new level; **Ready**'s hold level is
-measured from it too. It works in every state, even while the fader reads
-`unknown`. If the chip adds `(next open)`, a move in flight is heading somewhere
-other than the target: a ride that began before you changed it, or Ready's
-own ride to its hold level. The target applies to the next open.
+`fader.default_target_db`, or the first preset when the site does not set
+one - so a quiet setting left over from earlier is not forgotten. Change it
+in MORE, under **Target level**: tap a segment, and the solid one is the
+target now. **Nothing moves when you tap it.** The fader stays where it is
+and the next open goes to the new level; **Ready**'s hold level is measured
+from it too. It works in every state, even while the fader reads `unknown`.
+If the chip adds `(next open)`, a move in flight is heading somewhere other
+than the target: a ride that began before you changed it, or Ready's own
+ride to its hold level. The target applies to the next open.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
 the box does not know where it really is. Nothing that ramps from a level can be

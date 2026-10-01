@@ -544,6 +544,15 @@ class TestTargetPresets(_TempConfig):
         with self.assertRaises(config.ConfigError):
             self.values(default_target_db=-4.0)
 
+    def test_a_lone_default_against_a_low_cap_names_the_cap_not_the_default(self):
+        # The default (0.0, a built-in preset) is innocent; the cap is what
+        # actually refuses it, against the implicit built-in presets. Naming
+        # only fader.default_target_db here would blame the wrong key.
+        self.assertIn(0.0, targets.DEFAULT_PRESETS_DB)
+        with self.assertRaises(config.ConfigError) as caught:
+            self.values(default_target_db=0.0, max_target_db=-3.0)
+        self.assertIn("fader.max_target_db", str(caught.exception))
+
     def test_a_cap_alone_still_has_nothing_to_check(self):
         # The subtlest regression: widening the early return to admit a lone
         # default must not also widen it to fire on a lone cap. A negative cap

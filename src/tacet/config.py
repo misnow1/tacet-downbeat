@@ -207,8 +207,11 @@ def _coerce_floats(option: Option, value: object, *, where: str) -> tuple[float,
     return tuple(numbers)
 
 
-#: The two keys `_check_targets` reads, in the order a refusal names them.
-_TARGET_KEYS: tuple[str, ...] = ("fader.presets", "fader.default_target_db")
+#: The keys `_check_targets` reads, in the order a refusal names them. A lone
+#: `default_target_db` checked against a lone `max_target_db` is the offender
+#: `targets.build` can name wrong if this list stops at two: the cap, not the
+#: innocent default, is what a too-low cap actually refuses on.
+_TARGET_KEYS: tuple[str, ...] = ("fader.presets", "fader.default_target_db", "fader.max_target_db")
 
 
 def _check_targets(values: Mapping[str, object], *, where: str) -> None:

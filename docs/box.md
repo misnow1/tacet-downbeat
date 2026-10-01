@@ -272,20 +272,21 @@ when the site names one, and the first entry otherwise** (#139): the banner's
 `target` row says the default first, and the page's readout goes amber
 whenever the target is anything else. The default must be one of the presets
 - **naming one that is not refuses to start**, from the file and from
-`--default-target` alike, the same way a preset above the cap does. Order the
-list by level and name the default separately: a site that rings out to -2 dB
-and wants 0 dB most games writes `presets = [0.0, -2.0, -5.0, -8.0]` and
-`default_target_db = 0.0`. `fader.max_target_db` is a cap on every preset, and
-**a preset above the cap refuses to start**, from the file and from
-`--presets` / `--max-target` alike, naming the value. The cap ships at 0 dB, so
-`+3` cannot exist by accident: raise it only after an on-site ring-out with the
-stands empty, since +3 dB costs 3 dB of feedback margin against a band PA that
-sits just behind the mics. Changing the target on the page stores the value
-and sends nothing; the next open uses it, and the READY hold level follows it
-(`fader.hold_below_db` below it). With flags, a value that starts with a
-minus needs the equals form for `--presets` (`--presets=-3,-6`), but not for
-`--default-target`: a bare negative number is not mistaken for another flag,
-the way `--max-target -2.0` already is not.
+`--default-target` alike, the same way a preset above the cap does.
+`fader.max_target_db` is a cap on every preset, and **a preset above the cap
+refuses to start**, from the file and from `--presets` / `--max-target` alike,
+naming the value. The cap ships at 0 dB, so `+3` cannot exist by accident:
+raise it only after an on-site ring-out with the stands empty, since +3 dB
+costs 3 dB of feedback margin against a band PA that sits just behind the
+mics. A site whose ring-out raised the cap to +3 dB writes
+`presets = [3.0, 0.0, -3.0, -6.0]`, `max_target_db = 3.0` and
+`default_target_db = 0.0`: the page reads loudest first, but the box still
+boots to unity, and +3 is one tap away for a very loud crowd. Changing the
+target on the page stores the value and sends nothing; the next open uses it,
+and the READY hold level follows it (`fader.hold_below_db` below it). With
+flags, a value that starts with a minus needs the equals form for `--presets`
+(`--presets=-3,-6`), but not for `--default-target`: a bare negative number is
+not mistaken for another flag, the way `--max-target -2.0` already is not.
 
 ---
 
