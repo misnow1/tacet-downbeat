@@ -447,6 +447,25 @@ check(
   check("age ticks: and an hour on it still says so", nodes.get("level").textContent, "0.00 dB - 61 min ago");
 }
 
+{
+  // #147, #12: the link dropping is when the age matters most. The snapshot on
+  // screen arrived when it arrived, so closing the socket must not blank the
+  // age or stop it climbing.
+  let clock = 2_000_000;
+  const { context, nodes, intervals, sockets } = browser({ now: () => clock * 1000 });
+  const snap = snapshot({}, { level_known: true, db: 0.0 });
+  snap.at = 5000;
+  snap.fader.sent_at = 5000 - 30;
+  context.render(snap);
+  sockets[0].close();
+  clock += 20;
+  intervals[0]();
+  check("age across a disconnect: still counting after the socket closes", nodes.get("level").textContent, "0.00 dB - 50s ago");
+  clock += 60 * 60;
+  intervals[0]();
+  check("age across a disconnect: and an hour on", nodes.get("level").textContent, "0.00 dB - 61 min ago");
+}
+
 // -- the box does not know where the fader is: the level renders as unknown (#107) --
 
 check(

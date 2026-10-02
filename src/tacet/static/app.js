@@ -981,7 +981,9 @@ function connect() {
     link = {open: false, staleAfter: null, seen: null};
     clockSamples = [];
     renderedAt = null;
-    snapshotArrivedAt = null;
+    // Deliberately not reset, unlike renderedAt: the snapshot still on screen
+    // arrived when it arrived, so its age stays true, and a dropped link is
+    // exactly when the age has to keep climbing (#12, #147).
     paintLink();
     setTimeout(connect, RECONNECT_MS);
   };
