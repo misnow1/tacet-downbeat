@@ -55,8 +55,20 @@ function browser(options = {}) {
   const created = [];
   const sockets = [];
   const posted = [];
+  const intervals = [];
   const context = createContext({
     console,
+    // The page reads `Date.now()` for its own clock. A test that needs the
+    // page's clock to move, or to stand still, passes `now` (milliseconds).
+    ...(options.now
+      ? {
+          Date: class extends Date {
+            static now() {
+              return options.now();
+            }
+          },
+        }
+      : {}),
     document: {
       getElementById(id) {
         if (!nodes.has(id)) nodes.set(id, element(id));
@@ -88,10 +100,13 @@ function browser(options = {}) {
     setTimeout() {},
     clearTimeout() {},
     AbortController,
-    // The banner is repainted on a tick so a silence is noticed without a
-    // message arriving to notice it. Never fired here; paintLink is called
-    // directly instead.
-    setInterval() {},
+    // The banner and the level readout are repainted on a tick so a silence is
+    // noticed without a message arriving to notice it. Kept rather than fired:
+    // a test that wants a tick calls `intervals[0]()` itself, and every other
+    // one calls paintLink directly.
+    setInterval(callback) {
+      intervals.push(callback);
+    },
     // The page boots on load. Neither of these may resolve, or the tests would
     // be racing the page's own first render. What was asked for is kept, so a
     // tap can be checked by what it sent.
@@ -114,7 +129,7 @@ function browser(options = {}) {
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes, created, sockets, posted };
+  return { context, nodes, created, sockets, posted, intervals };
 }
 
 // -- snapshots --------------------------------------------------------------
@@ -375,16 +390,60 @@ check("age: rounds rather than truncating", ageText(59.6), "1 min ago");
 check("age: minutes once it is not urgent any more", ageText(76 * 60), "76 min ago");
 check("age: unbounded, so a whole game's worth is still readable", ageText(3 * 3600 + 5 * 60), "185 min ago");
 
+// The box sends when it last sent (#147), on its own clock, and the page counts
+// the age. With no round-trip estimate the page falls back to this snapshot's
+// own `at`, so a command sent `ago` seconds before the snapshot was taken reads
+// as `ago` seconds old when it is painted.
+function sentAgo(ago) {
+  return SNAPSHOTS["standing-down"].at - ago;
+}
+
+check("commandAge: nothing sent yet has no age", ageContext.commandAge(null, 0), null);
+check("commandAge: no clock estimate has no age", ageContext.commandAge(100, null), null);
+{
+  const { context } = browser({ now: () => 1000 * 1000 });
+  check("commandAge: box time plus offset against the page's clock", context.commandAge(100, 890), 10);
+  check("commandAge: never negative, whatever the offset estimate says", context.commandAge(100, 950), 0);
+}
+
 check(
   "the readout carries the age of the last command, known level or not",
-  rendered({}, { level_known: true, db: 0.0, age: 76 * 60 }).get("level").textContent,
+  rendered({}, { level_known: true, db: 0.0, sent_at: sentAgo(76 * 60) }).get("level").textContent,
   "0.00 dB - 76 min ago",
 );
 check(
+  "the readout counts seconds close up",
+  rendered({}, { level_known: true, db: 0.0, sent_at: sentAgo(3) }).get("level").textContent,
+  "0.00 dB - 3s ago",
+);
+check(
   "no age is shown when nothing has ever been sent",
-  rendered({}, { level_known: true, age: null }).get("level").textContent,
+  rendered({}, { level_known: true, sent_at: null }).get("level").textContent,
   "-∞ dB",
 );
+
+{
+  // #147: the age is counted on the page, so it keeps counting while the box
+  // sends nothing. The page's clock is held still for the render, then moved
+  // on and the 1 s tick fired, with no new snapshot in between.
+  let clock = 2_000_000;
+  const { context, nodes, intervals, sockets } = browser({ now: () => clock * 1000 });
+  const snap = snapshot({}, { level_known: true, db: 0.0 });
+  snap.at = 5000;
+  snap.fader.sent_at = 5000 - 30;
+  // Pin the offset with a timed round trip (zero length, so exact): without
+  // one the page falls back to the snapshot's own age, which slides with the
+  // clock and would hide whether the readout is counting at all.
+  sockets[0].onmessage({ data: JSON.stringify({ pong: clock, box: snap.at }) });
+  context.render(snap);
+  check("age ticks: painted at the age it had on arrival", nodes.get("level").textContent, "0.00 dB - 30s ago");
+  clock += 20;
+  intervals[0]();
+  check("age ticks: and twenty seconds on, with no new snapshot", nodes.get("level").textContent, "0.00 dB - 50s ago");
+  clock += 60 * 60;
+  intervals[0]();
+  check("age ticks: and an hour on it still says so", nodes.get("level").textContent, "0.00 dB - 61 min ago");
+}
 
 // -- the box does not know where the fader is: the level renders as unknown (#107) --
 
@@ -395,7 +454,7 @@ check(
 );
 check(
   "the age still shows so a stale belief cannot look current",
-  rendered({}, { level_known: false, db: 0.0, age: 76 * 60 }).get("level").textContent,
+  rendered({}, { level_known: false, db: 0.0, sent_at: sentAgo(76 * 60) }).get("level").textContent,
   "unknown - 76 min ago",
 );
 check(

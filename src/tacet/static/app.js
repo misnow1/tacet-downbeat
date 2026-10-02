@@ -445,6 +445,45 @@ function ageText(seconds) {
   return Math.round(seconds / 60) + " min ago";
 }
 
+// Seconds since `sentAt`, a time on the box's clock, by the page's own clock:
+// `offset` is box-to-page, the same one clockTime converts with. Null when
+// either half is missing - nothing sent yet, or no estimate to convert by -
+// so the readout shows no age rather than an invented one. Never negative: the
+// offset is an estimate, and a command that reads as sent in the future would
+// be a stranger lie than "0s ago".
+function commandAge(sentAt, offset) {
+  if (sentAt === null || offset === null) return null;
+  return Math.max(0, now() - (sentAt + offset));
+}
+
+// The fader readout: the commanded level and how long ago the console was last
+// told anything. Painted from the snapshot on screen both when a snapshot
+// arrives and on the page's own timer, because the age is the page's to count
+// (#147). The box used to send it as an age, which made every snapshot differ
+// from the last and defeated its own playhead coalescing; it sends the time of
+// the send now, which only changes at a send. The #12 hazard stays covered:
+// the box going quiet is exactly when nothing arrives, and the number must
+// keep ageing on the screen anyway.
+function paintLevel() {
+  if (!snapshot) return;
+  const fader = snapshot.fader;
+  // While a fade runs the number on the left sweeps, so the destination is
+  // shown beside it: a close takes two seconds and "-3.00 dB" on its own reads
+  // as a fader that is not moving. Null dB is -inf, never a missing reading.
+  // Compared as console units, not dB: -inf has no number to compare with.
+  const arrived = fader.target === null || fader.target === fader.commanded;
+  // The box does not know where the fader is (#107): at every cold boot, and
+  // again after a hand-off to StageMix (#12). `commanded` is only a belief
+  // until an absolute command says otherwise, and the number must say so
+  // rather than sit there looking confident - the game 2 hazard this whole
+  // feature exists for.
+  const value = fader.level_known
+    ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
+    : "unknown";
+  const age = ageText(commandAge(fader.sent_at, boxOffset(snapshot)));
+  $("level").textContent = age ? value + " - " + age : value;
+}
+
 function recordingTag(liveness, known) {
   if (liveness === "lost") return ["unknown", "LINK LOST"];
   if (liveness === "unknown") return ["unknown", "no feedback"];
@@ -507,21 +546,7 @@ function render(next) {
   $("saving").textContent = saving ? saving[1] : "";
 
   const fader = next.fader;
-  // While a fade runs the number on the left sweeps, so the destination is
-  // shown beside it: a close takes two seconds and "-3.00 dB" on its own reads
-  // as a fader that is not moving. Null dB is -inf, never a missing reading.
-  // Compared as console units, not dB: -inf has no number to compare with.
-  const arrived = fader.target === null || fader.target === fader.commanded;
-  // The box does not know where the fader is (#107): at every cold boot, and
-  // again after a hand-off to StageMix (#12). `commanded` is only a belief
-  // until an absolute command says otherwise, and the number must say so
-  // rather than sit there looking confident - the game 2 hazard this whole
-  // feature exists for.
-  const value = fader.level_known
-    ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
-    : "unknown";
-  const age = ageText(fader.age);
-  $("level").textContent = age ? value + " - " + age : value;
+  paintLevel();
   const levelTag = $("level-tag");
   levelTag.textContent = fader.level_known ? "commanded" : "unknown";
   levelTag.className = "tag " + (fader.level_known ? "commanded" : "unknown");
@@ -1000,6 +1025,8 @@ fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
 paintTabs();
 paintSlot();
-setInterval(paintLink, LINK_TICK_MS);
+// The level readout rides the same tick: its age has to count up while the box
+// says nothing (#147).
+setInterval(() => { paintLink(); paintLevel(); }, LINK_TICK_MS);
 connect();
 holdWake();

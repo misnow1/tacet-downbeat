@@ -1048,7 +1048,6 @@ class App:
         # going exactly as a close does. A settled fader has nothing to point
         # at: the commanded level already *is* the expectation.
         target = self._move_target
-        age = None if self._console.last_sent_at is None else self._monotonic() - self._console.last_sent_at
         return {
             # When this was taken, on the box's clock. The page keeps the newest
             # it has seen: a POST response held up on the wifi used to paint an
@@ -1096,10 +1095,15 @@ class App:
                 # fader is. Not a claim the last such packet was delivered;
                 # `healthy` and `stalled` carry that.
                 "level_known": self.machine.level_known,
-                # Seconds since the console was last actually told something -
-                # a snap, a ramp step, or a close. None before anything has
-                # ever been sent. Shown in every mode, known or not.
-                "age": age,
+                # When the console was last actually told something - a snap, a
+                # ramp step, or a close - on the box's monotonic clock, the one
+                # `at` is on. None before anything has ever been sent. The page
+                # shows its age in every mode, known or not (#12). Fixed at the
+                # send, not an age, so it does not churn the snapshot: an age
+                # differs in every one taken, which defeated the playhead
+                # coalescing and sent ~11 full snapshots a second (#147). The
+                # page counts the age itself.
+                "sent_at": self._console.last_sent_at,
                 "healthy": self._console.healthy,
                 "error": self._console.last_error,
                 # Where a move in flight is heading, or None when nothing is
