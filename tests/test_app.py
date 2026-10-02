@@ -2197,7 +2197,7 @@ class TestFaderPositionTrust(AppTestCase):
         self.assertFalse(app.snapshot()["fader"]["healthy"])
         self.assertFalse(app.snapshot()["fader"]["level_known"])
 
-    async def test_the_snapshot_carries_the_age_of_the_last_command(self):
+    async def test_the_snapshot_carries_when_the_last_command_was_sent(self):
         # Built directly rather than through `build()`: the console and the
         # app need to share one fake clock, which `build()`'s `steady` option
         # does not wire up - it gives the console its own separate one. The
@@ -2218,11 +2218,16 @@ class TestFaderPositionTrust(AppTestCase):
             monotonic=clock.monotonic,
             machine=state.Machine(level_known=True),
         )
-        self.assertIsNone(app.snapshot()["fader"]["age"])
+        self.assertIsNone(app.snapshot()["fader"]["sent_at"])
         await app.arm()
         await app.trigger()
+        sent_at = clock.now
+        self.assertEqual(app.snapshot()["fader"]["sent_at"], sent_at)
+        # Fixed at the send, not an age: nothing was sent in between, so it
+        # must not move, or every snapshot differs from the last and the
+        # playhead coalescing never holds anything back (#147).
         clock.now += 10.0
-        self.assertEqual(app.snapshot()["fader"]["age"], 10.0)
+        self.assertEqual(app.snapshot()["fader"]["sent_at"], sent_at)
 
 
 class TestTheStandingTarget(AppTestCase):
