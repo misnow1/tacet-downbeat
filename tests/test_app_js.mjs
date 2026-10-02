@@ -391,20 +391,23 @@ check("age: minutes once it is not urgent any more", ageText(76 * 60), "76 min a
 check("age: unbounded, so a whole game's worth is still readable", ageText(3 * 3600 + 5 * 60), "185 min ago");
 
 // The box sends when it last sent (#147), on its own clock, and the page counts
-// the age. With no round-trip estimate the page falls back to this snapshot's
-// own `at`, so a command sent `ago` seconds before the snapshot was taken reads
-// as `ago` seconds old when it is painted.
+// the age: the gap between that and the snapshot's own `at`, plus the time since
+// the snapshot arrived. A command sent `ago` seconds before the snapshot was
+// taken reads as `ago` seconds old when it is painted on arrival.
 function sentAgo(ago) {
   return SNAPSHOTS["standing-down"].at - ago;
 }
 
-check("commandAge: nothing sent yet has no age", ageContext.commandAge(null, 0), null);
-check("commandAge: no clock estimate has no age", ageContext.commandAge(100, null), null);
-{
-  const { context } = browser({ now: () => 1000 * 1000 });
-  check("commandAge: box time plus offset against the page's clock", context.commandAge(100, 890), 10);
-  check("commandAge: never negative, whatever the offset estimate says", context.commandAge(100, 950), 0);
-}
+check("commandAge: nothing sent yet has no age", ageContext.commandAge(null, 100, 50, 60), null);
+check("commandAge: a snapshot with no at has no age", ageContext.commandAge(90, null, 50, 60), null);
+check("commandAge: a non-numeric at has no age", ageContext.commandAge(90, "x", 50, 60), null);
+check("commandAge: a snapshot that never arrived has no age", ageContext.commandAge(90, 100, null, 60), null);
+check(
+  "commandAge: box-side gap plus page-side time since arrival",
+  ageContext.commandAge(90, 100, 50, 65),
+  25,
+);
+check("commandAge: never negative", ageContext.commandAge(100, 90, 50, 50), 0);
 
 check(
   "the readout carries the age of the last command, known level or not",
@@ -424,17 +427,16 @@ check(
 
 {
   // #147: the age is counted on the page, so it keeps counting while the box
-  // sends nothing. The page's clock is held still for the render, then moved
-  // on and the 1 s tick fired, with no new snapshot in between.
+  // sends nothing, and with no clock estimate. The page's clock is held still
+  // for the render, then moved on and the 1 s tick fired, with no new snapshot
+  // in between.
   let clock = 2_000_000;
-  const { context, nodes, intervals, sockets } = browser({ now: () => clock * 1000 });
+  const { context, nodes, intervals } = browser({ now: () => clock * 1000 });
   const snap = snapshot({}, { level_known: true, db: 0.0 });
   snap.at = 5000;
   snap.fader.sent_at = 5000 - 30;
-  // Pin the offset with a timed round trip (zero length, so exact): without
-  // one the page falls back to the snapshot's own age, which slides with the
-  // clock and would hide whether the readout is counting at all.
-  sockets[0].onmessage({ data: JSON.stringify({ pong: clock, box: snap.at }) });
+  // No pong is ever sent: there is no clock estimate at all, which is the case
+  // the age has to survive (#147).
   context.render(snap);
   check("age ticks: painted at the age it had on arrival", nodes.get("level").textContent, "0.00 dB - 30s ago");
   clock += 20;

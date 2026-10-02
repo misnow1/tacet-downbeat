@@ -445,15 +445,17 @@ function ageText(seconds) {
   return Math.round(seconds / 60) + " min ago";
 }
 
-// Seconds since `sentAt`, a time on the box's clock, by the page's own clock:
-// `offset` is box-to-page, the same one clockTime converts with. Null when
-// either half is missing - nothing sent yet, or no estimate to convert by -
-// so the readout shows no age rather than an invented one. Never negative: the
-// offset is an estimate, and a command that reads as sent in the future would
-// be a stranger lie than "0s ago".
-function commandAge(sentAt, offset) {
-  if (sentAt === null || offset === null) return null;
-  return Math.max(0, now() - (sentAt + offset));
+// Seconds since the box last sent, with no clock estimate in it (#147). The box
+// stamps both `sentAt` and the snapshot's `at` on one monotonic clock, so the
+// gap between them is exact; the page's own clock measures how long ago the
+// snapshot arrived, also exact. Only transit time is uncounted. Nothing here
+// converts between the two clocks, so it keeps climbing on a link that has never
+// timed a round trip - the degraded case the #12 age is for. Null when nothing
+// has been sent, or the snapshot has no usable `at` or arrival time. Never
+// negative, whatever the clocks do.
+function commandAge(sentAt, at, arrivedAt, nowSeconds) {
+  if (sentAt === null || !Number.isFinite(at) || arrivedAt === null) return null;
+  return Math.max(0, (at - sentAt) + (nowSeconds - arrivedAt));
 }
 
 // The fader readout: the commanded level and how long ago the console was last
@@ -480,7 +482,7 @@ function paintLevel() {
   const value = fader.level_known
     ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
     : "unknown";
-  const age = ageText(commandAge(fader.sent_at, boxOffset(snapshot)));
+  const age = ageText(commandAge(fader.sent_at, snapshot.at, snapshotArrivedAt, now()));
   $("level").textContent = age ? value + " - " + age : value;
 }
 
@@ -518,6 +520,10 @@ function savingBanner(log, mirror) {
 // overtaken it, and nothing corrected it until something else changed (#11).
 let renderedAt = null;
 
+// When, by the page's own clock, the snapshot on screen arrived. The readout's
+// age counts from it (#147), so it needs no estimate of the box's clock.
+let snapshotArrivedAt = null;
+
 function isOlder(next, at) {
   return at !== null && typeof next.at === "number" && next.at < at;
 }
@@ -527,6 +533,7 @@ function render(next) {
   if (isOlder(next, renderedAt)) return;
   if (typeof next.at === "number") renderedAt = next.at;
   snapshot = next;
+  snapshotArrivedAt = now();
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
   // #19: ARMED / STOOD DOWN and since when, on the box's own clock. Guarded
@@ -974,6 +981,7 @@ function connect() {
     link = {open: false, staleAfter: null, seen: null};
     clockSamples = [];
     renderedAt = null;
+    snapshotArrivedAt = null;
     paintLink();
     setTimeout(connect, RECONNECT_MS);
   };
