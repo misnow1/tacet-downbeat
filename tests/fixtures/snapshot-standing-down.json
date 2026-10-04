@@ -239,7 +239,6 @@
     "since": null
   },
   "fader": {
-    "age": null,
     "commanded": -32768,
     "confirmed": false,
     "db": null,
@@ -247,6 +246,7 @@
     "healthy": true,
     "level_known": false,
     "moving": false,
+    "sent_at": null,
     "target": null,
     "target_db": null
   },

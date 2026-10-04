@@ -14,6 +14,7 @@ from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, osc, prompts, reaper, state, web
 from tests.disk import Disk
+from tests.snapshots import _build, _known, _Sender
 
 
 class FakeSender:
@@ -1176,6 +1177,68 @@ class TestBroadcastThrottle(unittest.TestCase):
         # snapshot at every browser every second for three hours to say nothing.
         snapshot = self.app.snapshot()
         self.assertFalse(web.should_broadcast(snapshot, snapshot, elapsed=3600.0, interval=1.0))
+
+
+class TestTheBoxDoesNotChurnItsOwnSnapshot(unittest.IsolatedAsyncioTestCase):
+    """#147: a field that differs in every snapshot taken - an age computed at
+    the moment of asking - made every `/time` packet look like news. Reaper's
+    ~11 Hz went straight out as full snapshots, and the 1 s tick sent even
+    when nothing had happened, to every browser, for the whole game.
+
+    Run against the real `App` on the real fixture builder, so a future field
+    that churns fails here instead of on the wifi. The unit tests above feed
+    `should_broadcast` hand-made snapshots and could not have caught it.
+    """
+
+    #: Reaper's `/time` rate while rolling.
+    TIME_PACKETS = 11
+    #: What one `/time` packet's worth of clock is: all of them together stay
+    #: inside one interval.
+    TIME_STEP = web.POSITION_BROADCAST_INTERVAL / (TIME_PACKETS + 1)
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    async def rolling_box(self):
+        box = _build(Path(self._tmp.name), console=_Sender(), machine=_known())
+        self.addCleanup(box.log.close)
+        await box.app.arm()
+        await box.app.trigger()
+        box.reaper_says("/record", 1.0)
+        box.reaper_says("/play", 1.0)
+        box.reaper_says("/time", 1.0)
+        return box
+
+    async def test_a_rolling_playhead_reaches_the_page_once_per_interval(self):
+        box = await self.rolling_box()
+        # The hub's own bookkeeping, mirrored: what it last sent, and when.
+        last = box.app.snapshot()
+        last_sent = box.clock[0]
+        sent = 0
+        for packet in range(1, self.TIME_PACKETS + 1):
+            box.clock[0] += self.TIME_STEP
+            box.reaper_says("/time", 1.0 + packet * self.TIME_STEP)
+            snapshot = box.app.snapshot()
+            elapsed = box.clock[0] - last_sent
+            self.assertLess(elapsed, web.POSITION_BROADCAST_INTERVAL)
+            if web.should_broadcast(last, snapshot, elapsed=elapsed):
+                sent += 1
+                last, last_sent = snapshot, box.clock[0]
+        self.assertEqual(sent, 0)
+
+    async def test_the_playhead_still_goes_out_once_the_interval_has_passed(self):
+        box = await self.rolling_box()
+        last = box.app.snapshot()
+        box.clock[0] += web.POSITION_BROADCAST_INTERVAL
+        box.reaper_says("/time", 2.0)
+        self.assertTrue(web.should_broadcast(last, box.app.snapshot(), elapsed=web.POSITION_BROADCAST_INTERVAL))
+
+    async def test_a_tick_with_nothing_new_is_not_broadcast(self):
+        box = await self.rolling_box()
+        last = box.app.snapshot()
+        box.clock[0] += self.TIME_STEP
+        self.assertFalse(web.should_broadcast(last, box.app.snapshot(), elapsed=web.POSITION_BROADCAST_INTERVAL * 60))
 
 
 class TestEveryFaderActionIsColoured(unittest.TestCase):

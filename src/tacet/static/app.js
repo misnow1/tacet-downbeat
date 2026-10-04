@@ -445,6 +445,47 @@ function ageText(seconds) {
   return Math.round(seconds / 60) + " min ago";
 }
 
+// Seconds since the box last sent, with no clock estimate in it (#147). The box
+// stamps both `sentAt` and the snapshot's `at` on one monotonic clock, so the
+// gap between them is exact; the page's own clock measures how long ago the
+// snapshot arrived, also exact. Only transit time is uncounted. Nothing here
+// converts between the two clocks, so it keeps climbing on a link that has never
+// timed a round trip - the degraded case the #12 age is for. Null when nothing
+// has been sent, or the snapshot has no usable `at` or arrival time. Never
+// negative, whatever the clocks do.
+function commandAge(sentAt, at, arrivedAt, nowSeconds) {
+  if (sentAt === null || !Number.isFinite(at) || arrivedAt === null) return null;
+  return Math.max(0, (at - sentAt) + (nowSeconds - arrivedAt));
+}
+
+// The fader readout: the commanded level and how long ago the console was last
+// told anything. Painted from the snapshot on screen both when a snapshot
+// arrives and on the page's own timer, because the age is the page's to count
+// (#147). The box used to send it as an age, which made every snapshot differ
+// from the last and defeated its own playhead coalescing; it sends the time of
+// the send now, which only changes at a send. The #12 hazard stays covered:
+// the box going quiet is exactly when nothing arrives, and the number must
+// keep ageing on the screen anyway.
+function paintLevel() {
+  if (!snapshot) return;
+  const fader = snapshot.fader;
+  // While a fade runs the number on the left sweeps, so the destination is
+  // shown beside it: a close takes two seconds and "-3.00 dB" on its own reads
+  // as a fader that is not moving. Null dB is -inf, never a missing reading.
+  // Compared as console units, not dB: -inf has no number to compare with.
+  const arrived = fader.target === null || fader.target === fader.commanded;
+  // The box does not know where the fader is (#107): at every cold boot, and
+  // again after a hand-off to StageMix (#12). `commanded` is only a belief
+  // until an absolute command says otherwise, and the number must say so
+  // rather than sit there looking confident - the game 2 hazard this whole
+  // feature exists for.
+  const value = fader.level_known
+    ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
+    : "unknown";
+  const age = ageText(commandAge(fader.sent_at, snapshot.at, snapshotArrivedAt, now()));
+  $("level").textContent = age ? value + " - " + age : value;
+}
+
 function recordingTag(liveness, known) {
   if (liveness === "lost") return ["unknown", "LINK LOST"];
   if (liveness === "unknown") return ["unknown", "no feedback"];
@@ -479,6 +520,10 @@ function savingBanner(log, mirror) {
 // overtaken it, and nothing corrected it until something else changed (#11).
 let renderedAt = null;
 
+// When, by the page's own clock, the snapshot on screen arrived. The readout's
+// age counts from it (#147), so it needs no estimate of the box's clock.
+let snapshotArrivedAt = null;
+
 function isOlder(next, at) {
   return at !== null && typeof next.at === "number" && next.at < at;
 }
@@ -488,6 +533,7 @@ function render(next) {
   if (isOlder(next, renderedAt)) return;
   if (typeof next.at === "number") renderedAt = next.at;
   snapshot = next;
+  snapshotArrivedAt = now();
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
   // #19: ARMED / STOOD DOWN and since when, on the box's own clock. Guarded
@@ -507,21 +553,7 @@ function render(next) {
   $("saving").textContent = saving ? saving[1] : "";
 
   const fader = next.fader;
-  // While a fade runs the number on the left sweeps, so the destination is
-  // shown beside it: a close takes two seconds and "-3.00 dB" on its own reads
-  // as a fader that is not moving. Null dB is -inf, never a missing reading.
-  // Compared as console units, not dB: -inf has no number to compare with.
-  const arrived = fader.target === null || fader.target === fader.commanded;
-  // The box does not know where the fader is (#107): at every cold boot, and
-  // again after a hand-off to StageMix (#12). `commanded` is only a belief
-  // until an absolute command says otherwise, and the number must say so
-  // rather than sit there looking confident - the game 2 hazard this whole
-  // feature exists for.
-  const value = fader.level_known
-    ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
-    : "unknown";
-  const age = ageText(fader.age);
-  $("level").textContent = age ? value + " - " + age : value;
+  paintLevel();
   const levelTag = $("level-tag");
   levelTag.textContent = fader.level_known ? "commanded" : "unknown";
   levelTag.className = "tag " + (fader.level_known ? "commanded" : "unknown");
@@ -949,6 +981,9 @@ function connect() {
     link = {open: false, staleAfter: null, seen: null};
     clockSamples = [];
     renderedAt = null;
+    // Deliberately not reset, unlike renderedAt: the snapshot still on screen
+    // arrived when it arrived, so its age stays true, and a dropped link is
+    // exactly when the age has to keep climbing (#12, #147).
     paintLink();
     setTimeout(connect, RECONNECT_MS);
   };
@@ -1000,6 +1035,8 @@ fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
 paintTabs();
 paintSlot();
-setInterval(paintLink, LINK_TICK_MS);
+// The level readout rides the same tick: its age has to count up while the box
+// says nothing (#147).
+setInterval(() => { paintLink(); paintLevel(); }, LINK_TICK_MS);
 connect();
 holdWake();

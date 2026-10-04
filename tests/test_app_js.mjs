@@ -55,8 +55,20 @@ function browser(options = {}) {
   const created = [];
   const sockets = [];
   const posted = [];
+  const intervals = [];
   const context = createContext({
     console,
+    // The page reads `Date.now()` for its own clock. A test that needs the
+    // page's clock to move, or to stand still, passes `now` (milliseconds).
+    ...(options.now
+      ? {
+          Date: class extends Date {
+            static now() {
+              return options.now();
+            }
+          },
+        }
+      : {}),
     document: {
       getElementById(id) {
         if (!nodes.has(id)) nodes.set(id, element(id));
@@ -88,10 +100,13 @@ function browser(options = {}) {
     setTimeout() {},
     clearTimeout() {},
     AbortController,
-    // The banner is repainted on a tick so a silence is noticed without a
-    // message arriving to notice it. Never fired here; paintLink is called
-    // directly instead.
-    setInterval() {},
+    // The banner and the level readout are repainted on a tick so a silence is
+    // noticed without a message arriving to notice it. Kept rather than fired:
+    // a test that wants a tick calls `intervals[0]()` itself, and every other
+    // one calls paintLink directly.
+    setInterval(callback) {
+      intervals.push(callback);
+    },
     // The page boots on load. Neither of these may resolve, or the tests would
     // be racing the page's own first render. What was asked for is kept, so a
     // tap can be checked by what it sent.
@@ -114,7 +129,7 @@ function browser(options = {}) {
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes, created, sockets, posted };
+  return { context, nodes, created, sockets, posted, intervals };
 }
 
 // -- snapshots --------------------------------------------------------------
@@ -375,16 +390,81 @@ check("age: rounds rather than truncating", ageText(59.6), "1 min ago");
 check("age: minutes once it is not urgent any more", ageText(76 * 60), "76 min ago");
 check("age: unbounded, so a whole game's worth is still readable", ageText(3 * 3600 + 5 * 60), "185 min ago");
 
+// The box sends when it last sent (#147), on its own clock, and the page counts
+// the age: the gap between that and the snapshot's own `at`, plus the time since
+// the snapshot arrived. A command sent `ago` seconds before the snapshot was
+// taken reads as `ago` seconds old when it is painted on arrival.
+function sentAgo(ago) {
+  return SNAPSHOTS["standing-down"].at - ago;
+}
+
+check("commandAge: nothing sent yet has no age", ageContext.commandAge(null, 100, 50, 60), null);
+check("commandAge: a snapshot with no at has no age", ageContext.commandAge(90, null, 50, 60), null);
+check("commandAge: a non-numeric at has no age", ageContext.commandAge(90, "x", 50, 60), null);
+check("commandAge: a snapshot that never arrived has no age", ageContext.commandAge(90, 100, null, 60), null);
+check(
+  "commandAge: box-side gap plus page-side time since arrival",
+  ageContext.commandAge(90, 100, 50, 65),
+  25,
+);
+check("commandAge: never negative", ageContext.commandAge(100, 90, 50, 50), 0);
+
 check(
   "the readout carries the age of the last command, known level or not",
-  rendered({}, { level_known: true, db: 0.0, age: 76 * 60 }).get("level").textContent,
+  rendered({}, { level_known: true, db: 0.0, sent_at: sentAgo(76 * 60) }).get("level").textContent,
   "0.00 dB - 76 min ago",
 );
 check(
+  "the readout counts seconds close up",
+  rendered({}, { level_known: true, db: 0.0, sent_at: sentAgo(3) }).get("level").textContent,
+  "0.00 dB - 3s ago",
+);
+check(
   "no age is shown when nothing has ever been sent",
-  rendered({}, { level_known: true, age: null }).get("level").textContent,
+  rendered({}, { level_known: true, sent_at: null }).get("level").textContent,
   "-∞ dB",
 );
+
+{
+  // #147: the age is counted on the page, so it keeps counting while the box
+  // sends nothing, and with no clock estimate. The page's clock is held still
+  // for the render, then moved on and the 1 s tick fired, with no new snapshot
+  // in between.
+  let clock = 2_000_000;
+  const { context, nodes, intervals } = browser({ now: () => clock * 1000 });
+  const snap = snapshot({}, { level_known: true, db: 0.0 });
+  snap.at = 5000;
+  snap.fader.sent_at = 5000 - 30;
+  // No pong is ever sent: there is no clock estimate at all, which is the case
+  // the age has to survive (#147).
+  context.render(snap);
+  check("age ticks: painted at the age it had on arrival", nodes.get("level").textContent, "0.00 dB - 30s ago");
+  clock += 20;
+  intervals[0]();
+  check("age ticks: and twenty seconds on, with no new snapshot", nodes.get("level").textContent, "0.00 dB - 50s ago");
+  clock += 60 * 60;
+  intervals[0]();
+  check("age ticks: and an hour on it still says so", nodes.get("level").textContent, "0.00 dB - 61 min ago");
+}
+
+{
+  // #147, #12: the link dropping is when the age matters most. The snapshot on
+  // screen arrived when it arrived, so closing the socket must not blank the
+  // age or stop it climbing.
+  let clock = 2_000_000;
+  const { context, nodes, intervals, sockets } = browser({ now: () => clock * 1000 });
+  const snap = snapshot({}, { level_known: true, db: 0.0 });
+  snap.at = 5000;
+  snap.fader.sent_at = 5000 - 30;
+  context.render(snap);
+  sockets[0].close();
+  clock += 20;
+  intervals[0]();
+  check("age across a disconnect: still counting after the socket closes", nodes.get("level").textContent, "0.00 dB - 50s ago");
+  clock += 60 * 60;
+  intervals[0]();
+  check("age across a disconnect: and an hour on", nodes.get("level").textContent, "0.00 dB - 61 min ago");
+}
 
 // -- the box does not know where the fader is: the level renders as unknown (#107) --
 
@@ -395,7 +475,7 @@ check(
 );
 check(
   "the age still shows so a stale belief cannot look current",
-  rendered({}, { level_known: false, db: 0.0, age: 76 * 60 }).get("level").textContent,
+  rendered({}, { level_known: false, db: 0.0, sent_at: sentAgo(76 * 60) }).get("level").textContent,
   "unknown - 76 min ago",
 );
 check(

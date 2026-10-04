@@ -76,9 +76,9 @@ def _build(root: Path, *, console: _Sender | _Unreachable, machine: Machine | No
     async def tick(seconds: float) -> None:
         # The console needs its own clock to actually advance during a move -
         # otherwise its ramp-scheduling loop sees the same "due" step forever
-        # and never finishes. Harmless before `age` existed, since nothing
+        # and never finishes. Harmless before `sent_at` existed, since nothing
         # read the console's clock; #12 made the mismatch a real bug (fixture
-        # `age` values computed against a live wall clock, and non-reproducible).
+        # values computed against a live wall clock, and non-reproducible).
         clock[0] += seconds
 
     disk = Disk()
