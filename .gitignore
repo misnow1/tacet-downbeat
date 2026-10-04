@@ -2,6 +2,9 @@
 audio/**
 !audio/README.md
 
+# packet captures and other data
+data/**
+
 # the site config: console IP, DCA number, NAS path. Those live in
 # docs/gameday.md and on the box, never in the repo. The example is tracked.
 /tacet.toml
