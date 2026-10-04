@@ -514,11 +514,17 @@ PAGE = """<!doctype html>
 <title>tacet-downbeat</title>
 <style>
 /* #5: black text on a bright amber (about 11:1) rather than white on the old,
-   darker amber (about 3.9:1) - the close direction has to read at a glance in
-   noon sun, and colour alone must not be the only thing saying which way a
-   button goes (see the arrows below). */
+   darker amber (about 3.9:1) - amber is the page's attention colour and has to
+   read at a glance in noon sun. The close direction was amber until #155; it is
+   blue now, and colour alone never says which way a button goes (see the
+   arrows below). */
+/* STATE colours (--warn, --attention*, --ok, --state-fading and the tints
+   #ffb4a9 #ff9d94 #ffca7a #9fd8a2) are reserved and never mark a button
+   category (#155). --state-fading is #154's, reserved here and unused until
+   then. */
 :root{--bg:#14161a;--panel:#1e2128;--line:#2c313b;--text:#e8eaed;--dim:#9aa3b0;
---open:#2e7d32;--fade:#ffb300;--fade-text:#1a1400;--warn:#c62828;--ok:#2e7d32}
+--open:#4caf50;--attention:#ffb300;--attention-text:#1a1400;--warn:#c62828;--ok:#2e7d32;
+--tone-out:#4c9aff;--tone-score:#7c5cff;--tone-score-text:#ffffff;--tone-timeout:#7d93ad;--tone-timeout-bg:rgba(125,147,173,.14);--state-fading:#e040a0}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);
@@ -583,7 +589,7 @@ font-size:13px}
    the same thing in words ("target -3 dB"), so it is never colour alone. This
    is where the target is *shown*; where it is *changed* is MORE. */
 #strip > #target-level{color:var(--dim);cursor:default}
-#strip > #target-level.off-default{background:var(--fade);color:var(--fade-text);font-weight:700}
+#strip > #target-level.off-default{background:var(--attention);color:var(--attention-text);font-weight:700}
 #refusal{color:#ffb4a9;display:none}
 #refusal.loud{color:#fff;background:var(--warn);font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach
@@ -635,7 +641,7 @@ button.sending{outline:4px dashed #fff;outline-offset:-4px}
 .value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
 .tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:99px;
 border:1px solid var(--line);color:var(--dim);margin-left:6px;vertical-align:middle}
-.tag.commanded{border-color:var(--fade);color:#ffca7a}
+.tag.commanded{border-color:var(--attention);color:#ffca7a}
 .tag.confirmed{border-color:var(--ok);color:#9fd8a2}
 .tag.unknown{border-color:var(--warn);color:#ff9d94}
 h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;
@@ -650,7 +656,7 @@ margin:4px 0 0}
    thumb: 96px wide is the label ("-3 dB") with room either side, 72px tall
    matches the fader column's smallest button (score-reversed), so a tap here is
    as easy to land as the ones that matter more. The selected segment is solid
-   and NEUTRAL, deliberately. Green and amber are the fader's direction (#5),
+   and NEUTRAL, deliberately. Green and blue are the fader's direction (#5),
    and this control moves nothing: it stores the level the next open goes to,
    so it must not borrow the colour that means "up" or "down". */
 #target-control{display:flex;flex-wrap:wrap;gap:8px}
@@ -666,7 +672,7 @@ button[data-kind="span"]{border-style:dashed}
    looking. */
 button[data-action]{border-width:2px;font-weight:700}
 /* Direction is never colour alone (#5): a CSS arrow says which way the fader
-   is going, black-on-amber or white-on-green either way. Green for everything
+   is going, green or blue either way. Green for everything
    that sends it up, including READY's ride to the hold level short of target -
    `open-slow` riding in rather than snapping, or `ready` stopping short of
    target, are differences in the gesture, not the direction, that the label
@@ -675,23 +681,46 @@ button[data-action]{border-width:2px;font-weight:700}
 button[data-action="open"],
 button[data-action="open-slow"],
 button[data-action="ready"]{border-color:var(--open);color:var(--open)}
-button[data-action="open"]::before,
-button[data-action="open-slow"]::before,
-button[data-action="ready"]::before{content:"\\2191\\a0"}
-button[data-action="release"]{border-color:var(--fade);color:var(--fade)}
-button[data-action="release"]::before{content:"\\2193\\a0"}
+button[data-action="release"]{border-color:var(--tone-out);color:var(--tone-out)}
+/* The arrows ride on the label, so they never become a row of their own above
+   a stacked icon (#155). */
+button[data-action="open"] .lbl::before,
+button[data-action="open-slow"] .lbl::before,
+button[data-action="ready"] .lbl::before{content:"\\2191\\a0"}
+button[data-action="release"] .lbl::before{content:"\\2193\\a0"}
+/* Category tones (#155). Scoring is filled so it reads first and from across a
+   room; timeouts are quiet. Neither borrows a state colour. */
+button[data-tone="score"]{background:var(--tone-score);border-color:var(--tone-score);
+color:var(--tone-score-text);font-weight:700}
+button[data-tone="timeout"]{background:var(--tone-timeout-bg);border-color:var(--tone-timeout)}
+button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
+/* By default an icon sits inline at 16px, in the Timeout grid, where it adds no
+   height to the row. Scoring and the fader column stack it above the label. */
+.ico{display:inline-block;width:16px;height:16px;margin-right:6px;vertical-align:middle;line-height:0}
+.ico svg{display:block;width:100%;height:100%}
+/* #155: five scoring buttons, one row, icon above the label (L3). Width: MAIN
+   is 1024 - 280 (column) - 32 (tabpanel padding) = 712px on the press-box
+   iPad; five cells of at least 124px plus four 8px gaps need 652. Height: 2
+   border + 12 padding + 18 icon + 2 gap + 13px*1.4 label = 52.2px, against
+   49.6 for a plain grid row (2 + 28 + 14px*1.4) - 2.6px for a row that holds
+   five buttons instead of wrapping a fifth onto a second (measured: L1 cost
+   58px). No nowrap: a narrower screen wraps the label and grows the row
+   rather than spill text past the border. */
+.grid[data-tone="score"]{grid-template-columns:repeat(auto-fill,minmax(124px,1fr))}
+.grid[data-tone="score"] button{padding:6px 6px;font-size:13px}
+.grid[data-tone="score"] .ico{display:block;margin:0 auto 2px;width:18px;height:18px}
 /* Three link states, not two. An open socket that has not delivered anything
    is a connection attempt and reads as one; a silence past the box's own
    threshold is the dangerous state, because nothing else on the page looks
    wrong while it is happening. */
 #link{color:#fff;display:none}
-#link.connecting{display:block;background:var(--fade);color:var(--fade-text)}
+#link.connecting{display:block;background:var(--attention);color:var(--attention-text)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
 #saving.fault{display:block;background:var(--warn);color:#fff}
-#saving.warn{display:block;background:var(--fade);color:var(--fade-text)}
+#saving.warn{display:block;background:var(--attention);color:var(--attention-text)}
 #saving.note{display:block;color:#ffca7a}
 #wake{text-align:center;font-size:13px;color:var(--dim);padding:8px 16px}
 #wake.advice{color:#ffca7a}
@@ -716,7 +745,13 @@ border-left:1px solid var(--line);background:var(--bg)}
    takes the difference out of the one line above it, which is the column note
    - the readout gap has no spare to give. The readout itself does not shrink
    either (its own min-height holds), so the belief row is never clipped. */
-#fader-top button,#fader-bottom button{flex:0 1 auto;min-height:64px}
+#fader-top button,#fader-bottom button{flex:0 1 auto;min-height:64px;padding:6px 12px}
+/* At the 64px shrink floor: 64 - 2*2 border - 2*6 padding = 48; icon 24 + 2 +
+   label 16px*1.2 = 45.2. Padding sits inside the explicit heights, so no button
+   moves. The default 18px padding clipped the label at 723px (measured in the
+   mock). */
+#fader-column .ico{display:block;width:24px;height:24px;margin:0 auto 2px}
+#fader-column .lbl{display:block;line-height:1.2}
 #fader-column button[data-key="up-whistle"]{height:112px}
 #fader-column button[data-key="up-drums"]{height:112px}
 #fader-column button[data-key="up-slow"]{height:80px}

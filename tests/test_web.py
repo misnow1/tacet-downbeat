@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import re
 import time
 import unittest
 from pathlib import Path
@@ -1382,3 +1383,116 @@ class TestTheTimestampAloneIsNotNews(WebTestCase):
         before = self.tacet.snapshot()
         after = {**before, "at": before["at"] + 1.0}
         self.assertFalse(web.should_broadcast(before, after, elapsed=5.0))
+
+
+class TestCategoryTones(unittest.TestCase):
+    """#155: colour and icon by category, and the colours that are never a category.
+
+    Read off the stylesheet itself, comments stripped, so a rule that drifts
+    fails here rather than on a Saturday.
+    """
+
+    # Palette A's state colours, and the tints the page already uses for them.
+    STATE_VARIABLES = ("var(--warn)", "var(--attention)", "var(--attention-text)", "var(--ok)", "var(--state-fading)")
+    STATE_HEX = ("#c62828", "#ffb300", "#1a1400", "#2e7d32", "#ffb4a9", "#ff9d94", "#ffca7a", "#9fd8a2")
+    # Where a number below comes from: the press-box iPad is 1024px wide, the
+    # fader column is 280px (`#fader-column`), and the tab panel pads 16px a side.
+    IPAD_WIDTH = 1024
+    FADER_COLUMN_WIDTH = 280
+    TABPANEL_PADDING = 32
+    GRID_GAP = 8
+    SCORING_BUTTONS = 5
+    # An action button's 2px border, either side.
+    ACTION_BORDER = 2
+    # A grid button's 1px border, either side.
+    GRID_BORDER = 2
+    # The icon's own margin under it, in the column and in the scoring row.
+    ICON_GAP = 2
+    COLUMN_FONT = 16
+    SCORING_FONT = 13
+    SCORING_LINE_HEIGHT = 1.4
+    SHRINK_FLOOR = 64
+    # The most a stacked scoring row may cost over a plain grid row.
+    ROW_BUDGET = 3
+
+    def setUp(self):
+        style = web.PAGE.split("<style>", 1)[1].split("</style>", 1)[0]
+        self.css = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        self.rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css)]
+
+    def rule(self, selector):
+        for sel, body in self.rules:
+            if sel == selector:
+                return body
+        self.fail(f"no rule for {selector!r}")
+
+    def root(self):
+        declarations = {}
+        for pair in self.rule(":root").split(";"):
+            if pair.strip():
+                name, value = pair.split(":", 1)
+                declarations[name.strip()] = value.strip()
+        return declarations
+
+    def number(self, pattern, text):
+        found = re.search(pattern, text)
+        assert found is not None, pattern
+        return float(found.group(1))
+
+    def test_every_tone_has_a_rule(self):
+        self.rule('button[data-tone="score"]')
+        self.rule('button[data-tone="timeout"]')
+
+    def test_no_category_rule_uses_a_state_colour(self):
+        for sel, body in self.rules:
+            if "data-tone=" in sel or "data-action=" in sel or ".ico" in sel:
+                for forbidden in self.STATE_VARIABLES + self.STATE_HEX:
+                    with self.subTest(selector=sel, colour=forbidden):
+                        self.assertNotIn(forbidden, body)
+
+    def test_category_colours_differ_from_every_state_colour(self):
+        root = self.root()
+        category = [root[name] for name in ("--open", "--tone-out", "--tone-score", "--tone-timeout")]
+        self.assertEqual(len(set(category)), len(category))
+        for name in ("--warn", "--attention", "--ok", "--state-fading"):
+            self.assertNotIn(root[name], category, name)
+
+    def test_faded_out_no_longer_borrows_the_attention_colour(self):
+        self.assertIn("var(--tone-out)", self.rule('button[data-action="release"]'))
+
+    def test_the_fading_colour_is_reserved(self):
+        self.assertIn("--state-fading", self.root())
+
+    def test_the_direction_arrow_rides_on_the_label(self):
+        selectors = [sel for sel, _ in self.rules]
+        self.assertTrue(any('[data-action="open"] .lbl::before' in sel for sel in selectors))
+        self.assertTrue(any('[data-action="release"] .lbl::before' in sel for sel in selectors))
+        self.assertNotIn('button[data-action="release"]::before', selectors)
+
+    def test_the_column_icon_fits_the_shrink_floor(self):
+        icon = self.number(r"height:(\d+)px", self.rule("#fader-column .ico"))
+        padding = self.number(r"padding:(\d+)px", self.rule("#fader-top button,#fader-bottom button"))
+        line_height = self.number(r"line-height:([\d.]+)", self.rule("#fader-column .lbl"))
+        used = 2 * self.ACTION_BORDER + 2 * padding + icon + self.ICON_GAP + self.COLUMN_FONT * line_height
+        self.assertLessEqual(used, self.SHRINK_FLOOR)
+
+    def test_five_scoring_buttons_fit_one_row_on_the_ipad(self):
+        grid = self.rule('.grid[data-tone="score"]')
+        cell = self.number(r"minmax\((\d+)px", grid)
+        room = self.IPAD_WIDTH - self.FADER_COLUMN_WIDTH - self.TABPANEL_PADDING
+        self.assertLessEqual(self.SCORING_BUTTONS * cell + (self.SCORING_BUTTONS - 1) * self.GRID_GAP, room)
+
+        padding = self.number(r"padding:(\d+)px", self.rule('.grid[data-tone="score"] button'))
+        icon = self.number(r"height:(\d+)px", self.rule('.grid[data-tone="score"] .ico'))
+        plain = self.rule(".grid button")
+        plain_padding = self.number(r"padding:(\d+)px", plain)
+        plain_font = self.number(r"font-size:(\d+)px", plain)
+        stacked = self.GRID_BORDER + 2 * padding + icon + self.ICON_GAP + self.SCORING_FONT * self.SCORING_LINE_HEIGHT
+        flat = self.GRID_BORDER + 2 * plain_padding + plain_font * self.SCORING_LINE_HEIGHT
+        self.assertLessEqual(stacked, flat + self.ROW_BUDGET)
+
+    def test_no_icon_rule_positions_anything(self):
+        for sel, body in self.rules:
+            if ".ico" in sel:
+                with self.subTest(selector=sel):
+                    self.assertNotIn("position:", body)
