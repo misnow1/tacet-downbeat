@@ -1421,10 +1421,9 @@ class TestCategoryTones(unittest.TestCase):
         self.rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css)]
 
     def rule(self, selector):
-        for sel, body in self.rules:
-            if sel == selector:
-                return body
-        self.fail(f"no rule for {selector!r}")
+        bodies = [body for sel, body in self.rules if sel == selector]
+        self.assertTrue(bodies, f"no rule for {selector!r}")
+        return bodies[0]
 
     def root(self):
         declarations = {}
