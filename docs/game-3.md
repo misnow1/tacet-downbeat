@@ -50,10 +50,12 @@ Checked directly, not recalled:
 - **Log:** 929 entries, 16:34 to 22:45. The mirror ran (908 markers in the
   project).
 - **No `recording-started` anchor.** The page's Start recording button was
-  greyed out before the game, with no reason shown, so the take was started by
-  hand in Reaper (Reaper had been restarted during setup to get the right
-  output on the console). Game 2 hit the same greyed-out button. The missing
-  reason is #163. Every entry's `project_seconds` still puts the take start at
+  greyed out before the game, so the take was started by hand in Reaper.
+  This is the known lockout from game 2 (`reaper.md`, "The record button is
+  greyed out before you touch anything"), and Pre-flight step 0 has the
+  workaround: roll and stop a take in Reaper, then start the real one on the
+  page. The step was missed. A fix that does not depend on remembering it,
+  and a reason shown on the page, is #163. Every entry's `project_seconds` still puts the take start at
   exactly 17:50:42, so alignment is intact, but `markers.py` cannot regenerate
   the markers without an anchor. The corrections sidecar supplies one (#159);
   the box writing it itself is #158.
