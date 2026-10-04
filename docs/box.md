@@ -49,7 +49,7 @@ tracks this game records:
 ```
 [capture]
 audio_path = "/Users/you/Reaper Audio"
-channels = 29
+channels = 30
 game_hours = 6.0
 ```
 
@@ -58,8 +58,8 @@ match it to whichever start time
 [reaper.md](reaper.md#when-to-start-the-recording) recommends, not to kickoff,
 or the check passes a disk that runs out before the recording does.
 
-The size is `channels x 144 kB/s x game_hours`, plus 10%: 29 channels over 6
-hours needs about 99 GB. The banner's `disk` row shows free space against that.
+The size is `channels x 144 kB/s x game_hours`, plus 10%: 30 channels over 6
+hours needs about 103 GB. The banner's `disk` row shows free space against that.
 It also refuses if `audio_path` is not there (an unmounted share), or not set,
 or if the disk holding the log and queue is nearly full. Each refusal names
 `--no-disk-check`, a flag only, which starts the box anyway and says so in the
