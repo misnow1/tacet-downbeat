@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-09-29.** #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
+**Last updated 2026-10-04.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -78,13 +78,34 @@ Alongside, not in the build order above:
 - ~~[#9](https://github.com/misnow1/tacet-downbeat/issues/9)~~ Done, at its new scope: the standing target only. `fader.presets` (shipping `[0.0, -3.0, -6.0]`, the default being `fader.default_target_db` or the first entry when that is unset - #139) and `fader.max_target_db` (shipping 0 dB until the on-site ring-out; a preset above it refuses at load), a runtime target on the app that every open and READY's hold level follow, MORE > Target level, and a strip readout that goes amber when the target is not the default. Changing it stores a value and sends nothing, in every state; the next open uses it. The mid-song retarget ride is #128, in Game 4.
 - ~~[#116](https://github.com/misnow1/tacet-downbeat/issues/116)/[#117](https://github.com/misnow1/tacet-downbeat/issues/117)/[#118](https://github.com/misnow1/tacet-downbeat/issues/118)~~ Done, together. #116: an absolute command whose send failed now un-knows the level again, instead of marking it known on a packet that never landed. #117: HANDOFF is now operator-only, so a detector can never un-know the level once Phase 2 is declared. #118: a hand-off always earns its `handed-off` entry, even when the level already reads unknown - the record a restart under StageMix could not otherwise leave.
 
-## Proposed for Game 4
+## Game 4 (2026-10-17)
 
-- [#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride: changing the target while the fader is open rides to the new level. Split from #9, which ships the standing target alone for Game 3. It is a real fader tap (stale-checked, refused while the level is unknown), which is why it is not folded in: #9 stores a value and moves nothing.
-- [#139](https://github.com/misnow1/tacet-downbeat/issues/139) Configurable default target level: `fader.default_target_db` / `--default-target`, separate from `fader.presets`' page order, falling back to the first preset when unset. #9 made the two jobs one list deliberately; now that the cap can exceed unity, 0 dB (most games) and +3 dB (a very loud crowd) can both be presets without forcing the page's order to put 0 dB first.
+From the Game 3 debrief (2026-10-04). Things the operator touches on the night
+come first; the layout change lands early so the pre-game runthrough (about
+10-14 or 10-15) is not the first time a thumb meets it.
 
-The Game 4 milestone holds the rest: #17, #21, #42, #43, #44, #46, #47, #48,
-#49, #51, #66, #73, #128, #133, #135, #139.
+| # | Issue | Why here |
+|---|---|---|
+| 1 | [#149](https://github.com/misnow1/tacet-downbeat/issues/149) Commit the metering research note | Housekeeping, already written; untracked since soundcheck |
+| 2 | [#155](https://github.com/misnow1/tacet-downbeat/issues/155) MAIN: scoring first, quarters off, timeout wording, colour and icons | The sea of grey cost cue time; muscle memory needs the runthrough |
+| 3 | [#154](https://github.com/misnow1/tacet-downbeat/issues/154) Describe a fade once, animate it, fading colour | Readout stutter and airtime during fades. Absorbs #51 |
+| 4 | [#153](https://github.com/misnow1/tacet-downbeat/issues/153) Target set while open: stored, not moved | Small, and it was a real moment of confusion at Game 3 |
+| 5 | [#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride | What the operator reached for at Game 3; a real fader tap, so after the cheap message |
+| 6 | [#158](https://github.com/misnow1/tacet-downbeat/issues/158) Write the anchor when Reaper starts recording | Game 3 has no anchor; markers cannot regenerate |
+| 7 | [#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag | Game 3 ran from a worktree and had to be reconstructed |
+| 8 | [#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue | Before the runthrough, so it runs from the updated runbook |
+
+Nice for Game 4: [#156](https://github.com/misnow1/tacet-downbeat/issues/156)
+(swipe, never from the fader column), #44 and #73.
+
+Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159)
+(Game 3 sidecar and pilot analysis, after #133). Game 5 or later:
+[#160](https://github.com/misnow1/tacet-downbeat/issues/160) (metering readback
+may only remove trust; needs a design.md amendment) and RTD (#95), unless the
+booth sniff happens the Friday before Game 4.
+
+The Game 4 milestone also holds: #17, #21, #42, #43, #46, #47, #48, #49, #51,
+#66, #133, #135. Whatever does not land moves to Game 5.
 
 ## Keeping this current
 
