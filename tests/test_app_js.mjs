@@ -2305,6 +2305,129 @@ for (const [label, fader] of [["unknown", { level_known: false }], ["known", { l
   );
 }
 
+// -- MAIN after Game 3 (#155) ------------------------------------------------
+
+// The real, regenerated standing-down snapshot, rendered once per test that
+// needs a fresh page; `openSpans` is as the box sends them.
+function game3(openSpans = []) {
+  const { context, created, posted } = browser();
+  context.render(snapshot({}, {}, undefined, openSpans));
+  const buttons = created.filter((node) => node.tag === "button");
+  return { context, created, posted, buttons, byKey: new Map(buttons.map((node) => [node.dataset.key, node])) };
+}
+
+const SCORING_KEYS = ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"];
+const TIMEOUT_KEYS = ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"];
+const FADER_KEYS = ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"];
+const toneOf = (tone) => (node) => node.dataset.tone === tone;
+
+{
+  const { created } = game3();
+  check(
+    "MAIN's groups are Scoring, Timeouts, Game, in that order",
+    created.filter((node) => node.tag === "h2").slice(0, 3).map((node) => node.textContent),
+    ["Scoring", "Timeouts", "Game"],
+  );
+}
+
+{
+  const { buttons, byKey } = game3();
+  check(
+    "Scoring renders Touchdown, Field goal, Safety, First down, Defensive stop",
+    buttons.filter(toneOf("score")).map((node) => node.dataset.key),
+    SCORING_KEYS,
+  );
+  const timeouts = buttons.filter(toneOf("timeout"));
+  check("Official timeout leads the Timeouts group", timeouts[0].dataset.key, "timeout");
+  check("and says Official timeout", timeouts[0].textContent, "Official timeout (start)");
+  check("the Timeouts group is the five timeouts", timeouts.map((node) => node.dataset.key), TIMEOUT_KEYS);
+  for (const key of ["q1", "q2", "q3", "q4", "halftime", "timeout-official"]) {
+    check(`no ${key} button renders`, byKey.has(key), false);
+  }
+  check("halftime exodus is still on MAIN", byKey.has("halftime-exodus"), true);
+  check("halftime exodus is untoned", byKey.get("halftime-exodus").dataset.tone, undefined);
+  check(
+    "every scoring button, Safety included, carries the score tone",
+    SCORING_KEYS.map((key) => byKey.get(key).dataset.tone),
+    SCORING_KEYS.map(() => "score"),
+  );
+  check(
+    "every timeout carries the timeout tone",
+    TIMEOUT_KEYS.map((key) => byKey.get(key).dataset.tone),
+    TIMEOUT_KEYS.map(() => "timeout"),
+  );
+  check(
+    "nothing else carries a tone",
+    [...new Set(buttons.map((node) => node.dataset.tone).filter((tone) => tone !== undefined))].sort(),
+    ["score", "timeout"],
+  );
+  check(
+    "no tone outside Scoring and Timeouts, the fader column and MORE included",
+    buttons.filter((node) => node.dataset.tone && !SCORING_KEYS.concat(TIMEOUT_KEYS).includes(node.dataset.key)).length,
+    0,
+  );
+}
+
+{
+  const { created } = game3();
+  const grid = created.find(
+    (node) => node.tag === "div" && node.children.some((child) => child.dataset.key === "touchdown"),
+  );
+  check("the scoring grid is marked for its own layout", grid.dataset.tone, "score");
+}
+
+const iconOf = (node) => node.children[0];
+const svgOf = (node) => iconOf(node).innerHTML;
+
+{
+  const { byKey } = game3();
+  const keyed = FADER_KEYS.concat(SCORING_KEYS);
+  for (const key of keyed) {
+    check(`${key} leads with an icon`, iconOf(byKey.get(key)).className, "ico");
+    check(`${key}'s icon is an svg`, svgOf(byKey.get(key)).startsWith("<svg"), true);
+  }
+  check("all 11 fader and scoring icons are pairwise distinct", new Set(keyed.map((key) => svgOf(byKey.get(key)))).size, 11);
+
+  const shared = new Set(TIMEOUT_KEYS.map((key) => svgOf(byKey.get(key))));
+  check("the timeouts share one icon", shared.size, 1);
+  check("and it differs from all 11 others", keyed.map((key) => svgOf(byKey.get(key))).includes([...shared][0]), false);
+
+  for (const key of ["halftime-exodus", "band-enters-stands"]) {
+    check(`a grey button (${key}) has one child`, byKey.get(key).children.length, 1);
+    check(`and it is the label`, byKey.get(key).children[0].className, "lbl");
+  }
+
+  const everyIcon = [...new Set(keyed.concat(TIMEOUT_KEYS).map((key) => svgOf(byKey.get(key))))];
+  for (const html of everyIcon) {
+    check("an icon follows the button's colour", html.includes("currentColor"), true);
+    check("and is hidden from assistive tech", html.includes('aria-hidden="true"'), true);
+    check("and fetches nothing", /http|xmlns|<script/.test(html), false);
+    check("and has no whitespace between tags", />\s+</.test(html), false);
+  }
+}
+
+{
+  const span = { span_id: "timeout-9", event: "timeout", label: "Official timeout" };
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, undefined, [span]));
+  const node = created.find((n) => n.tag === "button" && n.dataset.key === "timeout");
+  check("an open span's button says (end)", node.textContent, "Official timeout (end)");
+  check("and keeps its icon", iconOf(node).className, "ico");
+  context.render(snapshot({}, {}, undefined, []));
+  check("a closed span says (start) again", node.textContent, "Official timeout (start)");
+  check("and still keeps its icon", iconOf(node).className, "ico");
+}
+
+{
+  const { created, posted } = game3([{ span_id: "q1-9", event: "q1", label: "Q1" }]);
+  const ender = created.find((node) => node.tag === "button" && node.textContent === "End: Q1");
+  check("a quarter left open by an older log is offered in MORE", ender !== undefined, true);
+  posted.length = 0;
+  ender.onclick();
+  check("and tapping it ends that span", posted[0].path, "/api/span/end");
+  check("by its id", posted[0].body.span_id, "q1-9");
+}
+
 // -- report -----------------------------------------------------------------
 
 console.log(`${checks} checks, ${failures} failures`);

@@ -125,43 +125,92 @@ const FADER_COLUMN = [...FADER_COLUMN_TOP, ...FADER_COLUMN_BOTTOM];
 const RAMPING_ACTIONS = new Set(["open-slow", "ready", "release"]);
 const RAMPING_BLOCKED = "Greyed: they ramp from an unknown level";
 
-// MAIN: the whole GAME category, split into the three groups the hallway test
-// was run against.
+const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+  + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+const SVG_CLOSE = "</svg>";
+const svg = (body) => SVG_OPEN + body + SVG_CLOSE;
+
+// Icons are inline SVG because the page fetches nothing. They are drawn in
+// currentColor so each follows its button's hue, and #154's fading colour once
+// that lands. They carry no xmlns, and no whitespace sits between tags, so a
+// button's textContent stays exactly its label.
+//
+// One per fader button and one per scoring type (#155): each is a different
+// thing to do, so each is a different shape to find under glare or at night.
+const KEY_ICONS = {
+  "up-whistle": svg('<circle cx="9" cy="15" r="6"/><path d="M13.5 11H22v4h-7"/><circle cx="9" cy="15" r="1.6" fill="currentColor" stroke="none"/><path d="M4 4l2 2.5M9 2.5V6M14 4l-2 2.5"/>'),
+  "up-drums": svg('<ellipse cx="12" cy="12" rx="9" ry="3.5"/><path d="M3 12v5.5c0 1.9 4 3.5 9 3.5s9-1.6 9-3.5V12"/><path d="M5 2.5l6 7.5M19 2.5l-6 7.5"/>'),
+  "up-slow": svg('<path d="M3 20C10 20 12 7 20 6"/><path d="M16.5 3.6L20 6l-2.8 3.4"/>'),
+  "up-ready": svg('<path d="M3 5h18" stroke-dasharray="2.5 3"/><path d="M3 20h3l4-9h11"/>'),
+  "out": svg('<path d="M3 4h4l10 15h4"/><path d="M3 21h18" stroke-opacity=".45"/>'),
+  "score-reversed": svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
+  "touchdown": svg('<path d="M4 20C4 11 11 4 20 4c0 9-7 16-16 16z"/><path d="M8.5 15.5l7-7M10 12l2 2M12 10l2 2"/>'),
+  "field-goal": svg('<path d="M12 22v-9M5 13h14M5 13V3M19 13V3"/>'),
+  "safety": svg('<path d="M2.5 12h6M5.5 9v6"/><path d="M12.5 8.5a3.5 3.5 0 1 1 6.3 2.1L12.5 18.5h7.5"/>'),
+  "first-down": svg('<path d="M6 22V2"/><path d="M6 3h13v8H6"/><path d="M12 5.5l1.5-1v5"/>'),
+  "defensive-stop": svg('<path d="M12 2.5l8 3v6c0 5-3.5 8.6-8 10-4.5-1.4-8-5-8-10v-6z"/><path d="M8.5 12h7"/>'),
+};
+// One shared by every timeout: they are one kind of thing, told apart by label.
+const TONE_ICONS = {
+  timeout: svg('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M9.5 2.5h5M12 2.5V6M18.5 6.5L20 5"/>'),
+};
+
+// MAIN: the order is the Game 3 debrief's (#155). The tone belongs to this
+// reviewed placement rather than to Category, because GAME covers all three
+// groups; null means grey.
 const MAIN_GROUPS = [
-  ["Game", ["q1", "q2", "q3", "q4", "halftime", "halftime-exodus", "last-two-minutes"]],
-  ["Scoring", ["touchdown", "field-goal", "first-down", "defensive-stop"]],
-  ["Timeouts", ["timeout-home", "timeout-away", "timeout-media", "timeout-official", "timeout-injury", "timeout"]],
+  ["Scoring", "score", ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"]],
+  ["Timeouts", "timeout", ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"]],
+  ["Game", null, ["halftime-exodus", "last-two-minutes"]],
 ];
 
 // What the fader column and MAIN together account for, so MORE is "whatever
 // is left" rather than a third list that can drift out of step with the other
 // two - see the completeness check in tests/test_app_js.mjs.
-const PLACED_ELSEWHERE = new Set([...FADER_COLUMN, ...MAIN_GROUPS.flatMap(([, keys]) => keys)]);
+const PLACED_ELSEWHERE = new Set([...FADER_COLUMN, ...MAIN_GROUPS.flatMap(([, , keys]) => keys)]);
 
-function buildButtonNode(item) {
+// The span each vocabulary button's words live in, so the paint loop can relabel
+// a span "(start)"/"(end)" without wiping the icon beside it (#155).
+const LABELS = new WeakMap();
+function labelOf(node) { return LABELS.get(node) || node; }
+
+function buildButtonNode(item, tone = null) {
   const node = document.createElement("button");
-  node.textContent = buttonLabel(item.label, item.kind, false);
+  const icon = KEY_ICONS[item.key] || (tone && TONE_ICONS[tone]) || null;
+  if (icon) {
+    const glyph = document.createElement("span");
+    glyph.className = "ico";
+    glyph.innerHTML = icon;
+    node.appendChild(glyph);
+  }
+  const label = document.createElement("span");
+  label.className = "lbl";
+  label.textContent = buttonLabel(item.label, item.kind, false);
+  node.appendChild(label);
+  LABELS.set(node, label);
   node.dataset.key = item.key;
   node.dataset.kind = item.kind;
   node.dataset.label = item.label;
   if (item.action) node.dataset.action = item.action;
+  if (tone) node.dataset.tone = tone;
   node.onclick = () => activate(item, node);
   return node;
 }
 
-function buildGrid(items) {
+function buildGrid(items, tone = null) {
   const grid = document.createElement("div");
   grid.className = "grid";
-  for (const item of items) grid.appendChild(buildButtonNode(item));
+  if (tone) grid.dataset.tone = tone;
+  for (const item of items) grid.appendChild(buildButtonNode(item, tone));
   return grid;
 }
 
-function appendHeadedGrid(host, heading, items) {
+function appendHeadedGrid(host, heading, items, tone = null) {
   if (!items.length) return;
   const h = document.createElement("h2");
   h.textContent = heading;
   host.appendChild(h);
-  host.appendChild(buildGrid(items));
+  host.appendChild(buildGrid(items, tone));
 }
 
 // Spans an older log left open whose event is no longer a button (#14). The
@@ -194,8 +243,8 @@ function renderMainTab(buttons) {
   const byKey = new Map(buttons.map((item) => [item.key, item]));
   const host = $("tab-main");
   host.innerHTML = "";
-  for (const [heading, keys] of MAIN_GROUPS) {
-    appendHeadedGrid(host, heading, keys.map((key) => byKey.get(key)).filter(Boolean));
+  for (const [heading, tone, keys] of MAIN_GROUPS) {
+    appendHeadedGrid(host, heading, keys.map((key) => byKey.get(key)).filter(Boolean), tone);
   }
 }
 
@@ -625,7 +674,7 @@ function render(next) {
     if (node.dataset.orphan || node.dataset.preset !== undefined) continue;
     const open = openSpan(next, node.dataset.key) !== undefined;
     node.classList.toggle("on", open);
-    node.textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
+    labelOf(node).textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
     // In this paint loop and not in buildButtonNode, so that the belief stays
     // out of the rebuild signature above: a belief change re-enables these in
     // place, and never tears the grid down under a thumb.
