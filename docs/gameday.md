@@ -30,9 +30,12 @@ nobody wrote it down, not that nobody knows.
 | Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control |
 | Band DCA number | `17` | The console's DCA layout |
 | Recording path | `~/Reaper Audio` | Laptop's local disk. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
-| Channels recorded | `29` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
+| Channels recorded | `30` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
+| Target levels offered | `[3.0, 0.0, -3.0, -6.0]` dB | `fader.presets`, in the order the page lists them. Ordered loudest first so the page reads like a fader; the default is the row below, not the first entry |
+| Default target | `0.0` dB | `fader.default_target_db`. Where every open goes and what Ready's hold level is measured down from. 0 dB suits most games; +3 dB is one tap away on the page for a very loud crowd |
+| Target cap | `+3.0` dB | `fader.max_target_db`. A preset above it refuses to start. From the on-site ring-out, which rang a hair over +3 dB in the current configuration. **Not the console's limit** - see below |
 
 The box's two addresses above are currently DHCP-assigned, not reserved (the
 console's is set on the console itself, not the box's to reserve). Get the
@@ -66,21 +69,37 @@ unreliable - it was at game 2.
 
 ## Console: fix before the game
 
-Fixes to game 2's routing, agreed for game 3 (#13):
+Fixes to game 2's routing, agreed for game 3 (#13) and in place since the
+2026-09-30 runthrough (#145). Check they are still there:
 
-1. Unassign the DJ from group 37; assign it to group 38 (DJ to Hype PA).
-2. Assign the groups to a new matrix.
-3. Put the ducker on that new matrix, keyed from the announce group.
-4. Route that matrix to Dante 37 (Rio output 1).
+1. One group is the **Band Group**, pre-ducking. The DJ is not on it.
+2. A second group is everything else bound for the Hype PA - currently just the
+   delayed TMMPO input. Group numbers: see "Fill in on the day".
+3. Both groups feed **Matrix 8**, which carries the ducker, keyed from the
+   announce group.
+4. Matrix 8 goes out on Dante out 56 to the Hype PA.
 
 **Set up the DCA reference channel**: console channel 53 assigned to the band
 DCA only, dynamics and EQ bypassed, TO STEREO off, no other sends, direct out
-Post Fader on Dante 53; in Dante Controller, route DVS send 27 to console ch
+Post Fader on Dante 78; in Dante Controller, route DVS send 1 to console ch
 53. Detail in [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
 
 **Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
 ships at 0 dB, and raising it costs feedback margin against a band PA that sits
 just behind the mics ([box.md](box.md#reading-the-page)).
+
+The ring-out for the current configuration **rings a hair over +3 dB**, so the
+cap is set to `+3.0`. The cap goes at or below where it rings, never above.
+
+**The console's limit is not the feedback limit.** The DM7 accepts a DCA level
+up to **+10 dB** (`dm7.LEVEL_MAX`), and the box refuses anything above that
+because the protocol cannot carry it. That number says what the console will
+transmit, not what this room will tolerate, and the two are seven dB apart.
+`fader.max_target_db` is the feedback limit and only a ring-out sets it. The
+cap was briefly set to +6 dB from a half-remembered version of the console
+figure - three dB past where this configuration rings, which is spent in the
+quiet section under a PAT, exactly where the margin runs out. If the cap ever
+needs raising, re-ring the room; do not reason from what the console accepts.
 
 **Hold the console firmware.** DM7 V2.00 shipped 2026-09-10 and cannot be
 rolled back below V1.76; whether its OSC behavior matches what this box was
@@ -102,7 +121,8 @@ path matching between them.
 ### 1. Reaper
 
 Open the game project and confirm DVS is the audio device. Check every track on
-[the patch list](reaper.md#tracks-to-record) is there, named, and **armed**.
+[the patch list](reaper.md#tracks-to-record) is there, named, and **armed** -
+all but `Pilot`, the tone source, which records nothing.
 Point the record path at the local recording path (Site values, above) - it is
 copied to the NAS after the game, not recorded to it directly. **Do not start
 recording yet.**
@@ -112,6 +132,11 @@ DCA down and watch its track go silent in Reaper, confirm the pilot tone
 generator keeps running with the transport stopped, and - the check that
 matters most - confirm the tone shows on no other console output meter. It
 must never reach a PA.
+
+Talk-check the four Axient tracks - Ref Primary, Ref BU, HH Red, HH Blue -
+once their packs are on, before kickoff. Three of them were digital silence
+for the whole 2026-09-30 runthrough, and a dead feed looks like a quiet one
+until someone listens back.
 
 ### 2. Load and run the ReaScript
 
@@ -393,6 +418,8 @@ lost again.
 
 | | Value | Notes |
 |---|---|---|
-| Band Mix (Pre-Ducker) Dante out | `__________` | Collides with Announcer Mic Dry on 39 ([reaper.md](reaper.md#tracks-to-record)) - resolve on site. 44 is likely free but unverified |
-| Main PA Mix Dante out | `__________` | |
+| Band Group Dante out | `17` | Resolved at the 2026-09-30 runthrough (#145). Was listed as 39, colliding with Announcer Mic Dry, which is now on 65 |
+| Main PA Output Dante out | `50` | Resolved at the 2026-09-30 runthrough (#145) |
+| Hype PA group numbers | `__ / __` | Band Group / everything else, both into Matrix 8. 17/18 or 37/38 - read them off the console and put them on the routing sheet (#145) |
 | Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |
+| Ring-out date | `__________` | Stands empty. The measurement `fader.max_target_db` comes from. The headroom is recorded (a hair over +3 dB) but the date it was measured is not; fill it in so the next person knows how old the number is, and re-ring if the rig has changed since |
