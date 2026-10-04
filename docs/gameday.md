@@ -33,6 +33,9 @@ nobody wrote it down, not that nobody knows.
 | Channels recorded | `30` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
+| Target levels offered | `[3.0, 0.0, -3.0, -6.0]` dB | `fader.presets`, in the order the page lists them. Ordered loudest first so the page reads like a fader; the default is the row below, not the first entry |
+| Default target | `0.0` dB | `fader.default_target_db`. Where every open goes and what Ready's hold level is measured down from. 0 dB suits most games; +3 dB is one tap away on the page for a very loud crowd |
+| Target cap | `+3.0` dB | `fader.max_target_db`. A preset above it refuses to start. From the on-site ring-out, which rang a hair over +3 dB in the current configuration. **Not the console's limit** - see below |
 
 The box's two addresses above are currently DHCP-assigned, not reserved (the
 console's is set on the console itself, not the box's to reserve). Get the
@@ -84,6 +87,19 @@ Post Fader on Dante 78; in Dante Controller, route DVS send 1 to console ch
 **Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
 ships at 0 dB, and raising it costs feedback margin against a band PA that sits
 just behind the mics ([box.md](box.md#reading-the-page)).
+
+The ring-out for the current configuration **rings a hair over +3 dB**, so the
+cap is set to `+3.0`. The cap goes at or below where it rings, never above.
+
+**The console's limit is not the feedback limit.** The DM7 accepts a DCA level
+up to **+10 dB** (`dm7.LEVEL_MAX`), and the box refuses anything above that
+because the protocol cannot carry it. That number says what the console will
+transmit, not what this room will tolerate, and the two are seven dB apart.
+`fader.max_target_db` is the feedback limit and only a ring-out sets it. The
+cap was briefly set to +6 dB from a half-remembered version of the console
+figure - three dB past where this configuration rings, which is spent in the
+quiet section under a PAT, exactly where the margin runs out. If the cap ever
+needs raising, re-ring the room; do not reason from what the console accepts.
 
 **Hold the console firmware.** DM7 V2.00 shipped 2026-09-10 and cannot be
 rolled back below V1.76; whether its OSC behavior matches what this box was
@@ -406,3 +422,4 @@ lost again.
 | Main PA Output Dante out | `50` | Resolved at the 2026-09-30 runthrough (#145) |
 | Hype PA group numbers | `__ / __` | Band Group / everything else, both into Matrix 8. 17/18 or 37/38 - read them off the console and put them on the routing sheet (#145) |
 | Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |
+| Ring-out date | `__________` | Stands empty. The measurement `fader.max_target_db` comes from. The headroom is recorded (a hair over +3 dB) but the date it was measured is not; fill it in so the next person knows how old the number is, and re-ring if the rig has changed since |
