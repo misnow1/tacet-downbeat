@@ -67,6 +67,13 @@
     {
       "action": null,
       "category": "GAME",
+      "key": "safety",
+      "kind": "instant",
+      "label": "Safety"
+    },
+    {
+      "action": null,
+      "category": "GAME",
       "key": "first-down",
       "kind": "instant",
       "label": "First down"
@@ -77,41 +84,6 @@
       "key": "defensive-stop",
       "kind": "instant",
       "label": "Defensive stop"
-    },
-    {
-      "action": null,
-      "category": "GAME",
-      "key": "q1",
-      "kind": "span",
-      "label": "Q1"
-    },
-    {
-      "action": null,
-      "category": "GAME",
-      "key": "q2",
-      "kind": "span",
-      "label": "Q2"
-    },
-    {
-      "action": null,
-      "category": "GAME",
-      "key": "q3",
-      "kind": "span",
-      "label": "Q3"
-    },
-    {
-      "action": null,
-      "category": "GAME",
-      "key": "q4",
-      "kind": "span",
-      "label": "Q4"
-    },
-    {
-      "action": null,
-      "category": "GAME",
-      "key": "halftime",
-      "kind": "span",
-      "label": "Halftime"
     },
     {
       "action": null,
@@ -151,13 +123,6 @@
     {
       "action": null,
       "category": "GAME",
-      "key": "timeout-official",
-      "kind": "span",
-      "label": "Timeout: officials"
-    },
-    {
-      "action": null,
-      "category": "GAME",
       "key": "timeout-injury",
       "kind": "span",
       "label": "Timeout: injury"
@@ -167,7 +132,7 @@
       "category": "GAME",
       "key": "timeout",
       "kind": "span",
-      "label": "Timeout: unspecified"
+      "label": "Official timeout"
     },
     {
       "action": "ready",
@@ -263,9 +228,9 @@
   },
   "open_spans": [
     {
-      "event": "q2",
-      "label": "Q2",
-      "span_id": "q2-4"
+      "event": "timeout-media",
+      "label": "Timeout: media",
+      "span_id": "timeout-media-4"
     }
   ],
   "prompt": null,

@@ -25,6 +25,7 @@ marker	BAND|band-returns-to-stands
 region	BAND|band-in-stands
 marker	GAME|touchdown
 marker	GAME|field-goal
+marker	GAME|safety
 marker	GAME|first-down
 marker	GAME|defensive-stop
 region	GAME|q1
