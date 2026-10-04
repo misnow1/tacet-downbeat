@@ -304,14 +304,14 @@ reconstructs why.
   quiet and comes back; leave it open.
 
 **When something good happens for the home team** - a touchdown, a field goal, a
-first down, a stop on third down - the band will almost always play, but not
+safety, a first down, a stop on third down - the band will almost always play, but not
 instantly. Ride up to a hold level short of target and wait to see:
 
 | Order | Tap |
 |---|---|
 | 1 | **Ready (band likely)**. Rides to a hold level below target and waits - the state goes to `READY` |
 | 2 | The band starts: the ordinary up buttons, **Up on whistle** / **Up on drums**, fast, from wherever the ride got to. The play is called back, under review, or the band does not play: **Score reversed** - the same 2 s fade as Faded out, one tap, right next to it |
-| 3 | The reason, when there is a moment: **Touchdown**, **Field goal**, **First down** or **Defensive stop**, in the MAIN tab, not the fader column |
+| 3 | The reason, when there is a moment: **Touchdown**, **Field goal**, **Safety**, **First down** or **Defensive stop**, in the MAIN tab, not the fader column |
 
 The reason buttons record only. Never hunt for one before moving the fader: the
 log joins them up by time, and a missed downbeat cannot be recovered.
@@ -325,14 +325,27 @@ only. It is not the band's song starting - the fader tap already records that.
 Game 2's logs use an older `touchdown-sequence` key for the song, which is why
 this one is a different key.
 
+**Safety** is the same: tapped when the home team scores one, home team
+only.
+
 **Everything else lives in MAIN and MORE**, beside the fader column, and
-records only, moving nothing. MAIN holds the game clock, scoring and timeouts,
-with no scrolling. MORE holds band movement, the other band, the drumline,
+records only, moving nothing. MAIN holds Scoring first (**Touchdown**,
+**Field goal**, **Safety**, **First down**, **Defensive stop**), then the
+timeouts, then **Halftime exodus** and **Last two minutes**, with no
+scrolling. **Official timeout** is the timeout to tap whenever you cannot
+tell which kind; the typed ones are for when it is obvious. Quarters and
+halftime are no longer tapped: they are recovered afterwards from the
+announcer and HokieVision recordings. Colour and icon say what a button is:
+green with an up arrow means the fader goes up; blue with a down arrow means
+it fades; violet is scoring; the quiet stopwatch buttons are timeouts; grey is
+everything else. Amber and red only ever mean a state on this page, never a
+button. The new MAIN changes muscle memory, so walk it at the pre-game
+runthrough. MORE holds band movement, the other band, the drumline,
 Note, and Arm / Stand down / Start recording / StageMix has it. A tap in MORE
 leaves you on MORE; tap **Main** when you want it back. Buttons marked
 `(start)` are spans: tap once to open the region, again to close it. They read
 `(end)` while open. A span left open by an earlier run whose button has since
-gone appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
+gone (a retired Q1-Q4 or Halftime, say) appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
 button to end it.
 
 **The fader line is what the box commanded, never what the console reports**,

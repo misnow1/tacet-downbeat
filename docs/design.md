@@ -408,6 +408,8 @@ Minimum during-game requirements:
   rather than confirmed. There is no readback, and an iPad move will not
   appear here (§5.3)
 - **Open** and **fade out** buttons
+- State colours (fault red, attention amber, healthy green, fading) are
+  reserved and never mark a button category (#155)
 - Plain-language "why" line — what state the machine is in and what put it there
 - Recording state, which unlike the fader **is** confirmed (§5.9). Commanded and
   confirmed values must be visually distinct; never render them alike
@@ -488,8 +490,8 @@ Initial event vocabulary (extend freely — unknown-unknowns are the point):
 - Free-text note
 
 Plus, standing in for RTD until it exists (§5.4), the game-timing events an
-operator can see from the box: quarter start and end, halftime, and the
-last-two-minutes window.
+operator can see from the box. Quarters and halftime were retired as buttons
+in #155 and are recovered offline (#159); the last-two-minutes window remains.
 
 Two-tap maximum, no typing required for the common cases. Anything requiring
 attention mid-game will not get logged.
@@ -1093,7 +1095,7 @@ Game 3:
   `commanded` entry, or the `stood-down` that ends it when the level was unknown
   and no fade was sent (§5.3).
 - *Why the operator got ready:* the game instants `touchdown`, `field-goal`,
-  `first-down` and `defensive-stop`.
+  `safety`, `first-down` and `defensive-stop`.
 - *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
   `score-reversed` or `out` for an abandon.
 - *Duty and where the band was:* `armed`, `stood-down`, `band-enters-stands`,

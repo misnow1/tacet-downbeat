@@ -269,8 +269,12 @@ Worth checking:
   design.md 5.5 is wrong.
 - With Reaper running and its OSC device on, recording state should go from
   unknown to confirmed. That also double-checks the address map from step 1.
-- Span buttons (quarters, halftime exodus) should highlight while open and
+- Span buttons (timeouts, halftime exodus) should highlight while open and
   clear when tapped again.
+- **MAIN's colours and icons (#155).** On the press-box iPad, in sun and at
+  night, check that the hues and icons are legible, that Faded out reads blue
+  rather than amber, that the column labels sit on one line at 723px, and
+  that the five scoring buttons fit one row.
 - **#19's question copy fits the 88px prompt slot.** The box boots STANDING
   DOWN, where `band-exits-stands` raises nothing - standing down is already
   true, so there is no question to ask. Tap `band-enters-stands` first (the
