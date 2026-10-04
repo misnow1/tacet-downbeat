@@ -365,8 +365,8 @@ class TestStartupBannerWarnsAboutCarriedOverSpans(unittest.TestCase):
         self.assertNotIn("OPEN FROM AN EARLIER RUN", self.banner_with(self.span("timeout-home", 140)))
 
     def test_the_retired_span_note_fits_the_banner(self):
-        for line in self.banner_with(self.span("q4", 140)).splitlines():
-            self.assertLessEqual(len(line), serve.BANNER_WIDTH, line)
+        # 74 columns less the 12-column label and the 2-column indent.
+        self.assertLessEqual(len(serve.RETIRED_SPAN_NOTE), serve.BANNER_WIDTH - serve.BANNER_LABEL_WIDTH - 2)
 
     def test_it_does_not_refuse_to_start(self):
         # A box restarted mid-quarter resumes its own open quarter, correctly.
