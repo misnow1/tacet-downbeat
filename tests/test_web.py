@@ -401,8 +401,8 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         self.assertIn("#strip > #target-level{", body)
         self.assertIn("cursor:default", self.rule(body, "#strip > #target-level"))
         amber = self.rule(body, "#strip > #target-level.off-default")
-        self.assertIn("var(--fade)", amber)
-        self.assertIn("var(--fade-text)", amber)
+        self.assertIn("var(--attention)", amber)
+        self.assertIn("var(--attention-text)", amber)
 
     async def test_the_segments_are_96_by_72(self):
         body = await self.body()
@@ -416,7 +416,7 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         body = await self.body()
         rule = self.rule(body, "#target-control button.selected")
         self.assertNotIn("var(--open)", rule)
-        self.assertNotIn("var(--fade)", rule)
+        self.assertNotIn("var(--attention)", rule)
         self.assertIn("var(--text)", rule)
 
     async def test_the_new_rules_use_no_fixed_or_absolute_positioning(self):
@@ -742,9 +742,12 @@ class TestAnnotation(WebTestCase):
         self.assertEqual(response.status, 200)
 
     async def test_spans_open_and_close(self):
-        opened = await (await self.client.post("/api/span/start", json={"key": "q1"})).json()
+        opened = await (await self.client.post("/api/span/start", json={"key": "last-two-minutes"})).json()
         span_id = opened["span_id"]
-        self.assertIn({"span_id": span_id, "event": "q1", "label": "Q1"}, opened["state"]["open_spans"])
+        self.assertIn(
+            {"span_id": span_id, "event": "last-two-minutes", "label": "Last two minutes"},
+            opened["state"]["open_spans"],
+        )
         closed = await (await self.client.post("/api/span/end", json={"span_id": span_id})).json()
         self.assertEqual(closed["state"]["open_spans"], [])
 
@@ -894,9 +897,14 @@ class TestFailures(WebTestCase):
         state = await (await self.client.get("/api/state")).json()
         self.assertFalse(state["log"]["healthy"])
 
+    async def test_a_retired_span_start_is_a_bad_request(self):
+        response = await self.client.post("/api/span/start", json={"key": "q1"})
+        self.assertEqual(response.status, 400)
+        self.assertIn("retired", (await response.json())["error"])
+
     async def test_a_span_that_was_not_saved_says_so(self):
         self.disk.full = True
-        response = await self.client.post("/api/span/start", json={"key": "q3"})
+        response = await self.client.post("/api/span/start", json={"key": "last-two-minutes"})
         self.assertEqual(response.status, 200)
         self.log.flush()
         state = await (await self.client.get("/api/state")).json()
@@ -1309,7 +1317,7 @@ class TestTapsAreStampedOnTheWayIn(WebTestCase):
     async def test_annotations_and_spans_read_it_too(self):
         body = self.stamp(at=6000.0, offset=1000.5, uncertainty=0.01)
         await self.client.post("/api/annotate", json={"key": "note", "data": {"text": "x"}, **body})
-        started = await (await self.client.post("/api/span/start", json={"key": "q1", **body})).json()
+        started = await (await self.client.post("/api/span/start", json={"key": "last-two-minutes", **body})).json()
         await self.client.post("/api/span/end", json={"span_id": started["span_id"], **body})
         for entry in self.logged():
             with self.subTest(entry.event, phase=entry.phase):

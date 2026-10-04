@@ -57,7 +57,7 @@ class TestVocabulary(unittest.TestCase):
         # The operator's rule (#6): the band almost always plays when something
         # good happens for the home team. Each of those is a reason a ride-in
         # was started, tapped afterwards rather than before the fader moves.
-        for key in ("touchdown", "field-goal", "first-down", "defensive-stop"):
+        for key in ("touchdown", "field-goal", "safety", "first-down", "defensive-stop"):
             with self.subTest(key):
                 self.assertIn(key, ann.EVENTS)
                 self.assertTrue(ann.EVENTS[key].button)
@@ -99,11 +99,68 @@ class TestVocabulary(unittest.TestCase):
         # A key is never deleted: `end_span` looks up the event of a span an
         # older log left open, and old logs must go on deriving markers (#14).
         offered = {event.key for event in ann.BUTTONS}
-        for key in ("touchdown-sequence", "band-returns-to-stands", "band-in-stands"):
+        for key in (
+            "touchdown-sequence",
+            "band-returns-to-stands",
+            "band-in-stands",
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "halftime",
+            "timeout-official",
+        ):
             with self.subTest(key):
                 self.assertIn(key, ann.EVENTS)
                 self.assertNotIn(key, offered)
                 self.assertFalse(ann.EVENTS[key].button)
+
+    def test_quarters_and_halftime_are_retired_but_still_read(self):
+        # #155: reconstructed offline from the announcer and HokieVision
+        # recordings (#159). A span an older log left open is still ended.
+        for key in ("q1", "q2", "q3", "q4", "halftime"):
+            with self.subTest(key):
+                self.assertIn(key, ann.EVENTS)
+                self.assertIs(ann.EVENTS[key].kind, ann.Kind.SPAN)
+                self.assertIs(ann.EVENTS[key].category, ann.Category.GAME)
+                self.assertFalse(ann.EVENTS[key].button)
+                self.assertNotIn(key, {b.key for b in ann.BUTTONS})
+                with self.assertRaises(ann.NotAButtonError):
+                    ann.operator_event(key)
+
+    def test_halftime_exodus_stays_a_button(self):
+        self.assertTrue(ann.EVENTS["halftime-exodus"].button)
+        self.assertIs(ann.EVENTS["halftime-exodus"].kind, ann.Kind.SPAN)
+
+    def test_the_default_timeout_says_official_timeout(self):
+        event = ann.EVENTS["timeout"]
+        self.assertEqual(event.label, "Official timeout")
+        self.assertIs(event.kind, ann.Kind.SPAN)
+        self.assertTrue(event.button)
+
+    def test_the_officials_timeout_is_retired_and_keeps_its_label(self):
+        event = ann.EVENTS["timeout-official"]
+        self.assertEqual(event.label, "Timeout: officials")
+        self.assertFalse(event.button)
+
+    def test_only_one_offered_button_says_official(self):
+        self.assertEqual([b.key for b in ann.BUTTONS if "official" in b.label.lower()], ["timeout"])
+
+    def test_no_two_buttons_share_a_label(self):
+        labels = [b.label.lower() for b in ann.BUTTONS]
+        self.assertEqual(len(labels), len(set(labels)))
+
+    def test_safety_is_a_game_instant_labelled_safety(self):
+        event = ann.EVENTS["safety"]
+        self.assertIs(event.category, ann.Category.GAME)
+        self.assertIs(event.kind, ann.Kind.INSTANT)
+        self.assertTrue(event.button)
+        self.assertEqual(event.label, "Safety")
+        self.assertIsNone(event.action)
+
+    def test_safety_sits_with_the_scoring_keys(self):
+        keys = [e.key for e in ann.VOCABULARY]
+        self.assertEqual(keys.index("safety"), keys.index("field-goal") + 1)
 
     def test_the_two_touchdowns_are_different_events(self):
         # One is the band's song starting (game 2), the other the score itself.

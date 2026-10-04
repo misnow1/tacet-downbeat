@@ -61,6 +61,7 @@ from .annotations import (
     find_open_spans,
     find_prior_anchor,
     find_torn_tail,
+    lookup,
     set_aside_path,
 )
 from .annotations import Entry as AnnotationEntry
@@ -340,6 +341,11 @@ def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
     ]
 
 
+#: Said once under the open spans when any of them has no button (#155): the
+#: page offers its "End" button in MORE, not beside the buttons that start it.
+RETIRED_SPAN_NOTE = "a retired one is ended from OPEN FROM AN EARLIER RUN in MORE"
+
+
 def _open_span_lines(spans: list[AnnotationEntry]) -> list[str]:
     """The block for spans an earlier run left open in this log.
 
@@ -354,6 +360,8 @@ def _open_span_lines(spans: list[AnnotationEntry]) -> list[str]:
     lines.extend(_note(f"{span.label}, started {span.wall}") for span in spans)
     lines.append(_note('their buttons will read "(end)"; if this is a restart mid-game,'))
     lines.append(_note("that is right. If it is a new game, it wants a fresh --log"))
+    if any(not lookup(span.event).button for span in spans):
+        lines.append(_note(RETIRED_SPAN_NOTE))
     return lines
 
 

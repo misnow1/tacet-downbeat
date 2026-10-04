@@ -296,13 +296,13 @@ class TestAFailingDisk(AppTestCase):
         app = self.build()
         self.disk.full = True
         push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"])
-        self.assertIsNotNone(await app.start_span("q3"))
+        self.assertIsNotNone(await app.start_span("last-two-minutes"))
         pushed = await self.pushed(push)
         self.assertEqual(pushed["open_spans"], [])
 
     async def test_an_end_that_was_not_saved_reopens_the_span_to_retap(self):
         app = self.build()
-        span = await app.start_span("q3")
+        span = await app.start_span("last-two-minutes")
         self.log.flush()
         self.disk.full = True
         push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"] and snapshot["open_spans"])
@@ -1302,10 +1302,33 @@ class TestAnnotation(AppTestCase):
         with self.assertRaises(ann.UnknownEventError):
             await app.annotate("no-such-event")
 
+    async def test_an_operator_cannot_start_a_retired_span(self):
+        app = self.build()
+        before = len(self.entries())
+        with self.assertRaises(ann.NotAButtonError):
+            await app.start_span("q1")
+        self.assertEqual(len(self.entries()), before)
+
+    async def test_a_quarter_left_open_by_an_older_log_is_offered_and_ends(self):
+        # #155: the key is never deleted, so a q2 an older log left open is
+        # still ended through the page's OPEN FROM AN EARLIER RUN.
+        older = ann.AnnotationLog(self.root / "game.jsonl")
+        older.open()
+        span = older.start_span("q2")
+        older.close()
+        app = self.build()
+        snapshot = app.snapshot()
+        self.assertIn({"span_id": span, "event": "q2", "label": "Q2"}, snapshot["open_spans"])
+        self.assertNotIn("q2", {button["key"] for button in snapshot["buttons"]})
+        self.assertIsNotNone(await app.end_span(span))
+        self.assertEqual(app.snapshot()["open_spans"], [])
+
     async def test_spans_open_and_close(self):
         app = self.build()
-        span = await app.start_span("q1")
-        self.assertIn({"span_id": span, "event": "q1", "label": "Q1"}, app.snapshot()["open_spans"])
+        span = await app.start_span("last-two-minutes")
+        self.assertIn(
+            {"span_id": span, "event": "last-two-minutes", "label": "Last two minutes"}, app.snapshot()["open_spans"]
+        )
         await app.end_span(span)
         self.assertEqual(app.snapshot()["open_spans"], [])
 
@@ -1421,7 +1444,7 @@ class TestThePlayheadIsStamped(AppTestCase):
     async def test_spans_are_stamped_at_both_ends(self):
         app = self.build()
         app.handle_recorder_packet(osc.encode_message("/time", 10.0))
-        span = await app.start_span("q1")
+        span = await app.start_span("last-two-minutes")
         app.handle_recorder_packet(osc.encode_message("/time", 900.0))
         await app.end_span(span)
         entries = self.entries()
@@ -2724,7 +2747,7 @@ class TestEveryEntryATapProducesCarriesItsTiming(AppTestCase):
     async def test_spans_and_arming_and_recording(self):
         app = self.build()
         await app.arm(tap=self.TAP)
-        span = await app.start_span("q1", tap=self.TAP)
+        span = await app.start_span("last-two-minutes", tap=self.TAP)
         assert span is not None
         await app.end_span(span, tap=self.TAP)
         await app.start_recording(tap=self.TAP)
@@ -2849,7 +2872,7 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
         app = self.build()
         await app.arm(tap=self.STALE)
         self.assertEqual(app.machine.state, state.State.IDLE)
-        self.assertIsNotNone(await app.start_span("q1", tap=self.STALE))
+        self.assertIsNotNone(await app.start_span("last-two-minutes", tap=self.STALE))
         await app.start_recording(tap=self.STALE)
         self.assertIn(ann.ANCHOR_EVENT, self.events())
         self.assertNotIn(tacet_app.STALE_TAP, self.events())
@@ -2960,7 +2983,7 @@ class TestPromptsFromAnnotations(PromptTestCase):
     async def test_a_span_that_asks_nothing_asks_nothing(self):
         app = self.build()
         await app.arm()
-        await app.start_span("q1")
+        await app.start_span("last-two-minutes")
         self.assertIsNone(self.question(app))
         self.assertEqual(self.named(prompts.PROMPT_RAISED), [])
 
