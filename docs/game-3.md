@@ -49,9 +49,11 @@ Checked directly, not recalled:
   reference.
 - **Log:** 929 entries, 16:34 to 22:45. The mirror ran (908 markers in the
   project).
-- **No `recording-started` anchor.** Reaper was restarted during setup to get
-  the right output on the console, and the take was started from Reaper, not
-  the page. Every entry's `project_seconds` still puts the take start at
+- **No `recording-started` anchor.** The page's Start recording button was
+  greyed out before the game, with no reason shown, so the take was started by
+  hand in Reaper (Reaper had been restarted during setup to get the right
+  output on the console). Game 2 hit the same greyed-out button. The missing
+  reason is #163. Every entry's `project_seconds` still puts the take start at
   exactly 17:50:42, so alignment is intact, but `markers.py` cannot regenerate
   the markers without an anchor. The corrections sidecar supplies one (#159);
   the box writing it itself is #158.
