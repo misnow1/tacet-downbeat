@@ -241,7 +241,8 @@
     "known": true,
     "liveness": "live",
     "position": 754.5,
-    "recording": true
+    "recording": true,
+    "refusal": "Reaper is already recording."
   },
   "refusal": null,
   "stale_tap": null,

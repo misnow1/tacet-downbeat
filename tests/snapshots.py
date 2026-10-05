@@ -45,6 +45,9 @@ CLOCK_START = 5000.0
 #: A playhead that renders as a recognisable timecode, 0:12:34.500, and that
 #: float32 - which OSC carries - holds exactly.
 POSITION = 754.5
+#: A meter address from the bench capture (#163): Reaper streams these whenever
+#: its audio device runs, parked or rolling.
+METER = "/master/vu"
 #: Long enough that no Reaper feedback counts as current any more.
 SILENCE = reaper.DEFAULT_FEEDBACK_TIMEOUT * 30
 
@@ -120,6 +123,15 @@ async def open_recording(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+async def parked_unreported(root: Path) -> dict[str, Any]:
+    """Reaper open and parked with its audio device running: meters stream and
+    nothing is said about the transport, which Reaper announces only when it
+    changes. The normal pregame page after #163 - the button is live."""
+    box = _build(root, console=_Sender(), machine=_known())
+    box.reaper_says(METER, 0.0)
+    return box.app.snapshot()
+
+
 async def releasing(root: Path) -> dict[str, Any]:
     """The push that follows FADE OUT, before the ramp has taken a step."""
     box = _build(root, console=_Sender(), machine=_known())
@@ -177,6 +189,7 @@ async def faults(root: Path) -> dict[str, Any]:
 STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
+    "parked-unreported": parked_unreported,
     "releasing": releasing,
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,

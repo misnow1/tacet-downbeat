@@ -235,9 +235,10 @@
     "known": false,
     "liveness": "lost",
     "position": null,
-    "recording": true
+    "recording": true,
+    "refusal": "Reaper has stopped answering: it says it is recording but its playhead is not moving. Check Reaper, and start the recording there if it is not rolling."
   },
-  "refusal": "Reaper has stopped answering. Start the recording in Reaper.",
+  "refusal": "Reaper has stopped answering: it says it is recording but its playhead is not moving. Check Reaper, and start the recording there if it is not rolling.",
   "stale_tap": null,
   "state": "open",
   "target": {

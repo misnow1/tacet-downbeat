@@ -620,6 +620,11 @@ font-size:13px}
 /* Recording is a status check worth glancing at regardless of which tab is
    open, and it used to crowd MORE's last row of buttons when it lived there. */
 #recording-status{margin:0 16px 12px}
+/* Why the record button is grey (#163). It wraps: the reason has to be
+   readable without a tap, since a disabled button cannot be tapped. The fader
+   column is a flex sibling and never moves; the line takes the same weight
+   #rec-pos already does. */
+#rec-why{color:var(--dim);font-size:13px;margin-top:4px}
 .tabs{display:flex;gap:8px;padding:0 16px}
 .tab-btn{flex:1;padding:10px;border-radius:10px 10px 0 0;background:var(--panel);
 border:1px solid var(--line);border-bottom:none;color:var(--dim);font-weight:700}
@@ -852,7 +857,8 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </div>
 <div class="panel" id="recording-status"><div class="label">Recording</div>
   <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
-  <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div></div>
+  <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div>
+  <div id="rec-why"></div></div>
 <div class="tabs">
   <button id="tab-btn-main" class="tab-btn on">Main</button>
   <button id="tab-btn-more" class="tab-btn">More</button>

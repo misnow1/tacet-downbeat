@@ -1020,9 +1020,22 @@ class App:
     @property
     def record_refusal(self) -> str | None:
         """Why the record button will not fire, or None if it will."""
+        return self._record_refusal_at(self._monotonic())
+
+    def _record_refusal_at(self, now: float) -> str | None:
+        """`record_refusal` on a clock the caller supplies, so a snapshot reads
+        one `now` for its liveness, its refusal and its stamp (#163)."""
         if self._recorder is None:
             return None
-        return record_refusal(self._recorder.state, self._monotonic(), request=self._recorder.record_request)
+        return record_refusal(
+            self._recorder.state,
+            now,
+            request=self._recorder.record_request,
+            # A log that already held a recording when it was opened is the one
+            # sign that this box may have been restarted mid-take, when Reaper
+            # has not yet said whether it is recording (D4, #163).
+            prior_recording=self._log.prior_anchor is not None,
+        )
 
     def handle_recorder_packet(self, packet: bytes) -> None:
         if self._recorder is not None:
@@ -1036,13 +1049,15 @@ class App:
         # this snapshot however it was asked for.
         self._log.settle()
         transport = self._recorder.state if self._recorder is not None else None
-        liveness = transport.liveness(self._monotonic()) if transport is not None else Liveness.UNKNOWN
+        now = self._monotonic()
+        liveness = transport.liveness(now) if transport is not None else Liveness.UNKNOWN
+        record_refused = self._record_refusal_at(now)
         # QUIET is silence from a Reaper that told us it had stopped, which is
         # all Reaper ever does when parked. Believing it is safe: that reading
         # can only under-claim, never show a dead recorder as rolling.
         believed = liveness in (Liveness.LIVE, Liveness.QUIET)
         refusal = self._last_refusal
-        if self._refused_recording and self.record_refusal is None:
+        if self._refused_recording and record_refused is None:
             refusal = None
         # Straight from the console client, so a ride-in points at where it is
         # going exactly as a close does. A settled fader has nothing to point
@@ -1052,7 +1067,7 @@ class App:
             # When this was taken, on the box's clock. The page keeps the newest
             # it has seen: a POST response held up on the wifi used to paint an
             # older state over the pushes that overtook it (#11).
-            "at": self._monotonic(),
+            "at": now,
             "state": self.machine.state.value,
             "why": state.describe(self.machine),
             "refusal": refusal,
@@ -1122,7 +1137,11 @@ class App:
                 "liveness": liveness.value,
                 # False once Reaper is known to be rolling: /record is a toggle
                 # and a second press would stop it (design.md 5.9).
-                "can_start": self.record_refusal is None,
+                "can_start": record_refused is None,
+                # Why it is false, which the page shows beside the grey button
+                # (#163). Fixed text that changes only when the reason does, so
+                # it does not churn the snapshot coalescing (#147).
+                "refusal": record_refused,
                 "healthy": self._recorder.healthy if self._recorder is not None else True,
             },
             "buttons": [

@@ -10,9 +10,14 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets
+from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
 from tests.disk import Disk
 from tests.test_annotations import Gate, Killed
+
+#: A meter address from the bench capture: Reaper streams these whenever its
+#: audio device runs, parked or rolling (#163). It is what a parked Reaper that
+#: is open and running sounds like to the box.
+METER = "/master/vu"
 
 
 class FakeSender:
@@ -175,6 +180,10 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             stale_tap_seconds=stale_tap_seconds,
             machine=state.Machine(level_known=level_known),
         )
+
+    def reaper_parked(self, app):
+        """Reaper open with its audio device running, transport parked."""
+        app.handle_recorder_packet(osc.encode_message(METER, 0.0))
 
     def expect_push(self, app, condition):
         """A future for the first push to satisfy `condition`.
@@ -398,6 +407,7 @@ class TestARecordSendThatFails(AppTestCase):
 
     async def test_it_is_refused_visibly_and_logs_no_start(self):
         app = self.build(reaper_sender=FailingSender())
+        self.reaper_parked(app)
         await app.start_recording()
         snapshot = app.snapshot()
         self.assertIn("console unreachable", snapshot["refusal"])
@@ -406,11 +416,13 @@ class TestARecordSendThatFails(AppTestCase):
     async def test_it_can_be_tried_again(self):
         # Nothing reached Reaper, so there is nothing a second tap could stop.
         app = self.build(reaper_sender=FailingSender())
+        self.reaper_parked(app)
         await app.start_recording()
         self.assertTrue(app.snapshot()["recording"]["can_start"])
 
     async def test_it_notifies(self):
         app = self.build(reaper_sender=FailingSender())
+        self.reaper_parked(app)
         pushed = []
         app.on_change(lambda: pushed.append(app.snapshot()))
         await app.start_recording()
@@ -1007,6 +1019,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_tapping_start_twice_never_stops_the_recording(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
@@ -1015,6 +1028,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_the_second_tap_says_why_it_did_nothing(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
@@ -1022,18 +1036,31 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_a_refused_tap_does_not_log_a_second_start(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
         self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
 
-    async def test_a_silent_reaper_can_still_be_started(self):
-        # The ordinary pre-game case: Reaper parked, and silent because it is
-        # parked. Refusing here would make the button useless.
+    async def test_a_parked_reaper_streaming_meters_can_be_started(self):
+        # The ordinary pre-game case on this rig: Reaper open and parked, with
+        # its audio device running, so it streams meters and says nothing about
+        # the transport (#163).
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording()
+        self.assertEqual(self.record_packets().count("/record"), 1)
+        self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_a_silent_reaper_is_not_sent_a_start(self):
+        # Reaper closed: a datagram to a port nobody is bound to does not raise,
+        # so a send would write an anchor for a take that never existed.
         app = self.build()
         await app.start_recording()
-        self.assertIn("/record", self.record_packets())
-        self.assertIsNone(app.snapshot()["refusal"])
+        self.assertNotIn("/record", self.record_packets())
+        self.assertNotIn(tacet_app.RECORDING_STARTED, self.keys())
+        self.assertEqual(app.snapshot()["recording"]["refusal"], reaper.RECORD_REFUSED_SILENT)
 
     async def test_a_reaper_that_reported_a_stop_can_be_started(self):
         app = self.build()
@@ -1064,6 +1091,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
         # that has since stopped - the same contradiction as a confirmed tag on
         # an unknown value.
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
@@ -1073,6 +1101,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_a_successful_start_clears_an_earlier_refusal(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
@@ -1082,6 +1111,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_the_snapshot_tells_the_page_when_to_disable_the_button(self):
         app = self.build()
+        self.reaper_parked(app)
         self.assertTrue(app.snapshot()["recording"]["can_start"])
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         self.assertFalse(app.snapshot()["recording"]["can_start"])
@@ -1090,10 +1120,11 @@ class TestRecordIsNotAStopButton(AppTestCase):
         # #28. The existing double-tap test answers /record 1 between the taps;
         # over stalled wifi both taps arrive before Reaper has said anything.
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         await app.start_recording()
         self.assertEqual(self.record_packets().count("/record"), 1)
-        self.assertIn("not confirmed", app.snapshot()["refusal"])
+        self.assertEqual(app.snapshot()["refusal"], reaper.RECORD_REFUSED_UNANSWERED)
 
     async def test_two_taps_on_a_live_rig_that_is_not_recording_send_one_record(self):
         # The press-box rig: never silent, and after the workaround take it has
@@ -1107,6 +1138,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_the_button_is_disabled_while_the_start_is_unanswered(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         self.assertFalse(app.snapshot()["recording"]["can_start"])
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
@@ -1114,12 +1146,123 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_only_one_recording_started_entry_for_a_double_tap(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         await app.start_recording()
         self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
 
+    async def test_the_snapshot_carries_the_refusal_record_refusal_returns(self):
+        """The page shows `recording.refusal` beside the grey button, so it must
+        be exactly what the box would refuse with, read on one clock (#163)."""
+        clock = [1000.0]
+
+        def fresh(app):
+            pass
+
+        def meters(app):
+            self.reaper_parked(app)
+
+        def clocked(app):
+            self.reaper_parked(app)
+            app.handle_recorder_packet(osc.encode_message("/time", 4.5))
+
+        def rolling(app):
+            app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+
+        def lost(app):
+            rolling(app)
+            clock[0] += 60.0
+
+        for label, setup, prior in (
+            ("fresh", fresh, False),
+            ("meters", meters, False),
+            ("meters and a clock", clocked, False),
+            ("recording", rolling, False),
+            ("lost", lost, False),
+            ("prior recording and meters", meters, True),
+        ):
+            with self.subTest(label):
+                clock[0] = 1000.0
+                if prior:
+                    with ann.AnnotationLog(self.root / "game.jsonl") as seeded:
+                        seeded.record(tacet_app.RECORDING_STARTED)
+                app = self.build(monotonic=lambda: clock[0])
+                setup(app)
+                recording = app.snapshot()["recording"]
+                self.assertEqual(recording["refusal"], app.record_refusal)
+                self.assertEqual(recording["can_start"], recording["refusal"] is None)
+
+    async def test_the_snapshot_carries_the_refusal_when_latched(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.reaper_parked(app)
+        await app.start_recording()
+        recording = app.snapshot()["recording"]
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_UNANSWERED)
+        self.assertEqual(recording["refusal"], app.record_refusal)
+        self.assertFalse(recording["can_start"])
+
+    async def test_a_box_restarted_mid_take_sends_no_record(self):
+        # The log already holds the take's anchor; Reaper is rolling and, being
+        # told nothing new, announces nothing. Meters and the clock stream.
+        with ann.AnnotationLog(self.root / "game.jsonl") as seeded:
+            seeded.record(tacet_app.RECORDING_STARTED)
+        app = self.build()
+        for tick in range(5):
+            self.reaper_parked(app)
+            app.handle_recorder_packet(osc.encode_message("/time", 10.0 + tick))
+        await app.start_recording()
+        await app.start_recording()
+        self.assertNotIn("/record", self.record_packets())
+
+    async def test_a_log_that_already_holds_a_recording_refuses_an_unknown_record_state(self):
+        with ann.AnnotationLog(self.root / "game.jsonl") as seeded:
+            seeded.record(tacet_app.RECORDING_STARTED)
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording()
+        self.assertNotIn("/record", self.record_packets())
+        self.assertEqual(app.snapshot()["recording"]["refusal"], reaper.RECORD_REFUSED_PRIOR)
+
+    async def test_a_prior_recording_does_not_refuse_once_reaper_has_reported(self):
+        with ann.AnnotationLog(self.root / "game.jsonl") as seeded:
+            seeded.record(tacet_app.RECORDING_STARTED)
+        app = self.build()
+        self.reaper_parked(app)
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        await app.start_recording()
+        self.assertEqual(self.record_packets().count("/record"), 1)
+
+    async def test_a_relaunched_reaper_is_not_shown_rolling(self):
+        # Quit mid-take and relaunched parked: meters flow again but the last
+        # transport word is a stale "recording" (#163).
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        app.handle_recorder_packet(osc.encode_message("/play", 1.0))
+        app.handle_recorder_packet(osc.encode_message("/time", 5.0))
+        clock[0] += 30.0
+        self.reaper_parked(app)
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["known"])
+        self.assertEqual(recording["liveness"], "lost")
+        self.assertIn("stopped answering", recording["refusal"])
+
+    async def test_a_held_record_refusal_does_not_churn_the_snapshot(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.reaper_parked(app)
+        await app.start_recording()
+        before = app.snapshot()
+        clock[0] += 5.0
+        self.reaper_parked(app)
+        after = app.snapshot()
+        self.assertEqual(before["recording"]["refusal"], after["recording"]["refusal"])
+        self.assertFalse(web.should_broadcast(before, after, elapsed=5.0))
+
     async def test_there_is_still_no_way_to_ask_reaper_to_stop(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
@@ -1353,6 +1496,7 @@ class TestAnnotation(AppTestCase):
 class TestRecorder(AppTestCase):
     async def test_start_recording_commands_reaper_and_logs_the_anchor(self):
         app = self.build()
+        self.reaper_parked(app)
         await app.start_recording()
         self.assertEqual(self.reaper_sender.addresses(), [reaper.DEFAULT_ADDRESSES.record])
         self.assertIn("recording-started", self.keys())
@@ -2750,6 +2894,7 @@ class TestEveryEntryATapProducesCarriesItsTiming(AppTestCase):
         span = await app.start_span("last-two-minutes", tap=self.TAP)
         assert span is not None
         await app.end_span(span, tap=self.TAP)
+        self.reaper_parked(app)
         await app.start_recording(tap=self.TAP)
         for entry in self.entries():
             with self.subTest(entry.event, phase=entry.phase):
@@ -2873,6 +3018,7 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
         await app.arm(tap=self.STALE)
         self.assertEqual(app.machine.state, state.State.IDLE)
         self.assertIsNotNone(await app.start_span("last-two-minutes", tap=self.STALE))
+        self.reaper_parked(app)
         await app.start_recording(tap=self.STALE)
         self.assertIn(ann.ANCHOR_EVENT, self.events())
         self.assertNotIn(tacet_app.STALE_TAP, self.events())
