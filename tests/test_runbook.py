@@ -233,9 +233,18 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(getattr(reaper, name), self.troubleshooting)
 
+    def test_the_page_tests_quote_every_record_refusal(self) -> None:
+        # The JS tests carry their own copies of the texts, which would drift.
+        source = (REPO_ROOT / "tests" / "test_app_js.mjs").read_text(encoding="utf-8")
+        for name in dir(reaper):
+            if not name.startswith("RECORD_REFUSED_"):
+                continue
+            with self.subTest(name):
+                self.assertIn(getattr(reaper, name), source.replace('"\n    + "', ""))
+
     def test_every_record_refusal_is_one_this_test_knows_about(self) -> None:
         names = {name for name in dir(reaper) if name.startswith("RECORD_REFUSED_")}
-        self.assertEqual(len(names), 6)
+        self.assertEqual(len(names), 7)
 
     def test_the_runbook_quotes_the_stopped_writer(self) -> None:
         # Quoted up to the semicolon; the page puts "Log not saving: " before it.

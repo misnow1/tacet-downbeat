@@ -15,11 +15,8 @@ from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, osc, prompts, reaper, state, web
 from tests.disk import Disk
+from tests.reaper_stream import listened_parked, meter_packet
 from tests.snapshots import _build, _known, _Sender
-
-#: A meter address from the bench capture: what an open, parked Reaper sounds
-#: like to the box (#163).
-METER = "/master/vu"
 
 
 class FakeSender:
@@ -96,6 +93,12 @@ class TestPage(WebTestCase):
         panel = body.split('id="recording-status"', 1)[1].split('<div class="tabs">', 1)[0]
         self.assertIn('id="rec-why"', panel)
         self.assertLess(panel.index('id="rec-pos"'), panel.index('id="rec-why"'))
+
+    async def test_the_record_reason_reserves_two_lines(self):
+        # An empty, one-line or two-line reason must not move MAIN's tabs on the
+        # iPad, so the slot is always two lines tall (#163).
+        body = await (await self.client.get("/")).text()
+        self.assertIn("#rec-why{color:var(--dim);font-size:13px;margin-top:4px;line-height:17px;min-height:34px}", body)
 
     async def test_the_handoff_confirmation_has_left_the_top_slot(self):
         # #108: the #prompt slot is above the tabs, so anything before the
@@ -503,7 +506,8 @@ class TestCommands(WebTestCase):
         self.assertEqual(payload["state"], "standing-down")
 
     async def test_record(self):
-        self.tacet.handle_recorder_packet(osc.encode_message(METER, 0.0))
+        listened_parked(self.tacet._recorder, time.monotonic())
+        self.tacet.handle_recorder_packet(meter_packet())
         response = await self.client.post("/api/record")
         self.assertEqual(response.status, 200)
         self.assertIn("recording-started", self.entries())
@@ -926,7 +930,8 @@ class TestFailures(WebTestCase):
         self.assertEqual(state["open_spans"], [])
 
     async def test_a_record_send_that_fails_is_a_refusal_not_a_500(self):
-        self.tacet.handle_recorder_packet(osc.encode_message(METER, 0.0))
+        listened_parked(self.tacet._recorder, time.monotonic())
+        self.tacet.handle_recorder_packet(meter_packet())
         response = await self.client.post("/api/record")
         self.assertEqual(response.status, 200)
         payload = await response.json()

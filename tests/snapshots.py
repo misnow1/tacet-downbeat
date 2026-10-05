@@ -33,6 +33,7 @@ from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
 from tests.disk import Disk
+from tests.reaper_stream import METER
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PREFIX = "snapshot-"
@@ -45,9 +46,6 @@ CLOCK_START = 5000.0
 #: A playhead that renders as a recognisable timecode, 0:12:34.500, and that
 #: float32 - which OSC carries - holds exactly.
 POSITION = 754.5
-#: A meter address from the bench capture (#163): Reaper streams these whenever
-#: its audio device runs, parked or rolling.
-METER = "/master/vu"
 #: Long enough that no Reaper feedback counts as current any more.
 SILENCE = reaper.DEFAULT_FEEDBACK_TIMEOUT * 30
 
@@ -128,6 +126,11 @@ async def parked_unreported(root: Path) -> dict[str, Any]:
     nothing is said about the transport, which Reaper announces only when it
     changes. The normal pregame page after #163 - the button is live."""
     box = _build(root, console=_Sender(), machine=_known())
+    # Listened to for a full timeout: the box will not call a transport parked
+    # before that, so the button is live only now.
+    for _ in range(2):
+        box.reaper_says(METER, 0.0)
+        box.clock[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT / 2
     box.reaper_says(METER, 0.0)
     return box.app.snapshot()
 

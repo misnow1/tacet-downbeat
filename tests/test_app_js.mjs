@@ -367,6 +367,8 @@ const RECORD_REASONS = [
     + "Check Reaper, and start the recording there if it is not.",
   "This log already holds a recording, and Reaper has not said whether it is still rolling. "
     + "Check Reaper, and start it there if it is not.",
+  "Listening to Reaper: not heard long enough yet to tell a parked transport from a moving one. "
+    + "This clears in a couple of seconds.",
 ];
 
 for (const name of Object.keys(SNAPSHOTS)) {

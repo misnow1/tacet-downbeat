@@ -304,7 +304,8 @@ on, measured on the press box rig on 2026-10-04 (#163):
 So any packet means Reaper is there, `/time` means it is moving, and a parked
 Reaper with its device running can only be started by `/record`. `/record` is a
 toggle, so the box sends it only on that positive evidence: an open Reaper, a
-quiet clock, not reported recording, its own last start answered. Anything else
+quiet clock (heard for a full two seconds with no `/time`, because the first
+packet of a rolling Reaper is often a meter), not reported recording, its own last start answered. Anything else
 greys the button and says why. A start done by hand in Reaper is recoverable; a
 stop of the game's take is not.
 
@@ -315,7 +316,7 @@ stock `Default.ReaperOSC` has. Prove it once per machine:
 python -m tacet.verify_reaper --listen 20
 ```
 
-It should print `FOUND position /time`. If `/time` is missing from the pattern,
+It should print a `FOUND` line for `position`, at `/time`. If `/time` is missing from the pattern,
 the first recording reads `LINK LOST` within a few seconds of rolling: fix the
 pattern, do not carry on.
 

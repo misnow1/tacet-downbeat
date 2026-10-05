@@ -624,7 +624,7 @@ font-size:13px}
    readable without a tap, since a disabled button cannot be tapped. The fader
    column is a flex sibling and never moves; the line takes the same weight
    #rec-pos already does. */
-#rec-why{color:var(--dim);font-size:13px;margin-top:4px}
+#rec-why{color:var(--dim);font-size:13px;margin-top:4px;line-height:17px;min-height:34px}
 .tabs{display:flex;gap:8px;padding:0 16px}
 .tab-btn{flex:1;padding:10px;border-radius:10px 10px 0 0;background:var(--panel);
 border:1px solid var(--line);border-bottom:none;color:var(--dim);font-weight:700}

@@ -12,12 +12,8 @@ from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
 from tests.disk import Disk
+from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream
 from tests.test_annotations import Gate, Killed
-
-#: A meter address from the bench capture: Reaper streams these whenever its
-#: audio device runs, parked or rolling (#163). It is what a parked Reaper that
-#: is open and running sounds like to the box.
-METER = "/master/vu"
 
 
 class FakeSender:
@@ -170,6 +166,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             **timing,
         )
         clock = monotonic if monotonic is not None else time.monotonic
+        self._clock = clock
         self.reaper = reaper.ReaperClient(sender=reaper_sender or self.reaper_sender, monotonic=clock)
         return tacet_app.App(
             console=self.console,
@@ -182,8 +179,11 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     def reaper_parked(self, app):
-        """Reaper open with its audio device running, transport parked."""
-        app.handle_recorder_packet(osc.encode_message(METER, 0.0))
+        """Reaper open with its audio device running, transport parked, and
+        listened to for a full timeout: the box will not call a transport
+        parked before that (#163)."""
+        listened_parked(self.reaper, self._clock())
+        app.handle_recorder_packet(meter_packet())
 
     def expect_push(self, app, condition):
         """A future for the first push to satisfy `condition`.
@@ -1214,6 +1214,19 @@ class TestRecordIsNotAStopButton(AppTestCase):
         await app.start_recording()
         await app.start_recording()
         self.assertNotIn("/record", self.record_packets())
+
+    async def test_a_box_started_mid_take_on_a_fresh_log_sends_no_record_at_any_prefix(self):
+        # No prior anchor, so only what the box has heard can protect the take.
+        # The stream is fed one packet at a time, meter first, with a tap after
+        # each: a `/record` here stops the game's recording.
+        clock = [100.0]
+        app = self.build(monotonic=lambda: clock[0])
+        for at, packet in mid_take_stream(0.0):
+            clock[0] = at
+            app.handle_recorder_packet(packet)
+            await app.start_recording()
+        self.assertNotIn("/record", self.record_packets())
+        self.assertNotIn(tacet_app.RECORDING_STARTED, self.keys())
 
     async def test_a_log_that_already_holds_a_recording_refuses_an_unknown_record_state(self):
         with ann.AnnotationLog(self.root / "game.jsonl") as seeded:

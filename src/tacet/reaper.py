@@ -69,6 +69,12 @@ RECORD_REFUSED_SILENT = (
 )
 #: Reaper has said it is recording.
 RECORD_REFUSED_ROLLING = "Reaper is already recording."
+#: The box has not yet listened long enough to tell a parked transport from a
+#: moving one (#163 review).
+RECORD_REFUSED_LISTENING = (
+    "Listening to Reaper: not heard long enough yet to tell a parked transport from a moving one. "
+    "This clears in a couple of seconds."
+)
 #: The transport is moving and Reaper has not said whether it is recording.
 RECORD_REFUSED_MOVING = (
     "Reaper's transport is moving but it has not said whether it is recording. "
@@ -150,6 +156,10 @@ class TransportState:
     #: roll, so this is what keeps a recording that has just started from
     #: reading LOST in the moment before its playhead arrives.
     transport_at: float | None = None
+    #: The time the current unbroken run of feedback began: the first packet
+    #: ever, or the first after a silence longer than the timeout. How long the
+    #: box has been listening, which is what makes a missing `/time` evidence.
+    link_since: float | None = None
     #: How many `/record` reports have arrived, whichever way they went. A
     #: count rather than a time, so "answered after the send" cannot be fooled
     #: by two readings of a coarse clock that happen to be equal.
@@ -165,6 +175,20 @@ class TransportState:
         if self.last_packet is None:
             return False
         return (now - self.last_packet) <= timeout
+
+    def clock_absent(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
+        """Positive evidence that the transport is parked.
+
+        Reaper has been heard from continuously for at least a full timeout and
+        has sent no `/time` within it. Less than that proves nothing: the first
+        packet of a rolling Reaper is often a meter that leads its first `/time`.
+        """
+        return (
+            self.link_since is not None
+            and self.is_fresh(now, timeout=timeout)
+            and (now - self.link_since) >= timeout
+            and not self.clock_running(now, timeout=timeout)
+        )
 
     def clock_running(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
         """Whether `/time` has arrived within the timeout: the transport is moving.
@@ -250,6 +274,7 @@ def apply_feedback(
     *,
     now: float,
     addresses: AddressMap = DEFAULT_ADDRESSES,
+    timeout: float = DEFAULT_FEEDBACK_TIMEOUT,
 ) -> TransportState:
     """Fold one received packet into the transport state.
 
@@ -269,7 +294,9 @@ def apply_feedback(
     messages: list[osc.Message] = []
     _collect(decoded, messages)
 
-    state = replace(state, last_packet=now)
+    # A run of feedback is unbroken until a silence longer than the timeout.
+    link_since = now if state.last_packet is None or (now - state.last_packet) > timeout else state.link_since
+    state = replace(state, last_packet=now, link_since=link_since)
     for message in messages:
         if not message.args:
             continue
@@ -345,6 +372,11 @@ def record_refusal(
     already holds a recording, with the record state unknown, is refused as
     well - the one case where the box may have been restarted mid-take.
 
+    Absence of `/time` counts as evidence only after a full timeout of unbroken
+    listening, because the first packet of a rolling Reaper is often a meter
+    (#163 review). Until then, and again after any feedback gap longer than the
+    timeout, a record state that is unknown is refused as still listening.
+
     Nor will it send while its own last `/record` is unanswered (#28). Two taps
     that both leave before Reaper's confirmation comes back are a start and a
     stop, and stalled wifi delivers exactly that. The latch deliberately has no
@@ -364,6 +396,8 @@ def record_refusal(
     if state.recording is None:
         if state.clock_running(now, timeout=timeout):
             return RECORD_REFUSED_MOVING
+        if not state.clock_absent(now, timeout=timeout):
+            return RECORD_REFUSED_LISTENING
         if prior_recording:
             return RECORD_REFUSED_PRIOR
     return None

@@ -2,10 +2,14 @@ import unittest
 
 from tacet import osc, reaper
 from tacet.net import TransportError
-
-#: A meter address from the bench capture: Reaper streams these whenever its
-#: audio device runs, parked or rolling (#163).
-METER = "/master/vu"
+from tests.reaper_stream import (
+    METER,
+    MIX_SECONDS,
+    ROLLING_MIX,
+    TICKS_PER_SECOND,
+    mid_take_stream,
+    rolling_tick,
+)
 
 
 class FakeSender:
@@ -195,6 +199,20 @@ class TestFeedback(unittest.TestCase):
         state = feed(state, "/time", 1.0, now=8.0)
         self.assertIsNone(state.transport_at)
 
+    def test_link_since_starts_at_the_first_packet_and_restarts_after_silence(self):
+        state = reaper.TransportState()
+        self.assertIsNone(state.link_since)
+        state = feed(state, METER, 0.0, now=100.0)
+        self.assertEqual(state.link_since, 100.0)
+        state = feed(state, METER, 0.0, now=101.5)
+        state = feed(state, METER, 0.0, now=102.0)
+        self.assertEqual(state.link_since, 100.0)
+        state = feed(state, METER, 0.0, now=104.5)
+        self.assertEqual(state.link_since, 104.5)
+        # A malformed packet is not feedback and starts nothing.
+        after = reaper.apply_feedback(b"\x01\x02not-osc", state, now=120.0)
+        self.assertEqual(after.link_since, 104.5)
+
     def test_a_packet_stamps_liveness_even_when_unrecognised(self):
         # Any valid packet proves the link is up, which is what freshness means.
         state = feed(reaper.TransportState(), "/something/unmapped", 1.0, now=5.0)
@@ -368,7 +386,7 @@ class TestRecordLatch(unittest.TestCase):
         self.assertEqual(refusal, reaper.RECORD_REFUSED_UNANSWERED)
 
     def test_no_request_means_no_latch(self):
-        state = feed(reaper.TransportState(), METER, 0.0, now=10.0)
+        state = meter_stream(reaper.TransportState(), 8.0, 10.0)
         self.assertIsNone(reaper.record_refusal(state, 10.0, request=None))
 
 
@@ -383,9 +401,20 @@ def meter_stream(state, start, stop, *, step=0.1):
 class TestMotionIsTheClock(unittest.TestCase):
     """Motion is judged on `/time` alone; meters flow parked or rolling (#163)."""
 
-    def test_meters_alone_with_record_state_unknown_allow_a_start(self):
-        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
-        self.assertIsNone(reaper.record_refusal(state, 100.5))
+    def test_meters_for_less_than_the_timeout_refuse_as_listening(self):
+        state = meter_stream(reaper.TransportState(), 100.0, 101.5)
+        self.assertEqual(reaper.record_refusal(state, 101.5), reaper.RECORD_REFUSED_LISTENING)
+
+    def test_meters_for_the_whole_timeout_with_no_clock_permit_a_start(self):
+        # The Reaper-first order: about two seconds of LISTENING, then a start.
+        state = reaper.TransportState()
+        now = 100.0
+        while now < 100.0 + reaper.DEFAULT_FEEDBACK_TIMEOUT:
+            state = feed(state, METER, 0.0, now=now)
+            self.assertEqual(reaper.record_refusal(state, now), reaper.RECORD_REFUSED_LISTENING)
+            now += 0.1
+        state = feed(state, METER, 0.0, now=102.0)
+        self.assertIsNone(reaper.record_refusal(state, 102.0))
 
     def test_a_streaming_clock_with_record_state_unknown_refuses(self):
         state = feed(reaper.TransportState(), "/time", 3.0, now=100.0)
@@ -427,20 +456,13 @@ class TestPresence(unittest.TestCase):
         self.assertEqual(reaper.record_refusal(state, 103.0), reaper.RECORD_REFUSED_SILENT)
 
     def test_a_reaper_that_quit_is_not_sent_a_start(self):
-        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        state = meter_stream(reaper.TransportState(), 98.0, 100.0)
         self.assertIsNone(reaper.record_refusal(state, 100.5))
         self.assertIsNotNone(reaper.record_refusal(state, 103.0))
 
 
-#: The packets of a rolling Reaper on the bench, one tick's worth (#163).
-ROLLING_MIX = (METER, "/track/1/vu", "/time", "/time/str", "/beat/str", "/samples", "/frames/str")
-TICKS_PER_SECOND = 12
-MIX_SECONDS = 5
-
-
-def rolling_tick(address: str, tick: int) -> bytes:
-    value: float | str = "0:00.0" if address.endswith("/str") else float(tick)
-    return osc.encode_message(address, value)
+#: How finely the instants between two packets are checked.
+INSTANT_STEP = 0.01
 
 
 class TestNeverSentBlind(unittest.TestCase):
@@ -485,15 +507,45 @@ class TestNeverSentBlind(unittest.TestCase):
                                 self.assertIsNot(state.recording, True, label)
                                 if state.recording is None:
                                     self.assertFalse(state.clock_running(end), label)
+                                    self.assertTrue(state.clock_absent(end), label)
                                     self.assertFalse(prior, label)
                                 self.assertIs(state.liveness(end), reaper.Liveness.LIVE, label)
                                 self.assertIsNone(request, label)
         self.assertEqual(checked, 3 * 3 * 3 * 2 * 2 * 2)
 
-    def test_a_box_started_mid_take_never_sends_record(self):
-        # A fresh box, a Reaper already rolling: no `/record` or `/play` report
-        # was ever announced to it, only the steady stream. One bundle per tick,
-        # so the clock arrives with the meters it is sent beside.
+    def test_no_prefix_of_a_mid_take_stream_permits_a_send(self):
+        """The irreversible failure: `/record` at a rolling Reaper stops the take.
+
+        A box started mid-take, on a fresh log, has been told nothing about the
+        transport, and the first packet of a rolling Reaper is often a meter
+        that leads its first `/time`. No prefix of the stream - after any
+        packet, or at any instant between packets - may permit a send.
+        """
+        for lead in (0.0, 0.010, 0.040, 0.080, 1.5):
+            with self.subTest(lead=lead):
+                state = reaper.TransportState()
+                events = list(mid_take_stream(lead))
+                for index, (at, packet) in enumerate(events):
+                    state = reaper.apply_feedback(packet, state, now=at)
+                    following = events[index + 1][0] if index + 1 < len(events) else at
+                    instant = at
+                    while instant <= following:
+                        self.assertIsNotNone(reaper.record_refusal(state, instant), (lead, at, instant))
+                        instant += INSTANT_STEP
+
+    def test_a_feedback_gap_reopens_listening(self):
+        state = reaper.TransportState()
+        for at, packet in mid_take_stream(0.0, seconds=3.0):
+            state = reaper.apply_feedback(packet, state, now=at)
+            self.assertIsNotNone(reaper.record_refusal(state, at))
+        # Three seconds of silence, then meters before the clock comes back.
+        later = 108.0
+        for at, packet in mid_take_stream(0.5, seconds=3.0, start=later):
+            state = reaper.apply_feedback(packet, state, now=at)
+            self.assertIsNotNone(reaper.record_refusal(state, at), at)
+
+    def test_a_box_started_mid_take_never_sends_record_when_bundled(self):
+        # The same stream with each tick's packets in one bundle.
         state = reaper.TransportState()
         for tick in range(TICKS_PER_SECOND * MIX_SECONDS):
             now = 100.0 + tick / TICKS_PER_SECOND
@@ -502,17 +554,15 @@ class TestNeverSentBlind(unittest.TestCase):
             self.assertIsNotNone(reaper.record_refusal(state, now), tick)
 
     def test_a_box_started_mid_take_with_no_clock_pattern_still_refuses_against_a_prior_recording(self):
+        # `/time` missing from the pattern: only a prior recording backstops it,
+        # and only once the box has listened for a full timeout.
         state = reaper.TransportState()
-        mix = [address for address in ROLLING_MIX if address != "/time"]
-        for tick in range(TICKS_PER_SECOND * MIX_SECONDS):
-            now = 100.0 + tick / TICKS_PER_SECOND
-            packet = osc.encode_bundle([rolling_tick(address, tick) for address in mix])
-            state = reaper.apply_feedback(packet, state, now=now)
-            self.assertEqual(
-                reaper.record_refusal(state, now, prior_recording=True),
-                reaper.RECORD_REFUSED_PRIOR,
-                tick,
-            )
+        last: str | None = None
+        for at, packet in mid_take_stream(0.0, clock=False):
+            state = reaper.apply_feedback(packet, state, now=at)
+            last = reaper.record_refusal(state, at, prior_recording=True)
+            self.assertIsNotNone(last, at)
+        self.assertEqual(last, reaper.RECORD_REFUSED_PRIOR)
 
 
 class TestCommands(unittest.TestCase):
