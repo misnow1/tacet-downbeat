@@ -635,7 +635,7 @@ class App:
         )
         self._move_task = asyncio.ensure_future(run)
 
-    def _start_fade(self, by: str = "") -> None:
+    def _start_fade(self, *, by: str) -> None:
         self._cancel_move()
         self._start_move(
             moves.MoveKind.FADE,
@@ -646,7 +646,7 @@ class App:
             run=self._run_fade(),
         )
 
-    def _start_ride_in(self, level: int, seconds: float, by: str = "") -> None:
+    def _start_ride_in(self, level: int, seconds: float, *, by: str) -> None:
         """Ride the fader up to `level` over `seconds` instead of snapping it.
 
         Shared by the ordinary open's ride-in (`up-slow`) and READY's ride to

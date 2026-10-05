@@ -2607,12 +2607,12 @@ const fadingNodes = (created) =>
   let clock = 2_000_000;
   const { context: page, nodes, created, frames } = browser({ now: () => clock * 1000 });
   page.render(fadeSnapshot());
-  check("a fade renders as a sweep: on arrival", nodes.get("level").textContent, "0.00 dB → -∞ dB");
+  check("a fade renders as a sweep: on arrival", nodes.get("level").textContent, "0.00 dB \u2192 -\u221e dB");
   check("a fade says fading", nodes.get("level-tag").textContent, "fading");
   check("and is styled fading", nodes.get("level-tag").className, "tag fading");
   clock += 1;
   frames[0]();
-  check("a second on, after a frame", nodes.get("level").textContent, "-30.00 dB → -∞ dB");
+  check("a second on, after a frame", nodes.get("level").textContent, "-30.00 dB \u2192 -\u221e dB");
   check("the page asks for the next frame itself", frames.length, 2);
   check(
     "the button that started it wears the fading colour, and only that one",
@@ -2639,12 +2639,12 @@ const fadingNodes = (created) =>
   intervals[0]();
   check("fading ends only on the box's word: still fading", nodes.get("level-tag").textContent, "fading");
   check("the button is still painted", fadingNodes(created).map((node) => node.dataset.key), ["out"]);
-  check("and the readout says how late", nodes.get("level").textContent, "→ -∞ dB - 8s late");
+  check("and the readout says how late", nodes.get("level").textContent, "\u2192 -\u221e dB - 8s late");
   page.render(landedSnapshot(fading, 10));
   check("the landed snapshot ends it: tag", nodes.get("level-tag").textContent, "commanded");
   check("and styles it commanded", nodes.get("level-tag").className, "tag commanded");
   check("no button is painted", fadingNodes(created).length, 0);
-  check("and the settled readout is back", nodes.get("level").textContent, "-∞ dB - 0s ago");
+  check("and the settled readout is back", nodes.get("level").textContent, "-\u221e dB - 0s ago");
 }
 
 {
@@ -2653,7 +2653,7 @@ const fadingNodes = (created) =>
   check(
     "within the grace the readout points at the destination without a sweep",
     nodes.get("level").textContent,
-    "→ -∞ dB",
+    "\u2192 -\u221e dB",
   );
   check("and does not say late", nodes.get("level").textContent.includes("late"), false);
 }
@@ -2719,7 +2719,7 @@ const fadingNodes = (created) =>
 {
   const { context: page, nodes } = browser({ now: STILL });
   page.render(fadeSnapshot("releasing", 1.0));
-  check("a page that connects mid-fade joins the sweep", nodes.get("level").textContent, "-30.00 dB → -∞ dB");
+  check("a page that connects mid-fade joins the sweep", nodes.get("level").textContent, "-30.00 dB \u2192 -\u221e dB");
 }
 
 {
@@ -2809,6 +2809,24 @@ const fadingNodes = (created) =>
   }
   check("a snapshot without buttons, before any, does not throw", error, null);
   check("and builds none", created.filter((node) => node.dataset.key !== undefined).length, 0);
+}
+
+{
+  // A lean push can overtake the first full snapshot: the older full one still
+  // has to give the page its buttons, without being painted over the newer.
+  const { context: page, nodes, created } = browser({ now: STILL });
+  const lean = structuredClone(SNAPSHOTS["standing-down"]);
+  delete lean.buttons;
+  lean.at += 1;
+  page.render(lean);
+  check("a lean snapshot first builds no vocabulary button", created.filter((node) => node.dataset.key !== undefined).length, 0);
+  page.render(structuredClone(SNAPSHOTS["standing-down"]));
+  check(
+    "an older snapshot's buttons are still taken: the fader column is built",
+    created.some((node) => node.dataset.key === "out"),
+    true,
+  );
+  check("and the newer snapshot stays on screen", nodes.get("state").textContent, "STANDING DOWN");
 }
 
 {

@@ -431,10 +431,6 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
     hub = request.app[_HUB]
     hub.sockets.append(socket)
     initial = hub.app.snapshot()
-    if request.query.get(BUTTONS_ONCE_PARAM) == BUTTONS_ONCE_VALUE:
-        # The initial snapshot below is always full, so these are the buttons
-        # this socket will have.
-        hub.lean[socket] = initial.get(BUTTONS_KEY)
     # The keepalive goes first, so the page learns how long to wait before
     # distrusting a silence on the same round trip as its first snapshot. Until
     # it has been told, it reports itself as connecting rather than connected.
@@ -442,6 +438,11 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
     try:
         await socket.send_str(KEEPALIVE_FRAME)
         await socket.send_str(json.dumps(initial))
+        if request.query.get(BUTTONS_ONCE_PARAM) == BUTTONS_ONCE_VALUE:
+            # Only once the full snapshot is sent: a push that overtook it
+            # without the buttons would leave the page with none. Pushes before
+            # this go out full, which is harmless.
+            hub.lean[socket] = initial.get(BUTTONS_KEY)
         async for message in socket:
             if message.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                 break

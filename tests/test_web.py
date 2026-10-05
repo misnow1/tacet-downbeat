@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 from unittest import mock
 
 from aiohttp import WSMsgType
+from aiohttp import web as aiohttp_web
 from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
@@ -1045,6 +1046,35 @@ class TestButtonsGoOncePerSocket(WebTestCase):
         self.assertTrue(state_body["buttons"])
         post_body = await (await self.client.post("/api/arm")).json()
         self.assertTrue(post_body["buttons"])
+
+
+class TestTheInitialSnapshotComesFirst(WebTestCase):
+    async def test_a_socket_is_not_lean_until_its_full_snapshot_has_been_sent(self):
+        # A push that overtakes the first snapshot, leaving out buttons the
+        # page does not yet have, would leave a fresh page with no fader column.
+        # Pushes before the registration go out full, which is harmless.
+        hub = self.app[web._HUB]
+        lean_when_sent: list[bool] = []
+        original = aiohttp_web.WebSocketResponse.send_str
+
+        async def spy(socket, data, *args, **kwargs):
+            if "buttons" in json.loads(data):
+                lean_when_sent.append(socket in hub.lean)
+            return await original(socket, data, *args, **kwargs)
+
+        with mock.patch.object(aiohttp_web.WebSocketResponse, "send_str", spy):
+            async with self.client.ws_connect("/ws?buttons=once") as socket:
+                await socket.receive()
+                await socket.receive()
+        self.assertEqual(lean_when_sent, [False])
+
+
+class TestThePageScript(unittest.TestCase):
+    def test_the_page_script_is_ascii(self):
+        # Glyphs on screen are written as escapes: a typographic character in
+        # the source is invisible in review and broken when it is copy-pasted.
+        script = Path(web.__file__).parent / "static" / "app.js"
+        script.read_text(encoding="utf-8").encode("ascii")
 
 
 class TestPushBody(unittest.TestCase):

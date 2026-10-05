@@ -477,7 +477,7 @@ function timecode(seconds) {
 // reading - because JSON cannot carry -inf and a blank there would read as a
 // link problem rather than a closed DCA.
 function faderDb(db) {
-  if (db === null) return "-∞ dB";
+  if (db === null) return "-\u221e dB";
   // A sweep passing through unity can round to a negative zero.
   const text = db.toFixed(2);
   return (text === "-0.00" ? "0.00" : text) + " dB";
@@ -600,9 +600,9 @@ function levelReadout(fader, at, since) {
   const destination = faderDb(move.to_db);
   let text;
   if (over < 0) {
-    text = faderDb(moveDbAt(move, elapsed === null ? 0 : elapsed)) + " → " + destination;
+    text = faderDb(moveDbAt(move, elapsed === null ? 0 : elapsed)) + " \u2192 " + destination;
   } else {
-    text = "→ " + destination;
+    text = "\u2192 " + destination;
     if (over >= MOVE_LATE_SECONDS) text += " - " + Math.round(over) + "s " + MOVE_LATE_WORD;
   }
   return {text, tag: MOVE_TAGS[move.kind] || MOVE_TAG_FALLBACK, tagClass: "tag fading"};
@@ -717,9 +717,15 @@ function isOlder(next, at) {
 
 function render(received) {
   if (!received) return;
-  if (isOlder(received, renderedAt)) return;
+  // Taken before the staleness check: a full snapshot that a lean push
+  // overtook is old for everything but its buttons, which the page may not yet
+  // have, and without them a fresh page has an empty fader column (#51).
+  if (received.buttons) lastButtons = received.buttons;
+  if (isOlder(received, renderedAt)) {
+    if (renderedButtons === null && snapshot) paintButtons(withButtons(snapshot, lastButtons));
+    return;
+  }
   const next = withButtons(received, lastButtons);
-  if (next.buttons) lastButtons = next.buttons;
   if (typeof next.at === "number") renderedAt = next.at;
   snapshot = next;
   snapshotArrivedAt = pageStamp();
@@ -793,6 +799,11 @@ function render(received) {
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
 
+  paintButtons(next);
+}
+
+function paintButtons(next) {
+  const fader = next.fader;
   // Rebuilt only when the vocabulary actually changes. renderButtons tears the
   // grid down and recreates it, and a tap landing during that is lost - the node
   // under the finger is detached between touchstart and touchend, so no click
