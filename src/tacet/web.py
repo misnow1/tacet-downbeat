@@ -711,6 +711,12 @@ margin:4px 0 0}
 #target-control{display:flex;flex-wrap:wrap;gap:8px}
 #target-control button{width:96px;height:72px;font-size:16px;font-weight:700}
 #target-control button.selected{background:var(--text);color:var(--bg);border-color:var(--text)}
+/* The note under the segments when a tap stored and moved nothing (#153).
+   Reserves two lines whether or not it has text, so showing, changing or
+   clearing it moves nothing: the same reservation as #rec-why. Attention is
+   the text colour only, never a button fill (#155). */
+#target-note{color:var(--dim);font-size:13px;line-height:17px;min-height:34px;margin-top:8px}
+#target-note.attention{color:#ffca7a}
 /* Spans are a different kind of control from instants and must not look like
    them: one tap of these opens a region and the next one closes it. Not
    scoped to .grid: the fader column's buttons carry the same data attributes
@@ -939,9 +945,11 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <!-- #9: the standing target level, from fader.presets. Below the hand-off
        confirmation, never between it and its button (#108). The segments are
        built by script from the snapshot; storing a level moves nothing and a
-       tap here leaves the operator on MORE (#109). -->
+       tap here leaves the operator on MORE (#109). #target-note says, while the
+       fader is up, that a tap stored and did not move it (#153). -->
   <h2>Target level</h2>
   <div id="target-control"></div>
+  <div id="target-note"></div>
 </div>
 <div id="wake"></div>
 </div>

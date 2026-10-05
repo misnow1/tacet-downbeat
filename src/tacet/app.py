@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import enum
 import math
 import time
 from collections.abc import Callable, Coroutine, Iterator, Mapping
@@ -80,6 +81,52 @@ STILL_MINE = "still-mine"
 #: took, never for a refused one, and it moves nothing: the entry is the only
 #: record of which level an open was meant to go to.
 TARGET_SET = "target-set"
+
+
+class StoredOnly(enum.StrEnum):
+    """Why a target tap stored its level without moving the fader (#153).
+
+    The page words it (`STORED_COPY` in static/app.js); the box sends only the
+    reason, the way `prompt.kind` is sent without copy."""
+
+    #: Idle or standing down: nothing is up to move.
+    CLOSED = "closed"
+    #: Open or riding in.
+    OPEN = "open"
+    READY = "ready"
+    #: The fade still ends at -inf.
+    RELEASING = "releasing"
+    #: The tap named the target already set.
+    UNCHANGED = "unchanged"
+
+
+_STORED_ONLY_BY_STATE: dict[state.State, StoredOnly] = {
+    state.State.STANDING_DOWN: StoredOnly.CLOSED,
+    state.State.IDLE: StoredOnly.CLOSED,
+    state.State.OPEN: StoredOnly.OPEN,
+    state.State.READY: StoredOnly.READY,
+    state.State.RELEASING: StoredOnly.RELEASING,
+}
+
+#: The states where nothing is up, so a tap that stores is what the operator
+#: expects and the page says nothing (#153, maintainer 2026-10-05).
+_FADER_CLOSED = frozenset({state.State.IDLE, state.State.STANDING_DOWN})
+
+
+def stored_only_because(machine: state.Machine, *, unchanged: bool) -> StoredOnly:
+    """Why a target tap made in `machine` only stored (#153). This is what the
+    log records as `stored_because`, including `closed`, which the page never
+    shows (see `stored_note_shown`)."""
+    if unchanged:
+        return StoredOnly.UNCHANGED
+    return _STORED_ONLY_BY_STATE[machine.state]
+
+
+def stored_note_shown(machine: state.Machine) -> bool:
+    """Whether a store-only tap made in `machine` gets a note on the page."""
+    return machine.state not in _FADER_CLOSED
+
+
 #: The entries that say the box changed duty. The status the page shows,
 #: ARMED or STOOD DOWN, is timed from whichever of them was written last.
 _DUTY_ENTRIES = frozenset({ARMED, STOOD_DOWN})
@@ -202,6 +249,11 @@ class App:
         #: at the configured default, which is one of the presets, and is only
         #: ever set to one of them (#139).
         self._target = self._targets.default
+        #: The note on the page for the last target tap: its level and why it
+        #: only stored (#153). None when there is nothing to say, including
+        #: every tap made while the fader was closed. Cleared by a later
+        #: accepted tap replacing it, by any fader move, and by a state change.
+        self._stored: tuple[int, StoredOnly] | None = None
         self._monotonic = monotonic
         self._stale_tap_seconds = stale_tap_seconds
         #: The last fader tap refused as stale, until the next command. Shown
@@ -329,7 +381,9 @@ class App:
         late move to guard, and a silently refused tap on a control that does
         nothing yet is a dead end. A ride already under way keeps its original
         destination and a fade still ends at -inf; READY's hold level and every
-        later open read the new value. Turning it into a ride is #128.
+        later open read the new value. It also says so on the page while the
+        fader is up (#153): the note is the box's, and the log's `stored_because`
+        gives the reason in every state. Turning it into a ride is #128.
 
         A level that is not one of the presets is refused, said on the page, and
         not logged: nothing happened.
@@ -341,6 +395,10 @@ class App:
                 self._last_refusal = TARGET_NOT_A_PRESET.format(db=db, presets=self._preset_names())
                 self._notify()
                 return
+            before = self.machine
+            unchanged = level == self._target
+            because = stored_only_because(before, unchanged=unchanged)
+            self._stored = (level, because) if stored_note_shown(before) else None
             previous = self._target
             self._target = level
             self._last_refusal = None
@@ -353,6 +411,7 @@ class App:
                     "previous_db": _finite(dm7.to_db(previous)),
                     "default": level == self._targets.default,
                     "state": self.machine.state.value,
+                    "stored_because": because.value,
                 },
                 project_seconds=self._playhead(),
             )
@@ -401,6 +460,10 @@ class App:
         outcome = state.step(before, event)
         self.machine = outcome.machine
         self._last_refusal = outcome.refusal
+        if outcome.fader is not None or outcome.machine.state is not before.state:
+            # The note on the page was true of the fader as the operator tapped;
+            # a move or a new state makes it history (#153).
+            self._stored = None
 
         if command is state.Command.HANDOFF and outcome.changed:
             # Whatever this box was in the middle of sending is no longer
@@ -1107,12 +1170,18 @@ class App:
             # (#9). Not `fader.target`, which is where a move in flight is
             # heading and is null when nothing is moving - the two differ while
             # a ride that began before a change is still running. Commanded, like
-            # everything here, and never read back from the console.
+            # everything here, and never read back from the console. `stored` is
+            # the note for the last tap that only stored, while the fader is up
+            # (#153): fixed text that changes only on a tap or a move, so it
+            # does not churn the coalescing (#147).
             "target": {
                 "level": self._target,
                 "db": _finite(dm7.to_db(self._target)),
                 "default_db": _finite(dm7.to_db(self._targets.default)),
                 "presets_db": list(self._targets.db_values()),
+                "stored": None
+                if self._stored is None
+                else {"db": _finite(dm7.to_db(self._stored[0])), "because": self._stored[1].value},
             },
             "fader": {
                 # Held still for the life of a move: where it started, not the
