@@ -1704,6 +1704,57 @@ class TestTheBoxAsksReaper(AppTestCase):
         self.assertIsNone(entry.project_seconds)
 
 
+class TestARefreshInFlightGuardsTheStart(AppTestCase):
+    """#172: while the box's refresh is unanswered, a start is refused as
+    listening, for at most `REFRESH_ANSWER_SECONDS`."""
+
+    def hear(self, app, packet, at):
+        self.t[0] = at
+        app.handle_recorder_packet(packet)
+
+    async def test_a_start_is_refused_while_the_refresh_is_unanswered(self):
+        self.t = [100.0]
+        app = self.build(monotonic=lambda: self.t[0])
+        for at in (100.0, 100.5, 101.0, 101.5, 102.0, 102.5):
+            self.hear(app, meter_packet(), at)
+        # Two seconds of meters and no `/time`: #163 alone would permit it.
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["can_start"])
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_LISTENING)
+        await app.start_recording()
+        self.assertNotIn("/record", self.reaper_sender.addresses())
+
+    async def test_an_unanswered_refresh_stops_refusing_after_the_cap(self):
+        self.t = [100.0]
+        app = self.build(monotonic=lambda: self.t[0])
+        at = 100.0
+        while at <= 100.0 + reaper.REFRESH_ANSWER_SECONDS:
+            self.hear(app, meter_packet(), at)
+            at += 0.5
+        self.assertTrue(app.snapshot()["recording"]["can_start"])
+
+    async def test_an_answered_refresh_lifts_the_guard_in_the_same_tick(self):
+        self.t = [100.0]
+        app = self.build(monotonic=lambda: self.t[0])
+        self.hear(app, meter_packet(), 100.0)
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+        for packet in refresh_reply(recording=False, playing=False):
+            self.hear(app, packet, 100.04)
+        self.assertTrue(app.snapshot()["recording"]["can_start"])
+
+    async def test_a_failed_refresh_send_is_on_the_snapshot(self):
+        app = self.build(reaper_sender=FailingSender())
+        app.handle_recorder_packet(meter_packet())
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["healthy"])
+        self.assertIn("unreachable", recording["error"])
+
+    async def test_a_healthy_recorder_has_no_error(self):
+        app = self.build()
+        app.handle_recorder_packet(meter_packet())
+        self.assertIsNone(app.snapshot()["recording"]["error"])
+
+
 class TestTheExpectedFaderStateIsVisible(AppTestCase):
     """The page carries where the fader is going, not only where it was.
 

@@ -101,6 +101,14 @@ class TestPage(WebTestCase):
         self.assertIn('id="rec-why"', panel)
         self.assertLess(panel.index('id="rec-pos"'), panel.index('id="rec-why"'))
 
+    async def test_the_page_has_a_slot_for_a_recorder_that_cannot_be_reached(self):
+        # #172: a failed send to Reaper is said under the Recording panel, as
+        # the console's is. It takes no room until there is something to say.
+        body = await (await self.client.get("/")).text()
+        panel = body.split('id="recording-status"', 1)[1].split('<div class="tabs">', 1)[0]
+        self.assertIn('id="rec-error"', panel)
+        self.assertIn("#rec-error{", body)
+
     async def test_the_record_reason_reserves_two_lines(self):
         # An empty, one-line or two-line reason must not move MAIN's tabs on the
         # iPad, so the slot is always two lines tall (#163).

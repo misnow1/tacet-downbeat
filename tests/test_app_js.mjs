@@ -499,6 +499,18 @@ check(
 );
 
 check(
+  "an unreachable Reaper says so, under the Recording panel (#172)",
+  rendered({ healthy: false, error: "reaper is not listening" }).get("rec-error").textContent,
+  "Reaper unreachable: reaper is not listening",
+);
+check("a healthy Reaper says nothing there", rendered({ healthy: true, error: null }).get("rec-error").textContent, "");
+check(
+  "an unhealthy Reaper does not touch the refusal line",
+  rendered({ healthy: false, error: "x", can_start: true, refusal: null }).get("rec-why").textContent,
+  "",
+);
+
+check(
   "an unreachable console says so",
   rendered({}, { healthy: false, error: "no route to host" }).get("fader-error").textContent,
   "Console unreachable: no route to host",
@@ -1107,6 +1119,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
   const { nodes } = renderedFixture("faults");
   check("faults: the console", nodes.get("fader-error").textContent, "Console unreachable: no route to host");
   check("faults: Reaper", nodes.get("rec-tag").textContent, "LINK LOST");
+  check("faults: Reaper's send failure", nodes.get("rec-error").textContent, "Reaper unreachable: no route to host");
   check("faults: the log", nodes.get("saving").className, "fault");
   check("faults: the refusal is shown", nodes.get("refusal").style.display, "block");
 }

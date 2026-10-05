@@ -137,6 +137,13 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
                 quoted = message.split(":")[0].split("{")[0].strip()
                 self.assertIn(quoted, self.troubleshooting)
 
+    def test_the_runbook_quotes_the_recorder_unreachable_line(self) -> None:
+        # #172: shown under the Recording panel when a send to Reaper fails. The
+        # text lives in the page's script, so check both ends.
+        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('"Reaper unreachable: "', script)
+        self.assertIn("Reaper unreachable:", self.troubleshooting)
+
     def test_the_runbook_quotes_the_stale_tap_refusal(self) -> None:
         # Quoted up to the first value filled in.
         self.assertIn(app.STALE_REFUSAL.split("{")[0].strip(), self.troubleshooting)

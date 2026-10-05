@@ -77,7 +77,13 @@ class Box:
         self.app.handle_recorder_packet(osc.encode_message(address, value))
 
 
-def _build(root: Path, *, console: _Sender | _Unreachable, machine: Machine | None = None) -> Box:
+def _build(
+    root: Path,
+    *,
+    console: _Sender | _Unreachable,
+    recorder: _Sender | _Unreachable | None = None,
+    machine: Machine | None = None,
+) -> Box:
     clock = [CLOCK_START]
 
     async def tick(seconds: float) -> None:
@@ -93,7 +99,7 @@ def _build(root: Path, *, console: _Sender | _Unreachable, machine: Machine | No
     app = App(
         console=dm7.Dm7Client("192.0.2.1", dca=3, sender=console, monotonic=lambda: clock[0], sleep=tick),
         log=log,
-        recorder=reaper.ReaperClient(sender=_Sender(), monotonic=lambda: clock[0]),
+        recorder=reaper.ReaperClient(sender=recorder or _Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],
         machine=machine,
     )
@@ -193,7 +199,7 @@ async def faults(root: Path) -> dict[str, Any]:
     The snap open's send never left the box, and it was absolute, so the
     level goes back to unknown (#116): this fixture's fader reads unknown too,
     for real, not just at cold boot."""
-    box = _build(root, console=_Unreachable(), machine=_known())
+    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known())
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE

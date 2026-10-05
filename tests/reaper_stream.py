@@ -93,7 +93,14 @@ def refresh_reply(*, recording: bool, playing: bool) -> list[bytes]:
     ]
 
 
-def refresh_dump(sent_at: float, *, recording: bool, playing: bool, transport_first: bool = True):
+def refresh_dump(
+    sent_at: float,
+    *,
+    recording: bool,
+    playing: bool,
+    transport_first: bool = True,
+    stall: float = REFRESH_STALL_SECONDS,
+):
     """The reply to a refresh sent at `sent_at`, one message per packet (the
     worst case for prefixes). Yields `(time, packet)`.
 
@@ -108,7 +115,7 @@ def refresh_dump(sent_at: float, *, recording: bool, playing: bool, transport_fi
     ]
     packets = transport + others if transport_first else others + transport
     first = sent_at + REFRESH_REPLY_SECONDS
-    last = sent_at + REFRESH_STALL_SECONDS
+    last = sent_at + stall
     for k, packet in enumerate(packets):
         yield first + (last - first) * k / (len(packets) - 1), packet
 
@@ -120,12 +127,13 @@ def rolling_with_refresh(
     transport_first: bool = True,
     seconds: float = MIX_SECONDS,
     lead: float = 0.05,
+    stall: float = REFRESH_STALL_SECONDS,
 ):
     """A rolling Reaper that is asked for its state at `sent_at`, one packet at
     a time, in arrival order: the mix with its `/time` family silent for the
     stall, and the dump interleaved. Meters keep flowing, as they did on the
     bench. The mix starts at `sent_at`."""
-    stall_end = sent_at + REFRESH_STALL_SECONDS
+    stall_end = sent_at + stall
     events: list[tuple[float, int, bytes]] = []
     for at, packet in mid_take_stream(lead, seconds=seconds, start=sent_at):
         decoded = osc.decode_packet(packet)
@@ -133,7 +141,9 @@ def rolling_with_refresh(
         if decoded.address in CLOCK_FAMILY and at < stall_end:
             continue
         events.append((at, len(events), packet))
-    for at, packet in refresh_dump(sent_at, recording=recording, playing=recording, transport_first=transport_first):
+    for at, packet in refresh_dump(
+        sent_at, recording=recording, playing=recording, transport_first=transport_first, stall=stall
+    ):
         events.append((at, len(events), packet))
     events.sort()
     for at, _, packet in events:

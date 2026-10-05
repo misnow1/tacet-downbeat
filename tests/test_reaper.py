@@ -904,13 +904,98 @@ class TestTheRefreshStall(unittest.TestCase):
         self.assertEqual(times, sorted(times))
 
     def test_an_unanswered_refresh_leaves_every_state_as_163_shipped(self):
-        parked = [(100.0 + k / METERS_PER_SECOND, meter_packet()) for k in range(60)]
-        for stream in (list(mid_take_stream(0.05)), parked):
+        # The states are #163's throughout; the refusals are #163's from the cap
+        # onward (before it, the guard refuses: see the next tests).
+        cap = reaper.REFRESH_ANSWER_SECONDS
+        parked = [(100.0 + k / METERS_PER_SECOND, meter_packet()) for k in range(120)]
+        mid_take = list(mid_take_stream(0.05, seconds=8))
+        for stream in (mid_take, parked):
             c, sender, clock = timed_client()
+            past_cap = 0
             for (at, packet), (_, state) in zip(stream, fold(stream), strict=True):
                 hear(c, clock, packet, at)
                 self.assertEqual(c.state, state)
+                if at - 100.0 >= cap:
+                    past_cap += 1
+                    self.assertEqual(
+                        reaper.record_refusal(state, at, refresh=c.refresh_request),
+                        reaper.record_refusal(state, at),
+                    )
+            self.assertGreater(past_cap, 0)
             self.assertEqual(actions(sender), 1)
+
+    def check_guard_holds(self, *, stall, transport_first, prior):
+        """Replayed one packet at a time through a client, with the refresh it
+        sends: no permitted start at any prefix, nor just before the next
+        packet. With the transport report first, LINK LOST before the reply is
+        acceptable (it is a refusal too); only a permitted send is a failure."""
+        c, _, clock = timed_client()
+        packets = list(rolling_with_refresh(100.0, transport_first=transport_first, stall=stall, seconds=stall + 3))
+        for k, (at, packet) in enumerate(packets):
+            hear(c, clock, packet, at)
+            instants = [at]
+            if k + 1 < len(packets):
+                instants.append(packets[k + 1][0] - 1e-6)
+            for instant in instants:
+                refusal = reaper.record_refusal(
+                    c.state,
+                    instant,
+                    request=c.record_request,
+                    refresh=c.refresh_request,
+                    prior_recording=prior,
+                )
+                self.assertIsNotNone(refusal, (stall, transport_first, instant))
+
+    def test_a_stall_longer_than_the_timeout_never_permits_a_send_at_any_prefix(self):
+        # 2.1 s is the reviewer's probe: with the transport report last, #163
+        # alone permits a start mid-take once `/time` has been gone two seconds.
+        for stall in (2.1, 3.0, 4.9):
+            for transport_first in (True, False):
+                for prior in (False, True):
+                    with self.subTest(stall=stall, transport_first=transport_first, prior=prior):
+                        self.check_guard_holds(stall=stall, transport_first=transport_first, prior=prior)
+
+    def test_an_unanswered_refresh_refuses_as_listening_until_the_cap(self):
+        request = reaper.RecordRequest(sent_at=100.0, reports_before=0)
+        state = reaper.TransportState()
+        at = 100.0
+        while at < 100.0 + reaper.REFRESH_ANSWER_SECONDS:
+            state = feed(state, METER, 0.0, now=at)
+            self.assertEqual(
+                reaper.record_refusal(state, at, refresh=request),
+                reaper.RECORD_REFUSED_LISTENING,
+                at,
+            )
+            at += 0.5
+
+    def test_an_unanswered_refresh_stops_refusing_after_the_cap(self):
+        request = reaper.RecordRequest(sent_at=100.0, reports_before=0)
+        state = reaper.TransportState()
+        at = 100.0
+        while at <= 100.0 + reaper.REFRESH_ANSWER_SECONDS:
+            state = feed(state, METER, 0.0, now=at)
+            at += 0.5
+        end = 100.0 + reaper.REFRESH_ANSWER_SECONDS
+        self.assertIsNone(reaper.record_refusal(state, end, refresh=request))
+        self.assertEqual(reaper.record_refusal(state, end, refresh=request), reaper.record_refusal(state, end))
+
+    def test_an_answered_refresh_lifts_the_guard_at_once(self):
+        request = reaper.RecordRequest(sent_at=100.0, reports_before=0)
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        state = feed(state, METER, 0.0, now=100.5)
+        self.assertEqual(reaper.record_refusal(state, 100.5, refresh=request), reaper.RECORD_REFUSED_LISTENING)
+        for packet in refresh_reply(recording=False, playing=False):
+            state = reaper.apply_feedback(packet, state, now=100.54)
+        self.assertIsNone(reaper.record_refusal(state, 100.54, refresh=request))
+
+    def test_the_guard_reads_already_recording_when_that_is_believed(self):
+        request = reaper.RecordRequest(sent_at=100.0, reports_before=1)
+        state = feed(reaper.TransportState(), "/record", 1.0, now=99.0)
+        state = feed(state, "/time", 5.0, now=100.0)
+        self.assertEqual(reaper.record_refusal(state, 100.1, refresh=request), reaper.RECORD_REFUSED_ROLLING)
+
+    def test_the_cap_is_five_seconds(self):
+        self.assertEqual(reaper.REFRESH_ANSWER_SECONDS, 5.0)
 
 
 if __name__ == "__main__":
