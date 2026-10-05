@@ -250,7 +250,8 @@
       0.0,
       -3.0,
       -6.0
-    ]
+    ],
+    "stored": null
   },
   "why": "Open at unity. The box does not know where the fader really is - it can only say what it last asked for, never what the console did with it; close it now, or open, to say where it is. The last fader move did not finish; tap it again to retry. You are driving; the detector cannot move the fader."
 }
