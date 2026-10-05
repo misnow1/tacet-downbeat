@@ -622,8 +622,9 @@ font-size:13px}
 #recording-status{margin:0 16px 12px}
 /* Why the record button is grey (#163). It wraps: the reason has to be
    readable without a tap, since a disabled button cannot be tapped. The fader
-   column is a flex sibling and never moves; the line takes the same weight
-   #rec-pos already does. */
+   column is a flex sibling and never moves. The slot always reserves two
+   lines, so an empty, one-line or two-line reason does not move the tabs on
+   the iPad. */
 #rec-why{color:var(--dim);font-size:13px;margin-top:4px;line-height:17px;min-height:34px}
 .tabs{display:flex;gap:8px;padding:0 16px}
 .tab-btn{flex:1;padding:10px;border-radius:10px 10px 0 0;background:var(--panel);

@@ -149,11 +149,22 @@ name, so a project named for one day can hold files stamped with another.
 Actions > Show action list > New action > Load ReaScript > `tacet_mirror.lua`,
 then run it. It asks once for the queue path and remembers it in `ExtState`.
 
-The console should say:
+**It is a toggle.** Running it while it is already running stops it, and the
+console says `[tacet] mirror stopped`. So "run it" is not the check: **the last
+line in the ReaScript console must be**
 
 ```
 [tacet] mirroring <path> from byte N
 ```
+
+If the last line is `mirror stopped`, run it once more. This matters most when
+switching projects: a script still running from a scratch project is turned
+*off* by the step that was meant to start it in the game project. (Seen on the
+bench, 2026-10-04 (#166): on a freshly relaunched Reaper the console showed
+`mirror stopped` *before* the first `mirroring`, as if it had been running
+already. Nothing starts it at launch on the laptop - no `__startup.lua`, no
+startup action, no saved keymap - so this is unexplained. The last-line check
+covers it either way.)
 
 `N` is where the script left off last game, remembered in Reaper's `ExtState`.
 On a queue that has never been used it is `0`. Anything else the console says
@@ -228,7 +239,14 @@ then stop in Reaper, close that project, Ctrl-C the box twice, and start again
 against the game project and the game log. Run `tacet_mirror.lua` in the new
 project **before** the box, or the queue lines written before it comes up are
 never mirrored. The script keeps its byte offset in `ExtState`, so a new project
-will not re-stamp the test's markers.
+will not re-stamp the test's markers. If the script is still running from the
+scratch project, running it again turns it off: check the console's last line
+says `mirroring`.
+
+**Keep the files when you stop a recording.** At Reaper's stop prompt, keep
+them. Kept, the edit cursor stays at the end of the take, so a re-record
+appends after it. Deleted, the cursor goes back to where the take began, and a
+re-record stacks on top of it at the same timeline position.
 
 **Start it from the page, not in Reaper.** `recording-started` is written only
 by the page's Start recording button, and it is the anchor the whole log is
@@ -291,23 +309,16 @@ the box's own words. Each text, and what to do about it, is in
 Reaper that is open with its audio device running, even though the page reads
 `unknown` / **not yet reported**: that is the normal pregame page.
 
-*Why the box can tell parked from rolling.* These are the facts the rule rests
-on, measured on the press box rig on 2026-10-04 (#163):
-
-- Reaper streams **meters**, about 11 packets a second, whenever its audio
-  device runs - parked or rolling.
-- `/time` arrives, about 12 a second, **only while the transport moves**.
-- `/record`, `/play` and `/stop` arrive **only when they change**, never in a
-  launch or project-load dump.
-- Quitting Reaper is **silent**.
+*Why the box can tell parked from rolling.* What Reaper sends, and when, is
+in [Reaper's OSC feedback, as observed](#reapers-osc-feedback-as-observed).
 
 So any packet means Reaper is there, `/time` means it is moving, and a parked
 Reaper with its device running can only be started by `/record`. `/record` is a
 toggle, so the box sends it only on that positive evidence: an open Reaper, a
 quiet clock (heard for a full two seconds with no `/time`, because the first
-packet of a rolling Reaper is often a meter), not reported recording, its own last start answered. Anything else
-greys the button and says why. A start done by hand in Reaper is recoverable; a
-stop of the game's take is not.
+packet of a rolling Reaper is often a meter), not reported recording, and its
+own last start answered. Anything else greys the button and says why. A start
+done by hand in Reaper is recoverable; a stop of the game's take is not.
 
 *What the box needs from this Reaper.* `/time` in its OSC pattern, which the
 stock `Default.ReaperOSC` has. Prove it once per machine:
@@ -316,10 +327,42 @@ stock `Default.ReaperOSC` has. Prove it once per machine:
 python -m tacet.verify_reaper --listen 20
 ```
 
-It should print a `FOUND` line for `position`, at `/time`. If `/time` is missing from the pattern,
-the first recording reads `LINK LOST` within a few seconds of rolling: fix the
-pattern, do not carry on.
+It should print a `FOUND` line for `position`, at `/time`. If `/time` is
+missing from the pattern, the first recording reads `LINK LOST` within a few
+seconds of rolling: fix the pattern, do not carry on.
 
 After launching Reaper, wait for the real project to load - up to about 7
 seconds after the placeholder `Track 1..8` dump - before tapping **Start
 recording**.
+
+---
+
+## Reaper's OSC feedback, as observed
+
+What Reaper's stock OSC surface actually sends on this rig, from raw captures
+on localhost (2026-10-04, #163, #166). Anything the box or the mirror builds on
+Reaper's feedback has to survive all of it.
+
+- **Parked:** VU meters only (`/master/vu*`, `/track/vu*`, `/track/N/vu*`),
+  about 11 packets a second, and only while an audio device is running.
+- **Moving:** `/time`, `/time/str`, `/beat/str`, `/samples`, `/frames/str`,
+  about 12 a second, only while the transport moves. Play/record start is
+  exactly `/record 1, /stop 0, /play 1` (or without `/record` for Play), and a
+  stop is the mirror.
+- **Transport state is sent only when it changes.** `/record`, `/play` and
+  `/stop` are not in any dump, so after a launch, a relaunch or a box restart
+  the record state is unknown until the transport next changes.
+- **Quit is silent.** The stream just stops. The box can tell "closed" from
+  "parked" only because the meters stop, and only while an audio device runs.
+- **Launch and project load send a placeholder dump first:** generic
+  `Track 1`..`Track 8` names, every `/track/N/recarm` at 0, an empty
+  `/lastmarker`. The real project follows 0-7 s later (7 s on a cold launch).
+  Never treat the first dump as truth.
+- **Only tracks 1-8 are visible.** The stock surface's bank is 8 tracks; nothing
+  above `/track/8` arrived on a 30-track template. Arm, name and meter state for
+  tracks 9-30 cannot be seen over OSC at the default bank size (#167).
+- **`/lastmarker/number/str` is not reset on a project switch.** Name and time
+  reset; the number kept the previous project's value. Key on name or time,
+  never the number.
+- Arm state is saved with projects and templates, and reported per track as
+  `/track/N/recarm` (plus a `/toggle` twin), one packet per change.
