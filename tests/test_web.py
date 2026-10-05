@@ -433,9 +433,21 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         self.assertIn("96px", rule)
         self.assertIn("72px", rule)
 
-    async def test_the_selected_segment_is_neutral_because_this_control_moves_nothing(self):
-        # Green and amber are the fader's direction (#5); a segment that
-        # changes no level must not borrow either.
+    async def test_the_segments_are_styled_as_a_fader_control(self):
+        # #128: a tap rides the fader while it is up, so the border is as heavy
+        # as the fader buttons'.
+        body = await self.body()
+        self.assertIn("border-width:2px", self.rule(body, "#target-control button"))
+
+    async def test_a_riding_segment_wears_the_fading_colour_and_wins_over_selected(self):
+        body = await self.body()
+        rule = self.rule(body, "#target-control button.fading")
+        self.assertIn("var(--state-fading)", rule)
+        self.assertLess(body.index("#target-control button.selected{"), body.index("#target-control button.fading{"))
+
+    async def test_the_selected_segment_is_neutral_because_a_retarget_goes_either_way(self):
+        # Green and blue are the fader's direction (#5); a retarget goes up or
+        # down, so it must not borrow either.
         body = await self.body()
         rule = self.rule(body, "#target-control button.selected")
         self.assertNotIn("var(--open)", rule)
@@ -632,8 +644,9 @@ class TestTheLevelIsKnownOrNot(WebTestCase):
 
 
 class TestTheTargetRoute(WebTestCase):
-    """#9: `POST /api/target {"db": -3.0}`. It stores a value and moves nothing,
-    so what it is held to is the shape of the request and the presets."""
+    """#9: `POST /api/target {"db": -3.0}`. It stores a value, and rides the fader
+    there while it is up (#128); closed, it moves nothing, so what it is held to
+    is the shape of the request and the presets."""
 
     def build_app(self, monotonic=time.monotonic):
         self.clock = [5000.0]
@@ -656,10 +669,12 @@ class TestTheTargetRoute(WebTestCase):
         self.assertEqual(payload["target"]["db"], -6.0)
 
     async def test_a_good_post_sends_nothing_to_the_console(self):
+        # While closed (standing down): nothing is up to ride.
         await self.post({"db": -3.0})
         self.assertEqual(self.console_sender.packets, [])
 
     async def test_the_fader_block_is_untouched_by_it(self):
+        # While closed (standing down): nothing is up to ride.
         before = (await (await self.client.get("/api/state")).json())["fader"]
         payload = await (await self.post({"db": -3.0})).json()
         for key in ("commanded", "level_known", "target", "moving"):
@@ -727,21 +742,41 @@ class TestTheTargetRoute(WebTestCase):
         self.assertEqual(entry.data["tap"], want)
 
     async def test_a_late_tap_is_still_applied(self):
-        # Not stale-checked: it moves nothing.
+        # Not stale-checked while it would only store (here, standing down).
         body = {"db": -3.0, "tap": {"at": 5000.0 + 1000.0 - 30.0, "offset": 1000.0, "uncertainty": 0.05}}
         payload = await (await self.post(body)).json()
         self.assertEqual(payload["target"]["db"], -3.0)
         self.assertIsNone(payload["stale_tap"])
 
-    async def test_a_target_post_while_open_answers_with_the_stored_note(self):
-        # #153: the fader is up, so the tap stores and the response says so.
+    async def test_a_target_post_while_releasing_answers_with_the_stored_note(self):
+        # #153: the fader is up but fading, so the tap stores and says so.
+        self.tacet.machine = state.Machine(state=state.State.RELEASING, level_known=True)
+        before = len(self.console_sender.packets)
+        payload = await (await self.post({"db": -3.0})).json()
+        self.assertEqual(payload["target"]["stored"], {"db": -3.0, "because": "releasing"})
+        self.assertEqual(len(self.console_sender.packets), before)
+
+    async def test_a_target_post_while_open_rides_and_the_response_describes_it(self):
+        # #128: the fader is up, so the tap rides, and says which button did.
         await self.client.post("/api/close-now")
         await self.client.post("/api/arm")
         await self.client.post("/api/trigger")
-        before = len(self.console_sender.packets)
         payload = await (await self.post({"db": -3.0})).json()
-        self.assertEqual(payload["target"]["stored"], {"db": -3.0, "because": "open"})
-        self.assertEqual(len(self.console_sender.packets), before)
+        self.assertEqual(payload["fader"]["move"]["by"], "target-set")
+        self.assertIsNone(payload["target"]["stored"])
+        self.tacet._cancel_move()
+        self.assertEqual(payload["fader"]["move"]["to_db"], -3.0)
+
+    async def test_a_late_target_post_while_open_is_refused_as_stale(self):
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        await self.client.post("/api/trigger")
+        body = {"db": -3.0, "tap": {"at": 5000.0 + 1000.0 - 30.0, "offset": 1000.0, "uncertainty": 0.05}}
+        response = await self.post(body)
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertIsNotNone(payload["stale_tap"])
+        self.assertEqual(payload["target"]["db"], 0.0)
 
     async def test_a_target_post_while_standing_down_answers_with_no_note(self):
         # #153: nothing is up, so storing is what the operator expects.

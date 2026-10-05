@@ -2500,11 +2500,16 @@ class TestTheStandingTarget(AppTestCase):
         entry = [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
         self.assertTrue(entry.data["default"])
 
-    async def test_setting_the_target_sends_no_packet_and_leaves_the_commanded_level_alone(self):
+    async def releasing_it(self, app):
+        # Set directly: a real fade would send packets of its own in the
+        # background, and this test counts them.
+        app.machine = state.Machine(state=state.State.RELEASING, level_known=True)
+
+    async def test_setting_the_target_while_closed_or_releasing_sends_no_packet_and_leaves_the_level_alone(self):
         for label, prepare in (
             ("standing down", None),
             ("idle", lambda app: app.arm()),
-            ("open", self.open_it),
+            ("releasing", self.releasing_it),
         ):
             with self.subTest(state=label):
                 app = self.build()
@@ -2552,28 +2557,6 @@ class TestTheStandingTarget(AppTestCase):
         self.assertEqual(self.console.commanded_level, app._hold_level())
         self.assertEqual(self.console.commanded_level, -2100)
 
-    async def test_a_target_change_while_ready_stores_only_and_the_commit_goes_to_the_new_target(self):
-        app = self.build()
-        app._ready_ride_seconds = 0.1
-        await app.arm()
-        await app.annotate("up-ready")
-        await app.wait_for_fade()
-        old_hold = self.console.commanded_level
-        self.assertEqual(old_hold, -1500)
-        before = self.sent()
-
-        await app.set_target(-6.0)
-
-        # Nothing sent, and the fader still sits at the OLD hold level.
-        self.assertEqual(self.sent(), before)
-        self.assertEqual(self.console.commanded_level, old_hold)
-        self.assertEqual(app.machine.state, state.State.READY)
-        # The up-from-READY commit is absolute and goes to the NEW target.
-        await app.trigger()
-        self.assertEqual(self.console.commanded_level, -600)
-        self.assertEqual(self.console_sender.levels()[-1], -600)
-        self.assertEqual(app.machine.state, state.State.OPEN)
-
     async def test_a_ready_report_after_the_change_assumes_the_new_hold_level(self):
         app = self.build(level_known=False)
         await app.set_target(-6.0)
@@ -2582,34 +2565,18 @@ class TestTheStandingTarget(AppTestCase):
         self.assertEqual(self.console.commanded_level, -2100)
         self.assertEqual(app.machine.state, state.State.READY)
 
-    async def test_a_ride_in_already_under_way_keeps_its_original_destination(self):
-        app = self.build()
-        app._slow_open_seconds = 0.4
-        await app.arm()
-        await app.annotate("up-slow")
-        await asyncio.sleep(UNDER_WAY)
-        entries_before = len(self.commanded_entries())
-
-        await app.set_target(-6.0)
-
-        snap = app.snapshot()
-        self.assertEqual(snap["fader"]["target"], dm7.UNITY)
-        self.assertEqual(snap["target"]["db"], -6.0)
-        self.assertEqual(len(self.commanded_entries()), entries_before)
-        await app.wait_for_fade()
-        self.assertEqual(self.console.commanded_level, dm7.UNITY)
-
     async def test_fader_target_is_where_a_move_is_going_and_target_level_is_the_standing_setting(self):
-        # The naming trap, pinned: after a change mid-ride the two disagree.
+        # The naming trap, pinned: while READY rides to its hold level the two
+        # disagree, and no target tap is needed for that. (A target tap mid-ride
+        # now retargets the ride, #128, so it can no longer make them differ.)
         app = self.build()
-        app._slow_open_seconds = 0.4
+        app._ready_ride_seconds = 0.4
         await app.arm()
-        await app.annotate("up-slow")
-        await app.set_target(-3.0)
+        await app.annotate("up-ready")
         snap = app.snapshot()
         self.assertNotEqual(snap["fader"]["target"], snap["target"]["level"])
-        self.assertEqual(snap["fader"]["target"], 0)
-        self.assertEqual(snap["target"]["level"], -300)
+        self.assertEqual(snap["fader"]["target"], -1500)
+        self.assertEqual(snap["target"]["level"], 0)
         await app.wait_for_fade()
 
     async def test_the_standing_setting_is_not_inside_the_fader_block(self):
@@ -2635,15 +2602,6 @@ class TestTheStandingTarget(AppTestCase):
         await app.wait_for_fade()
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
         self.assertEqual(app.snapshot()["target"]["db"], -3.0)
-
-    async def test_a_target_change_while_open_leaves_the_fader_and_a_later_fade_still_closes(self):
-        app = self.build(fade=0.05)
-        await self.open_it(app)
-        await app.set_target(-3.0)
-        self.assertEqual(self.console.commanded_level, dm7.UNITY)
-        await app.release()
-        await app.wait_for_fade()
-        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
 
     async def test_a_level_that_is_not_a_preset_is_refused_and_changes_nothing(self):
         for label, level_known in (("known", True), ("unknown", False)):
@@ -2691,14 +2649,18 @@ class TestTheStandingTarget(AppTestCase):
         self.assertFalse(app.machine.level_known)
         self.assertEqual(self.console_sender.packets, [])
 
-    async def test_a_late_tap_is_not_refused_because_nothing_moves(self):
-        # Not stale-checked (#9): a silently refused tap on an inert control is
-        # a dead end, and there is no late move to guard against.
-        app = self.build()
-        await app.set_target(-3.0, tap=late(taps.DEFAULT_STALE_TAP_SECONDS + 5.0))
-        self.assertEqual(app.snapshot()["target"]["db"], -3.0)
-        self.assertIsNone(app.snapshot()["stale_tap"])
-        self.assertNotIn(tacet_app.STALE_TAP, self.keys())
+    async def test_a_late_target_tap_that_only_stores_is_still_applied(self):
+        # Not stale-checked while it would only store (#9): there is no late
+        # move to guard against, and a silently refused tap is a dead end.
+        for label, prepare in (("standing down", None), ("idle", lambda app: app.arm())):
+            with self.subTest(state=label):
+                app = self.build()
+                if prepare is not None:
+                    await prepare(app)
+                await app.set_target(-3.0, tap=late(taps.DEFAULT_STALE_TAP_SECONDS + 5.0))
+                self.assertEqual(app.snapshot()["target"]["db"], -3.0)
+                self.assertIsNone(app.snapshot()["stale_tap"])
+                self.assertNotIn(tacet_app.STALE_TAP, self.keys())
 
     async def test_a_change_is_logged_with_what_it_replaced(self):
         app = self.build()
@@ -2764,21 +2726,247 @@ class TestTheStandingTarget(AppTestCase):
         # its own path now, and nothing it does may be anything but that write.
         app = self.build(fade=0.05)
         app._slow_open_seconds = 0.05
+        app._retarget_ride_seconds = 0.05
+        app._ready_ride_seconds = 0.05
         await app.arm()
         await app.trigger()
-        await app.set_target(-3.0)
+        await app.set_target(-3.0)  # a retarget ride while open (#128)
+        await app.wait_for_fade()
         await app.release()
         await app.wait_for_fade()
         await app.annotate("up-slow")
+        await app.set_target(-6.0)  # retargets the ride-in
         await app.wait_for_fade()
-        await app.set_target(-6.0)
+        await app.release()
+        await app.wait_for_fade()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        await app.set_target(0.0)  # moves the READY hold
+        await app.wait_for_fade()
         await app.release()
         await app.wait_for_fade()
         self.assertGreater(self.sent(), 3)
+        levels = self.console_sender.levels()
+        self.assertIn(-300, levels)
+        self.assertIn(-600, levels)
+        self.assertIn(-1500, levels)
         for address in self.console_sender.addresses():
             self.assertEqual(address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3")
-        for level in self.console_sender.levels():
+        for level in levels:
             self.assertIsInstance(level, int)
+
+
+class TestARetargetRide(AppTestCase):
+    """#128: a target tap while the fader is up rides there. It is an operator
+    tap on the fader, so it is stale-checked like one, refused (the ride, not
+    the store) while the level is unknown, and never a mute."""
+
+    def commanded_entries(self):
+        return [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+
+    def target_sets(self):
+        return [e for e in self.entries() if e.event == tacet_app.TARGET_SET]
+
+    def build_up(self, **kwargs):
+        app = self.build(**kwargs)
+        app._retarget_ride_seconds = 0.05
+        app._ready_ride_seconds = 0.05
+        return app
+
+    async def open_it(self, app):
+        await app.arm()
+        await app.trigger()
+
+    async def ready_it(self, app):
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.READY)
+
+    async def test_a_target_tap_while_open_rides_to_the_new_level(self):
+        app = self.build_up()
+        await self.open_it(app)
+        before = len(self.console_sender.packets)
+        await app.set_target(-3.0)
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "ride")
+        self.assertEqual(move["by"], tacet_app.TARGET_SET)
+        self.assertEqual(move["to_db"], -3.0)
+        self.assertIsNotNone(move["knee"])
+        await app.wait_for_fade()
+        self.assertGreater(len(self.console_sender.packets), before)
+        self.assertEqual(self.console_sender.levels()[-1], -300)
+        self.assertEqual(self.console.commanded_level, -300)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def test_the_ride_is_commanded_by_the_target_tap_and_lands(self):
+        app = self.build_up()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await app.wait_for_fade()
+        keys = [e.event for e in self.entries()]
+        commanded = [e for e in self.commanded_entries() if e.data.get("command") == "retarget"]
+        self.assertEqual(len(commanded), 1)
+        self.assertEqual(commanded[0].data["detail"], tacet_app.TARGET_SET)
+        self.assertEqual(commanded[0].data["target"], -300)
+        self.assertIsNone(commanded[0].data["delivered"])
+        self.assertIsNone(self.target_sets()[-1].data["stored_because"])
+        # The move goes first and the target-set entry after it, then it lands.
+        last_commanded = max(i for i, k in enumerate(keys) if k == tacet_app.COMMANDED)
+        self.assertLess(last_commanded, keys.index(tacet_app.TARGET_SET))
+        last_landed = max(i for i, k in enumerate(keys) if k == tacet_app.MOVE_LANDED)
+        self.assertLess(keys.index(tacet_app.TARGET_SET), last_landed)
+        landed = [e for e in self.entries() if e.event == tacet_app.MOVE_LANDED]
+        self.assertEqual(landed[-1].data["target"], -300)
+
+    async def test_a_target_tap_while_riding_in_retargets_the_ride(self):
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        app._retarget_ride_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        await app.set_target(-6.0)
+        self.assertEqual(app.snapshot()["fader"]["move"]["to_db"], -6.0)
+        await asyncio.sleep(UNDER_WAY)
+        # A fast trigger mid-retarget still snaps, now to the new target.
+        await app.trigger()
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -600)
+
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        app._retarget_ride_seconds = 0.05
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        await app.set_target(-6.0)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -600)
+
+    async def test_a_target_tap_while_ready_moves_the_hold(self):
+        app = self.build_up()
+        await self.ready_it(app)
+        self.assertEqual(self.console.commanded_level, -1500)
+        await app.set_target(-6.0)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -2100)
+        self.assertEqual(app.machine.state, state.State.READY)
+        # The commit still goes to the new target.
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, -600)
+
+    async def test_a_target_tap_mid_ready_ride_moves_the_ride_to_the_new_hold(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.4
+        app._retarget_ride_seconds = 0.05
+        await app.arm()
+        await app.annotate("up-ready")
+        await asyncio.sleep(UNDER_WAY)
+        await app.set_target(-6.0)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -2100)
+        self.assertEqual(app.machine.state, state.State.READY)
+        self.assertFalse(app.machine.riding_in)
+
+    async def test_a_target_tap_while_releasing_stores_and_the_fade_still_ends_at_minus_infinity(self):
+        app = self.build(fade=0.2)
+        await self.open_it(app)
+        await app.release()
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        entries_before = len(self.commanded_entries())
+        await app.set_target(-3.0)
+        self.assertEqual(app.snapshot()["target"]["stored"], {"db": -3.0, "because": "releasing"})
+        self.assertEqual(len(self.commanded_entries()), entries_before)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+
+    async def test_a_target_tap_while_up_and_the_level_unknown_stores_and_refuses_the_ride(self):
+        for which in (state.State.OPEN, state.State.READY):
+            with self.subTest(state=which.value):
+                app = self.build_up()
+                app.machine = state.Machine(state=which, level_known=False)
+                before = len(self.console_sender.packets)
+                commanded = len(self.commanded_entries())
+                await app.set_target(-3.0)
+                snap = app.snapshot()
+                self.assertEqual(len(self.console_sender.packets), before)
+                self.assertEqual(snap["target"]["db"], -3.0)
+                self.assertEqual(snap["refusal"], state.UNKNOWN_LEVEL_MOVE)
+                self.assertEqual(snap["target"]["stored"], {"db": -3.0, "because": "unknown"})
+                self.assertEqual(self.target_sets()[-1].data["stored_because"], "unknown")
+                self.assertEqual(len(self.commanded_entries()), commanded)
+
+    async def test_a_late_target_tap_that_would_ride_is_refused_and_not_stored(self):
+        app = self.build_up()
+        await self.open_it(app)
+        before = len(self.console_sender.packets)
+        await app.set_target(-3.0, tap=late(taps.DEFAULT_STALE_TAP_SECONDS + 5.0))
+        snap = app.snapshot()
+        self.assertIsNotNone(snap["stale_tap"])
+        self.assertEqual(snap["target"]["db"], 0.0)
+        self.assertIsNone(snap["fader"]["move"])
+        self.assertEqual(len(self.console_sender.packets), before)
+        self.assertNotIn(tacet_app.TARGET_SET, self.keys())
+        stale = [e for e in self.entries() if e.event == tacet_app.STALE_TAP]
+        self.assertEqual(stale[-1].data["command"], "set_target")
+
+    async def test_a_tap_on_the_current_target_while_open_moves_nothing(self):
+        app = self.build_up()
+        await self.open_it(app)
+        before = len(self.console_sender.packets)
+        await app.set_target(0.0)
+        self.assertEqual(len(self.console_sender.packets), before)
+        self.assertIsNone(app.snapshot()["fader"]["move"])
+        self.assertEqual(app.snapshot()["target"]["stored"], {"db": 0.0, "because": "unchanged"})
+
+    async def test_after_a_failed_retarget_ride_the_same_segment_retries_it(self):
+        sender = FlakySender()
+        app = self.build_up(console_sender=sender, steady=True)
+        await self.open_it(app)
+        sender.fail_after = len(sender.packets) + 2
+        await app.set_target(-3.0)
+        await app.wait_for_fade()
+        self.assertIn(tacet_app.MOVE_FAILED, self.keys())
+        self.assertTrue(app.machine.level_known)
+        self.assertTrue(app.machine.stalled)
+        sender.heal()
+        await app.set_target(-3.0)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -300)
+        self.assertFalse(app.machine.stalled)
+
+    async def test_a_fade_mid_retarget_takes_over(self):
+        app = self.build(fade=5.0)
+        app._retarget_ride_seconds = 5.0
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await asyncio.sleep(UNDER_WAY)
+        await app.release()
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "fade")
+        self.assertIsNone(move["by"])  # a bare release names no button
+        app._cancel_move()
+
+    async def test_a_handoff_mid_retarget_cancels_the_ride(self):
+        app = self.build()
+        app._retarget_ride_seconds = 5.0
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await asyncio.sleep(UNDER_WAY)
+        await app.handoff()
+        snap = app.snapshot()
+        self.assertIsNone(snap["fader"]["move"])
+        self.assertFalse(snap["fader"]["level_known"])
+
+    async def test_the_target_note_is_empty_after_a_ride(self):
+        app = self.build_up()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await app.wait_for_fade()
+        self.assertIsNone(app.snapshot()["target"]["stored"])
 
 
 class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
@@ -2818,10 +3006,30 @@ class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
         for which, because in expected.items():
             with self.subTest(state=which.value):
                 machine = state.Machine(state=which)
-                self.assertIs(tacet_app.stored_only_because(machine, unchanged=False), because)
-                self.assertIs(tacet_app.stored_only_because(machine, unchanged=True), tacet_app.StoredOnly.UNCHANGED)
+                self.assertIs(tacet_app.stored_only_because(machine, None, unchanged=False), because)
+                self.assertIs(
+                    tacet_app.stored_only_because(machine, None, unchanged=True), tacet_app.StoredOnly.UNCHANGED
+                )
         riding = state.Machine(state=state.State.OPEN, riding_in=True)
-        self.assertIs(tacet_app.stored_only_because(riding, unchanged=False), tacet_app.StoredOnly.OPEN)
+        self.assertIs(tacet_app.stored_only_because(riding, None, unchanged=False), tacet_app.StoredOnly.OPEN)
+
+    def test_stored_only_because_reads_the_outcome(self):
+        opened = state.Machine(state=state.State.OPEN, level_known=True)
+        rode = state.step(opened, state.Event(state.Command.RETARGET))
+        self.assertIsNone(tacet_app.stored_only_because(opened, rode, unchanged=False))
+        unknown = state.Machine(state=state.State.OPEN, level_known=False)
+        refused = state.step(unknown, state.Event(state.Command.RETARGET))
+        self.assertIs(tacet_app.stored_only_because(unknown, refused, unchanged=False), tacet_app.StoredOnly.UNKNOWN)
+        self.assertEqual(refused.refusal, state.UNKNOWN_LEVEL_MOVE)
+        for which, because in (
+            (state.State.IDLE, tacet_app.StoredOnly.CLOSED),
+            (state.State.RELEASING, tacet_app.StoredOnly.RELEASING),
+        ):
+            with self.subTest(state=which.value):
+                machine = state.Machine(state=which, level_known=True)
+                outcome = state.step(machine, state.Event(state.Command.RETARGET))
+                self.assertIs(tacet_app.stored_only_because(machine, outcome, unchanged=False), because)
+        self.assertIs(tacet_app.stored_only_because(opened, None, unchanged=True), tacet_app.StoredOnly.UNCHANGED)
 
     def test_stored_note_shown_only_while_the_fader_is_up(self):
         for which in state.State:
@@ -2835,14 +3043,24 @@ class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
         app = self.build()
         self.assertIsNone(self.stored(app))
 
-    async def test_a_target_set_while_open_says_it_stored_and_did_not_move(self):
+    async def test_a_target_set_while_open_and_riding_leaves_no_note(self):
+        # #128: it rode, so there is nothing to say it did not.
         app = self.build()
+        app._retarget_ride_seconds = 0.05
         await self.open_it(app)
-        before = len(self.console_sender.packets)
         await app.set_target(-3.0)
-        self.assertEqual(self.stored(app), {"db": -3.0, "because": "open"})
-        self.assertEqual(len(self.console_sender.packets), before)
-        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertIsNone(self.stored(app))
+        await app.wait_for_fade()
+
+    async def test_a_target_set_while_up_and_unknown_says_the_box_does_not_know_where_it_is(self):
+        for which in (state.State.OPEN, state.State.READY):
+            with self.subTest(state=which.value):
+                app = self.build()
+                app.machine = state.Machine(state=which, level_known=False)
+                before = len(self.console_sender.packets)
+                await app.set_target(-3.0)
+                self.assertEqual(self.stored(app), {"db": -3.0, "because": "unknown"})
+                self.assertEqual(len(self.console_sender.packets), before)
 
     async def test_a_target_set_while_closed_shows_no_note_but_logs_why(self):
         for label, level_known, arm in (
@@ -2858,11 +3076,7 @@ class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
                 self.assertIsNone(self.stored(app))
                 self.assertEqual(self.target_set().data["stored_because"], "closed")
 
-    async def test_a_target_set_while_ready_or_releasing_says_which(self):
-        app = self.build()
-        await self.ready_it(app)
-        await app.set_target(-3.0)
-        self.assertEqual(self.stored(app), {"db": -3.0, "because": "ready"})
+    async def test_a_target_set_while_releasing_says_the_fade_carries_on(self):
         app = self.build()
         app.machine = state.Machine(state=state.State.RELEASING, level_known=True)
         await app.set_target(-6.0)
@@ -2871,9 +3085,11 @@ class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
     async def test_a_tap_on_the_target_already_set_while_open_says_nothing_changed(self):
         app = self.build()
         await self.open_it(app)
+        before = len(self.console_sender.packets)
         await app.set_target(0.0)
         self.assertEqual(self.stored(app), {"db": 0.0, "because": "unchanged"})
         self.assertEqual(self.target_set().data["stored_because"], "unchanged")
+        self.assertEqual(len(self.console_sender.packets), before)
 
     async def test_a_tap_on_the_target_already_set_while_closed_shows_no_note(self):
         app = self.build()
@@ -2883,16 +3099,17 @@ class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
         self.assertEqual(self.target_set().data["stored_because"], "unchanged")
 
     async def test_the_note_clears_when_the_fader_next_moves(self):
+        # Open and unknown: the tap stores and refuses the ride, and the
+        # instant close, which is absolute, then moves the fader (#107).
         app = self.build()
-        await self.open_it(app)
+        app.machine = state.Machine(state=state.State.OPEN, level_known=False)
         await app.set_target(-3.0)
         self.assertIsNotNone(self.stored(app))
-        await app.release()
+        await app.close_now()
         self.assertIsNone(self.stored(app))
-        await app.wait_for_fade()
 
         app = self.build()
-        await self.ready_it(app)
+        app.machine = state.Machine(state=state.State.READY, level_known=False)
         await app.set_target(-6.0)
         self.assertIsNotNone(self.stored(app))
         await app.trigger()
@@ -2911,31 +3128,31 @@ class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
 
     async def test_a_handoff_that_leaves_the_state_alone_keeps_the_note(self):
         app = self.build()
-        await self.open_it(app)
+        app.machine = state.Machine(state=state.State.OPEN, level_known=False)
         await app.set_target(-3.0)
         await app.handoff()
         self.assertEqual(app.machine.state, state.State.OPEN)
-        self.assertEqual(self.stored(app), {"db": -3.0, "because": "open"})
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "unknown"})
 
     async def test_a_refused_level_leaves_the_note_alone(self):
         app = self.build()
-        await self.open_it(app)
+        app.machine = state.Machine(state=state.State.RELEASING, level_known=True)
         await app.set_target(-3.0)
         await app.set_target(-2.5)
-        self.assertEqual(self.stored(app), {"db": -3.0, "because": "open"})
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "releasing"})
 
     async def test_a_newer_tap_replaces_the_note(self):
         app = self.build()
-        await self.open_it(app)
+        app.machine = state.Machine(state=state.State.RELEASING, level_known=True)
         await app.set_target(-3.0)
         await app.set_target(-6.0)
-        self.assertEqual(self.stored(app), {"db": -6.0, "because": "open"})
+        self.assertEqual(self.stored(app), {"db": -6.0, "because": "releasing"})
 
     async def test_target_set_logs_why_it_only_stored(self):
         app = self.build()
-        await self.open_it(app)
+        app.machine = state.Machine(state=state.State.RELEASING, level_known=True)
         await app.set_target(-3.0)
-        self.assertEqual(self.target_set().data["stored_because"], "open")
+        self.assertEqual(self.target_set().data["stored_because"], "releasing")
         await app.set_target(-3.0)
         self.assertEqual(self.target_set().data["stored_because"], "unchanged")
 
