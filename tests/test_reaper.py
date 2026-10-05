@@ -3,6 +3,10 @@ import unittest
 from tacet import osc, reaper
 from tacet.net import TransportError
 
+#: A meter address from the bench capture: Reaper streams these whenever its
+#: audio device runs, parked or rolling (#163).
+METER = "/master/vu"
+
 
 class FakeSender:
     def __init__(self):
@@ -101,6 +105,48 @@ class TestLiveness(unittest.TestCase):
                 if state.liveness(now=103.0, timeout=2.0) is reaper.Liveness.QUIET:
                     self.assertNotEqual(state.recording, True)
 
+    def test_a_recording_report_with_meters_but_no_clock_is_lost(self):
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        for now in (101.0, 102.0, 103.0):
+            state = feed(state, METER, 0.0, now=now)
+        self.assertIs(state.liveness(103.0, timeout=2.0), reaper.Liveness.LOST)
+
+    def test_a_relaunched_reaper_is_not_shown_rolling(self):
+        # Quit mid-take, relaunched parked: meters flow again but the last
+        # transport word is a stale "recording" (#163).
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        state = feed(state, "/play", 1.0, now=100.0)
+        now = 100.0
+        while now <= 110.0:
+            state = feed(state, "/time", now - 100.0, now=now)
+            now += 0.1
+        for at in (130.0, 131.0):
+            state = feed(state, METER, 0.0, now=at)
+        self.assertIs(state.liveness(131.0, timeout=2.0), reaper.Liveness.LOST)
+        self.assertEqual(reaper.record_refusal(state, 131.0), reaper.RECORD_REFUSED_LOST)
+
+    def test_the_start_burst_is_live_before_the_first_clock(self):
+        state = reaper.TransportState()
+        for address, value in (("/record", 1.0), ("/stop", 0.0), ("/play", 1.0)):
+            state = feed(state, address, value, now=100.0)
+        self.assertIs(state.liveness(100.05, timeout=2.0), reaper.Liveness.LIVE)
+        self.assertIs(state.liveness(102.0, timeout=2.0), reaper.Liveness.LIVE)
+        self.assertIs(state.liveness(102.5, timeout=2.0), reaper.Liveness.LOST)
+
+    def test_a_clock_that_keeps_coming_keeps_a_recording_live(self):
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        now = 100.0
+        while now <= 110.0:
+            state = feed(state, "/time", now - 100.0, now=now)
+            state = feed(state, METER, 0.0, now=now)
+            now += 0.1
+        self.assertIs(state.liveness(110.0, timeout=2.0), reaper.Liveness.LIVE)
+
+    def test_a_stale_clock_from_an_earlier_take_does_not_hold_a_new_one_live(self):
+        state = feed(reaper.TransportState(), "/time", 3.0, now=50.0)
+        state = feed(state, "/record", 1.0, now=100.0)
+        self.assertIs(state.liveness(102.5, timeout=2.0), reaper.Liveness.LOST)
+
     def test_is_fresh_still_means_live(self):
         state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
         for now in (100.5, 103.0):
@@ -136,6 +182,18 @@ class TestFeedback(unittest.TestCase):
     def test_integer_arguments_are_accepted(self):
         # Not every controller sends floats.
         self.assertTrue(feed(reaper.TransportState(), "/record", 1).recording)
+
+    def test_transport_reports_stamp_transport_at(self):
+        for address in ("/play", "/record"):
+            with self.subTest(address=address):
+                state = feed(reaper.TransportState(), address, 0.0, now=7.0)
+                self.assertEqual(state.transport_at, 7.0)
+
+    def test_meters_do_not_stamp_transport_at(self):
+        state = feed(reaper.TransportState(), METER, 0.5, now=7.0)
+        self.assertIsNone(state.transport_at)
+        state = feed(state, "/time", 1.0, now=8.0)
+        self.assertIsNone(state.transport_at)
 
     def test_a_packet_stamps_liveness_even_when_unrecognised(self):
         # Any valid packet proves the link is up, which is what freshness means.
@@ -289,15 +347,172 @@ class TestRecordLatch(unittest.TestCase):
         refusal = reaper.record_refusal(state, 10.0 + 3600.0, request=self.pending(state))
         self.assertIsNotNone(refusal)
 
-    def test_the_refusal_says_what_to_do_and_how_long_it_has_waited(self):
+    def test_the_unanswered_refusal_says_what_to_do(self):
         state = reaper.TransportState()
         refusal = reaper.record_refusal(state, 52.0, request=self.pending(state, sent_at=10.0))
-        assert refusal is not None
-        self.assertIn("42s", refusal)
-        self.assertIn("in Reaper", refusal)
+        self.assertEqual(refusal, reaper.RECORD_REFUSED_UNANSWERED)
+        self.assertIn("Check Reaper", refusal or "")
+
+    def test_the_unanswered_refusal_does_not_change_while_it_waits(self):
+        # No age in the text: it would churn the snapshot every second (#147).
+        state = reaper.TransportState()
+        request = self.pending(state)
+        self.assertEqual(
+            reaper.record_refusal(state, 10.1, request=request),
+            reaper.record_refusal(state, 3610.0, request=request),
+        )
+
+    def test_the_latch_is_checked_before_presence(self):
+        state = reaper.TransportState()
+        refusal = reaper.record_refusal(state, 10.1, request=self.pending(state))
+        self.assertEqual(refusal, reaper.RECORD_REFUSED_UNANSWERED)
 
     def test_no_request_means_no_latch(self):
-        self.assertIsNone(reaper.record_refusal(reaper.TransportState(), 10.0, request=None))
+        state = feed(reaper.TransportState(), METER, 0.0, now=10.0)
+        self.assertIsNone(reaper.record_refusal(state, 10.0, request=None))
+
+
+def meter_stream(state, start, stop, *, step=0.1):
+    now = start
+    while now <= stop + 1e-9:
+        state = feed(state, METER, 0.0, now=now)
+        now += step
+    return state
+
+
+class TestMotionIsTheClock(unittest.TestCase):
+    """Motion is judged on `/time` alone; meters flow parked or rolling (#163)."""
+
+    def test_meters_alone_with_record_state_unknown_allow_a_start(self):
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        self.assertIsNone(reaper.record_refusal(state, 100.5))
+
+    def test_a_streaming_clock_with_record_state_unknown_refuses(self):
+        state = feed(reaper.TransportState(), "/time", 3.0, now=100.0)
+        state = feed(state, METER, 0.0, now=100.4)
+        self.assertEqual(reaper.record_refusal(state, 100.5), reaper.RECORD_REFUSED_MOVING)
+
+    def test_a_clock_that_stopped_while_meters_flow_allows_a_start(self):
+        state = feed(reaper.TransportState(), "/time", 3.0, now=100.0)
+        state = meter_stream(state, 101.0, 103.0, step=1.0)
+        self.assertIsNone(reaper.record_refusal(state, 103.0))
+
+    def test_clock_running_ignores_meters_and_transport_reports(self):
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        state = feed(state, "/play", 1.0, now=100.0)
+        self.assertFalse(state.clock_running(100.5))
+        state = feed(state, "/time", 1.0, now=100.4)
+        self.assertTrue(state.clock_running(100.4 + reaper.DEFAULT_FEEDBACK_TIMEOUT))
+        self.assertFalse(state.clock_running(100.4 + reaper.DEFAULT_FEEDBACK_TIMEOUT + 0.5))
+
+    def test_current_position_and_clock_running_agree(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        for now in (100.0, 101.0, 102.0, 102.5, 200.0):
+            self.assertEqual(
+                state.clock_running(now),
+                state.current_position(now) is not None,
+            )
+
+
+class TestPresence(unittest.TestCase):
+    """Silence never permits a send: a `/record` into nothing is a false anchor."""
+
+    def test_never_heard_from_refuses_as_silent(self):
+        self.assertEqual(reaper.record_refusal(reaper.TransportState(), 100.0), reaper.RECORD_REFUSED_SILENT)
+
+    def test_a_reaper_that_went_quiet_after_a_stop_refuses_as_silent(self):
+        state = feed(reaper.TransportState(), "/record", 0.0, now=100.0)
+        state = feed(state, "/play", 0.0, now=100.0)
+        self.assertIs(state.liveness(103.0), reaper.Liveness.QUIET)
+        self.assertEqual(reaper.record_refusal(state, 103.0), reaper.RECORD_REFUSED_SILENT)
+
+    def test_a_reaper_that_quit_is_not_sent_a_start(self):
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        self.assertIsNone(reaper.record_refusal(state, 100.5))
+        self.assertIsNotNone(reaper.record_refusal(state, 103.0))
+
+
+#: The packets of a rolling Reaper on the bench, one tick's worth (#163).
+ROLLING_MIX = (METER, "/track/1/vu", "/time", "/time/str", "/beat/str", "/samples", "/frames/str")
+TICKS_PER_SECOND = 12
+MIX_SECONDS = 5
+
+
+def rolling_tick(address: str, tick: int) -> bytes:
+    value: float | str = "0:00.0" if address.endswith("/str") else float(tick)
+    return osc.encode_message(address, value)
+
+
+class TestNeverSentBlind(unittest.TestCase):
+    """What stands between a tap and stopping the game's take."""
+
+    def test_record_is_never_permitted_while_reaper_may_be_rolling(self):
+        """`/record` is a toggle: sent at a rolling Reaper it stops the take.
+
+        Sweeps every combination of what Reaper may have said, building each
+        state through `apply_feedback`, and asserts that whenever the box would
+        send, it had positive evidence that it can only start.
+        """
+        end = 105.0
+        checked = 0
+        for record in (None, 1.0, 0.0):
+            for play in (None, 1.0, 0.0):
+                for clock in ("fresh", "never", "stale"):
+                    for meters in (True, False):
+                        for prior in (False, True):
+                            for outstanding in (False, True):
+                                state = reaper.TransportState()
+                                if record is not None:
+                                    state = feed(state, "/record", record, now=100.0)
+                                if play is not None:
+                                    state = feed(state, "/play", play, now=100.0)
+                                if clock == "fresh":
+                                    state = feed(state, "/time", 5.0, now=104.5)
+                                elif clock == "stale":
+                                    state = feed(state, "/time", 5.0, now=100.0)
+                                if meters:
+                                    state = meter_stream(state, 104.0, end, step=0.5)
+                                request = (
+                                    reaper.RecordRequest(sent_at=99.0, reports_before=state.record_reports)
+                                    if outstanding
+                                    else None
+                                )
+                                refusal = reaper.record_refusal(state, end, request=request, prior_recording=prior)
+                                checked += 1
+                                if refusal is not None:
+                                    continue
+                                label = (record, play, clock, meters, prior, outstanding)
+                                self.assertIsNot(state.recording, True, label)
+                                if state.recording is None:
+                                    self.assertFalse(state.clock_running(end), label)
+                                    self.assertFalse(prior, label)
+                                self.assertIs(state.liveness(end), reaper.Liveness.LIVE, label)
+                                self.assertIsNone(request, label)
+        self.assertEqual(checked, 3 * 3 * 3 * 2 * 2 * 2)
+
+    def test_a_box_started_mid_take_never_sends_record(self):
+        # A fresh box, a Reaper already rolling: no `/record` or `/play` report
+        # was ever announced to it, only the steady stream. One bundle per tick,
+        # so the clock arrives with the meters it is sent beside.
+        state = reaper.TransportState()
+        for tick in range(TICKS_PER_SECOND * MIX_SECONDS):
+            now = 100.0 + tick / TICKS_PER_SECOND
+            packet = osc.encode_bundle([rolling_tick(address, tick) for address in ROLLING_MIX])
+            state = reaper.apply_feedback(packet, state, now=now)
+            self.assertIsNotNone(reaper.record_refusal(state, now), tick)
+
+    def test_a_box_started_mid_take_with_no_clock_pattern_still_refuses_against_a_prior_recording(self):
+        state = reaper.TransportState()
+        mix = [address for address in ROLLING_MIX if address != "/time"]
+        for tick in range(TICKS_PER_SECOND * MIX_SECONDS):
+            now = 100.0 + tick / TICKS_PER_SECOND
+            packet = osc.encode_bundle([rolling_tick(address, tick) for address in mix])
+            state = reaper.apply_feedback(packet, state, now=now)
+            self.assertEqual(
+                reaper.record_refusal(state, now, prior_recording=True),
+                reaper.RECORD_REFUSED_PRIOR,
+                tick,
+            )
 
 
 class TestCommands(unittest.TestCase):

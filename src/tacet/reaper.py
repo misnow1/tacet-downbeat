@@ -38,14 +38,47 @@ DEFAULT_SEND_PORT = 8000
 #: The port Reaper sends feedback to: its "device port".
 DEFAULT_RECEIVE_PORT = 9000
 
-#: How long we wait for the `/time` stream before calling the link lost.
+#: How long we wait for a packet, or for the `/time` stream, before calling it
+#: silent.
 #:
-#: Reaper only feeds back while the transport is *moving* - about 11 Hz of
-#: `/time` while rolling, and a single burst on each transport change. Parked
-#: and stopped it sends nothing at all. So this is not a general staleness
-#: timeout: it only means anything while Reaper should be streaming. See
+#: What Reaper sends on the game rig (bench, 2026-10-04, #163): meters, about
+#: 11 packets a second, whenever its audio device runs - parked or rolling.
+#: `/time`, about 12 a second, only while the transport moves. `/record`,
+#: `/play` and `/stop` only when they change, never in a launch or project-load
+#: dump. Quitting is silent. So a packet means Reaper is there, `/time` means
+#: it is moving, and this timeout is how long either may be missing. See
 #: `Liveness`.
 DEFAULT_FEEDBACK_TIMEOUT = 2.0
+
+#: Why the box will not send a record command. Each is shown on the page beside
+#: the grey button (#163) and quoted verbatim in docs/troubleshooting.md.
+#:
+#: Reaper says it is recording but its playhead has stopped (link lost).
+RECORD_REFUSED_LOST = (
+    "Reaper has stopped answering: it says it is recording but its playhead is not moving. "
+    "Check Reaper, and start the recording there if it is not rolling."
+)
+#: The box's own last `/record` has had no answer (#28).
+RECORD_REFUSED_UNANSWERED = (
+    "Reaper has not confirmed the start the box sent, so another tap could stop it. "
+    "Check Reaper, and start it there if it is not recording."
+)
+#: Nothing has been heard from Reaper lately: closed, or not sending feedback.
+RECORD_REFUSED_SILENT = (
+    "Reaper is not answering. Open it, with its audio device running, or start the recording in Reaper."
+)
+#: Reaper has said it is recording.
+RECORD_REFUSED_ROLLING = "Reaper is already recording."
+#: The transport is moving and Reaper has not said whether it is recording.
+RECORD_REFUSED_MOVING = (
+    "Reaper's transport is moving but it has not said whether it is recording. "
+    "Check Reaper, and start the recording there if it is not."
+)
+#: The log already holds a recording and Reaper has not said whether it rolls.
+RECORD_REFUSED_PRIOR = (
+    "This log already holds a recording, and Reaper has not said whether it is still rolling. "
+    "Check Reaper, and start it there if it is not."
+)
 
 _ACTION_PREFIX = "/action"
 
@@ -72,16 +105,17 @@ DEFAULT_ADDRESSES = AddressMap()
 class Liveness(StrEnum):
     """What silence from Reaper means right now.
 
-    Reaper's OSC feedback is edge-driven: it streams `/time` while the
-    transport moves, sends one burst per transport change, and is otherwise
-    completely silent. There is no heartbeat and no way to ask - probing
+    On the game rig Reaper streams meters whenever its audio device runs,
+    `/time` only while the transport moves, and transport state only on change
+    - never in a launch or project-load dump - and quitting is silent (bench,
+    2026-10-04, #163). There is no heartbeat and no way to ask - probing
     `/device/track/count` draws a reply only when the value actually changes,
     so it cannot be used as a ping (measured 2026-09-08).
 
     That makes a single "is it fresh" flag wrong in both directions. Silence
-    while Reaper should be streaming is a fault; the same silence while it sits
-    parked is just Reaper sitting parked. Interpreting the second as a fault is
-    what made the UI cry wolf through the whole pre-game window.
+    while Reaper should be streaming `/time` is a fault; the same silence while
+    it sits parked is just Reaper sitting parked. Interpreting the second as a
+    fault is what made the UI cry wolf through the whole pre-game window.
     """
 
     #: Reaper has never said anything, or has never said what it was doing.
@@ -111,20 +145,40 @@ class TransportState:
     #: Monotonic time `position` itself last arrived. Not `last_packet`: any
     #: packet proves the link, but only `/time` says where the playhead is.
     position_at: float | None = None
+    #: Monotonic time of the last `/play` or `/record` report, whichever way it
+    #: went. A transport change is announced before the first `/time` of a
+    #: roll, so this is what keeps a recording that has just started from
+    #: reading LOST in the moment before its playhead arrives.
+    transport_at: float | None = None
     #: How many `/record` reports have arrived, whichever way they went. A
     #: count rather than a time, so "answered after the send" cannot be fooled
     #: by two readings of a coarse clock that happen to be equal.
     record_reports: int = 0
 
     def is_fresh(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
-        """Whether Reaper has spoken within the timeout.
+        """Whether any packet has arrived within the timeout.
 
-        Says nothing about whether the link is healthy: Reaper is silent
-        whenever it is parked. Use `liveness` to tell those apart.
+        About any packet and nothing more: it is not liveness (see `liveness`,
+        which reads a rolling Reaper's silence differently) and it says nothing
+        about whether the transport is moving (`clock_running`).
         """
         if self.last_packet is None:
             return False
         return (now - self.last_packet) <= timeout
+
+    def clock_running(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
+        """Whether `/time` has arrived within the timeout: the transport is moving.
+
+        On `/time` alone - meters flow parked or rolling on this rig (#35, #163).
+        """
+        if self.position_at is None:
+            return False
+        return (now - self.position_at) <= timeout
+
+    @property
+    def rolling(self) -> bool:
+        """Whether Reaper's last word was that the transport is playing or recording."""
+        return self.playing is True or self.recording is True
 
     def current_position(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> float | None:
         """Where the playhead is now, or None if that is not known.
@@ -137,9 +191,7 @@ class TransportState:
         position from a finished take looking current for as long as it sat
         there (#35).
         """
-        if self.position is None or self.position_at is None:
-            return None
-        if (now - self.position_at) > timeout:
+        if self.position is None or not self.clock_running(now, timeout=timeout):
             return None
         return self.position
 
@@ -151,13 +203,24 @@ class TransportState:
         only ever under-claim. A recorder that dies while parked keeps
         rendering as "stopped", which remains true. Nothing here can render a
         dead recorder as rolling - that path is LOST.
+
+        While Reaper's last word is that it is rolling, LIVE needs the clock,
+        not just any packet: meters flow whenever its audio device runs, so a
+        Reaper relaunched parked after quitting mid-take would otherwise read
+        LIVE with a stale "recording" (#163). The clock is `/time`, or a
+        `/play` or `/record` report, which a roll announces just before its
+        first `/time`.
         """
         if self.last_packet is None:
             return Liveness.UNKNOWN
+        if self.rolling:
+            heard = max(
+                (t for t in (self.position_at, self.transport_at) if t is not None),
+                default=self.last_packet,
+            )
+            return Liveness.LIVE if (now - heard) <= timeout else Liveness.LOST
         if (now - self.last_packet) <= timeout:
             return Liveness.LIVE
-        if self.playing or self.recording:
-            return Liveness.LOST
         if self.playing is None and self.recording is None:
             return Liveness.UNKNOWN
         return Liveness.QUIET
@@ -214,11 +277,16 @@ def apply_feedback(
         if message.address == addresses.recording:
             recording = _as_bool(value)
             if recording is not None:
-                state = replace(state, recording=recording, record_reports=state.record_reports + 1)
+                state = replace(
+                    state,
+                    recording=recording,
+                    record_reports=state.record_reports + 1,
+                    transport_at=now,
+                )
         elif message.address == addresses.playing:
             playing = _as_bool(value)
             if playing is not None:
-                state = replace(state, playing=playing)
+                state = replace(state, playing=playing, transport_at=now)
         elif message.address == addresses.position:
             position = _as_float(value)
             if position is not None:
@@ -255,23 +323,27 @@ def record_refusal(
     *,
     timeout: float = DEFAULT_FEEDBACK_TIMEOUT,
     request: RecordRequest | None = None,
+    prior_recording: bool = False,
 ) -> str | None:
     """Why the box will not send a record command, or None if it will.
 
     Reaper's `/record` is a toggle, not a start. Sent at a recorder that is
     already rolling it stops the recording - which is the stop button design.md
     5.9 refuses to put on this screen, reached by tapping "start" twice. Each
-    home game is a single irreplaceable sample, so the box declines rather than
-    risk it.
+    home game is a single irreplaceable sample, so the box sends only on
+    positive evidence that `/record` can only start. A start done by hand in
+    Reaper is recoverable; a stop is not.
 
-    Silence is what makes the safe cases decidable. Reaper streams `/time`
-    while the transport moves and says nothing at all when it is parked, so
-    having heard nothing recently means the transport is stopped and `/record`
-    can only start it. When the transport *is* moving and Reaper has not said
-    whether it is recording - a box restarted mid-game, since transport state
-    is announced only when it changes - there is no way to tell a safe send
-    from one that would end the recording, and the box says so instead of
-    guessing.
+    The evidence is presence from any packet and motion from `/time` alone.
+    Reaper streams meters whenever its audio device runs, parked or rolling, so
+    a packet proves Reaper is there but not that it is parked; `/time` arrives
+    only while the transport moves. Transport state is announced only when it
+    changes, never in a launch or project-load dump, so after a box restart the
+    record state is unknown while Reaper may be rolling. Two backstops cover a
+    `/time` pattern that is missing: a Reaper that says it is rolling and sends
+    no clock reads LINK LOST (see `TransportState.liveness`), and a log that
+    already holds a recording, with the record state unknown, is refused as
+    well - the one case where the box may have been restarted mid-take.
 
     Nor will it send while its own last `/record` is unanswered (#28). Two taps
     that both leave before Reaper's confirmation comes back are a start and a
@@ -282,21 +354,18 @@ def record_refusal(
     """
     liveness = state.liveness(now, timeout=timeout)
     if liveness is Liveness.LOST:
-        return "Reaper has stopped answering. Start the recording in Reaper."
+        return RECORD_REFUSED_LOST
     if request is not None and not request.answered_by(state):
-        return (
-            f"Reaper has not confirmed the start sent {now - request.sent_at:.0f}s ago, "
-            "so another tap could stop it. Check Reaper, and start it in Reaper if "
-            "it is not recording."
-        )
-    if liveness is Liveness.LIVE:
-        if state.recording:
-            return "Reaper is already recording."
-        if state.recording is None:
-            return (
-                "Reaper's transport is moving but it has not said whether it is "
-                "recording. Start the recording in Reaper."
-            )
+        return RECORD_REFUSED_UNANSWERED
+    if liveness is not Liveness.LIVE:
+        return RECORD_REFUSED_SILENT
+    if state.recording is True:
+        return RECORD_REFUSED_ROLLING
+    if state.recording is None:
+        if state.clock_running(now, timeout=timeout):
+            return RECORD_REFUSED_MOVING
+        if prior_recording:
+            return RECORD_REFUSED_PRIOR
     return None
 
 
