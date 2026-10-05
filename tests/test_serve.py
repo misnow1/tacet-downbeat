@@ -854,7 +854,9 @@ class TestGitIsAskedOnceBeforeTheLoop(TestCheckAnswersWithoutStarting):
         async def nothing():
             pass
 
-        with mock.patch("tacet.serve._run", return_value=nothing()) as run:
+        coroutine = nothing()
+        self.addCleanup(coroutine.close)
+        with mock.patch("tacet.serve._run", return_value=coroutine) as run:
             self.start(self.good())
         self.assertEqual(run.call_args.args[1], CLEAN_CODE)
 
