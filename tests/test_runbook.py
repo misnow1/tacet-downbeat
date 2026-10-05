@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, app, config, disk, reaper, serve, state, web
+from tacet import annotations, app, config, disk, provenance, reaper, serve, state, web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -82,7 +82,46 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         self.troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")
         argv = ["--console-host", "10.0.0.5", "--dca", "3", "--log", "/games/g.jsonl"]
         argv += ["--queue", "/queue/tacet.tsv", "--reaper-host", "127.0.0.1"]
-        self.lines = serve.startup_lines(serve.parser().parse_args(argv), None)
+        clean = provenance.Provenance(
+            source=provenance.Source.CHECKOUT,
+            commit="0123456789abcdef0123456789abcdef01234567",
+            branch="main",
+            detached=False,
+            dirty=False,
+            untracked=0,
+            worktree=False,
+            path="/checkout",
+            error=None,
+        )
+        self.lines = serve.startup_lines(serve.parser().parse_args(argv), None, code=clean)
+        self.gameday = RUNBOOK.read_text(encoding="utf-8")
+        self.script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+
+    def test_the_runbook_quotes_not_a_checkout(self) -> None:
+        self.assertIn(provenance.NOT_A_CHECKOUT, self.box)
+        self.assertIn(provenance.NOT_A_CHECKOUT, self.troubleshooting)
+
+    def test_the_runbook_documents_the_code_warnings(self) -> None:
+        self.assertIn(serve.DIRTY_WARNING, self.troubleshooting)
+        self.assertIn(serve.UNKNOWN_CODE_WARNING, self.troubleshooting)
+
+    def _chip_words(self, name: str) -> str:
+        found = re.search(rf'const {name} = "([^"]+)";', self.script)
+        assert found is not None
+        return found.group(1)
+
+    def test_the_banner_and_the_page_name_the_same_chip(self) -> None:
+        self.assertEqual(self._chip_words("PROVENANCE_DIRTY"), serve.PAGE_DIRTY_CHIP)
+
+    def test_the_runbook_quotes_the_chip_words(self) -> None:
+        dirty = self._chip_words("PROVENANCE_DIRTY")
+        unknown = self._chip_words("PROVENANCE_UNKNOWN")
+        self.assertIn(dirty, self.gameday)
+        self.assertIn(dirty, self.troubleshooting)
+        self.assertIn(unknown, self.troubleshooting)
+
+    def test_the_fix_on_the_day_no_longer_promises_157(self) -> None:
+        self.assertNotIn("#157 will make", self.gameday)
 
     def test_the_runbook_quotes_the_no_config_wording(self) -> None:
         self.assertIn(serve.NO_CONFIG, self.troubleshooting)

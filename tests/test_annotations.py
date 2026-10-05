@@ -95,6 +95,18 @@ class TestVocabulary(unittest.TestCase):
                 with self.assertRaises(ann.NotAButtonError):
                     ann.operator_event(key)
 
+    def test_box_started_is_a_box_only_session_instant(self):
+        event = ann.lookup(ann.BOX_STARTED)
+        self.assertEqual(ann.BOX_STARTED, "box-started")
+        self.assertIs(event.category, ann.Category.SESSION)
+        self.assertFalse(event.button)
+        self.assertEqual(event.label, "Box started")
+        self.assertEqual(ann.VOCABULARY[0], event)
+
+    def test_an_operator_cannot_post_box_started(self):
+        with self.assertRaises(ann.NotAButtonError):
+            ann.operator_event(ann.BOX_STARTED)
+
     def test_retired_keys_still_read_but_are_no_longer_offered(self):
         # A key is never deleted: `end_span` looks up the event of a span an
         # older log left open, and old logs must go on deriving markers (#14).
