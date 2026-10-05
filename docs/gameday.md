@@ -29,7 +29,7 @@ nobody wrote it down, not that nobody knows.
 |---|---|---|
 | Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control |
 | Band DCA number | `17` | The console's DCA layout |
-| Recording path | `~/Reaper Audio` | Laptop's local disk. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
+| Recording path | `~/Reaper Media` | Laptop's local disk, one project folder per game. Listed as `~/Reaper Audio` until game 3; the projects were always here. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
 | Channels recorded | `30` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
@@ -63,7 +63,16 @@ vanishes the moment that cable comes out.
 
 **If the iPad's link degrades, fall back to the page on the laptop, not to
 StageMix**, so annotation continues. Assume the page's wifi link in the bowl is
-unreliable - it was at game 2.
+unreliable - it was at game 2. With both adapters wired, game 3's link held all
+game: median 23 ms from tap to box.
+
+**Check anything multicast the week before, not on the day.** A switch port
+that snoops IGMP passes a multicast group only to a port that has joined it,
+and a passive capture never joins. Game 3's in-game capture of the console's
+metering saw nothing for that reason, most likely, after soundcheck's capture
+on a different switch saw all of it. Test with a listener that joins the
+group, on the port that will be used on the day. The same goes for RTD if it
+turns out to be multicast.
 
 ---
 
@@ -80,9 +89,19 @@ Fixes to game 2's routing, agreed for game 3 (#13) and in place since the
 4. Matrix 8 goes out on Dante out 56 to the Hype PA.
 
 **Set up the DCA reference channel**: console channel 53 assigned to the band
-DCA only, dynamics and EQ bypassed, TO STEREO off, no other sends, direct out
-Post Fader on Dante 78; in Dante Controller, route DVS send 1 to console ch
-53. Detail in [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
+DCA only, **channel fader at 0.0 dB**, dynamics and EQ bypassed, TO STEREO off,
+no other sends, direct out Post Fader on Dante 78; in Dante Controller, route
+DVS send 1 to console ch 53. Detail in
+[reaper.md](reaper.md#the-dca-reference-a-pilot-tone). At game 3 the fader sat
+at +0.6 dB until it was noticed, which offsets every reading of the reference
+taken before it was fixed.
+
+**The ducker's key** (the announce group into Matrix 8) starts the game with:
+Ref, announcer, the playback laptop and HokieVision. Write down here anything
+different on the day. Changing it during the game is done in the DM7 app, on
+the custom layer: the box writes the band DCA and nothing else (design.md 5.3),
+so this stays a console job, even when the playback operator is stomping on the
+band.
 
 **Ring out on site, stands empty**, and set `fader.max_target_db` from it - it
 ships at 0 dB, and raising it costs feedback margin against a band PA that sits
@@ -131,7 +150,9 @@ Prove the [DCA reference](reaper.md#the-dca-reference-a-pilot-tone): pull the
 DCA down and watch its track go silent in Reaper, confirm the pilot tone
 generator keeps running with the transport stopped, and - the check that
 matters most - confirm the tone shows on no other console output meter. It
-must never reach a PA.
+must never reach a PA. Then, with the DCA at 0 dB, **`Pilot Reference` must
+read the same as the tone generator's output**. A difference means something in
+channel 53's path is not at unity; at game 3 it was the channel fader.
 
 Talk-check the four Axient tracks - Ref Primary, Ref BU, HH Red, HH Blue -
 once their packs are on, before kickoff. Three of them were digital silence
@@ -201,6 +222,9 @@ reads right. Starting early costs nothing; see
 0. **If Start recording is greyed out**, roll a short recording in Reaper and
    stop it. Expected on this rig every session, not a fault
    ([why](reaper.md#the-record-button-is-greyed-out-before-you-touch-anything)).
+   **Then go back to the page for the real one.** At game 3 this step was
+   missed, the real take was started in Reaper, and the log has no anchor
+   (#163 is the fix that removes the step).
 1. **Tap Start recording on the page, not in Reaper.** The recording line goes
    to `ROLLING`, tagged **confirmed**, with a playhead counting up. Only this
    button writes the anchor the whole log is measured from.
@@ -401,6 +425,24 @@ needs.
 
 ---
 
+## A fix on the day
+
+Game 3 needed one (#147): the page's updates were stuttering over the bowl's
+wifi. The procedure, so it is not improvised next time:
+
+1. An issue first, even a two-line one.
+2. A branch for it, `<issue>-<slug>`, and `make check` green on it.
+3. Run the box from a worktree on that branch, leaving the main checkout
+   alone: `git worktree add ../tacet-<issue> <branch>`, then start
+   `tacet-serve` from there.
+4. Write the commit it ran into the game notes. (#157 will make the box log
+   this itself, and show a dirty tree on the page.)
+5. The PR merges after the game, the ordinary way. Push to `main` with the
+   admin bypass only when the fix has to outlive the game before it can be
+   reviewed.
+
+---
+
 ## When it goes wrong
 
 The operator keeps the fader. Ride the band from StageMix and keep going, then
@@ -415,9 +457,19 @@ recording nor the log depends on the page or the markers working.
 2. Save the project.
 3. Stop `tacet-serve` with **Ctrl-C twice**. It never fades on the way out, and
    stopping the box does not stop the recording.
-4. Copy to the NAS from the local recording path (Site values, above): the
-   multitrack, the project, and the annotation log. The log is small and the
-   one thing that cannot be recreated.
+4. **Save the console file** (the DM7 show file) and put it with the
+   recordings, with a line in the game notes on what changed in the mix and
+   why. It is the only record of how the band PA was actually processed; at
+   game 3 the band balance and the front channels' compression changed from
+   the app.
+5. Copy to the NAS from the local recording path (Site values, above): the
+   multitrack, the project, the annotation log, the console file and any
+   packet captures. The log is small and the one thing that cannot be
+   recreated. Verify sizes and the log's checksum, then rename the **NAS
+   copies** to `YYYY-MM-DD VT-<Opp>` (folder and log alike; ` Soundcheck` or
+   ` Runthrough` for the others). Media paths in the `.RPP` are relative, so the
+   folder renames safely; leave the `.RPP`'s own name and the Reaper queue file
+   alone. Keep the laptop copy until the NAS copy has opened in Reaper once.
 
 Four streams have to end up on the NAS together (design.md 9): the DVS
 multitrack, the DCA reference (a pilot tone, not the band PA), the RTD capture,
