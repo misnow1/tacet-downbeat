@@ -12,7 +12,7 @@ from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
 from tests.disk import Disk
-from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream
+from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply
 from tests.test_annotations import Gate, Killed
 
 
@@ -1643,6 +1643,65 @@ class TestThePlayheadIsStamped(AppTestCase):
         app = tacet_app.App(console=self.console, log=self.log, recorder=None)
         await app.annotate("band-enters-stands")
         self.assertIsNone(self.last().project_seconds)
+
+
+class TestTheBoxAsksReaper(AppTestCase):
+    """#172: the box asks Reaper for its transport state when it first hears
+    it, so the record state is reported rather than inferred."""
+
+    def build_timed(self):
+        self.t = [100.0]
+        return self.build(monotonic=lambda: self.t[0])
+
+    def hear(self, app, packet, at):
+        self.t[0] = at
+        app.handle_recorder_packet(packet)
+
+    def asked(self):
+        return self.reaper_sender.addresses().count("/action")
+
+    async def test_the_box_asks_reaper_once_when_it_first_hears_it(self):
+        app = self.build_timed()
+        self.hear(app, meter_packet(), 100.0)
+        self.assertEqual(self.asked(), 1)
+        self.hear(app, meter_packet(), 100.09)
+        self.assertEqual(self.asked(), 1)
+
+    async def test_a_box_started_beside_a_parked_reaper_is_live_once_reaper_answers(self):
+        app = self.build_timed()
+        self.hear(app, meter_packet(), 100.0)
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+        for k, packet in enumerate(refresh_reply(recording=False, playing=False)):
+            self.hear(app, packet, 100.04 + k * 0.001)
+        self.t[0] = 100.1
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["can_start"])
+        self.assertTrue(recording["known"])
+        self.assertFalse(recording["recording"])
+
+    async def test_a_box_started_mid_take_learns_it_is_recording(self):
+        app = self.build_timed()
+        self.hear(app, meter_packet(), 100.0)
+        self.hear(app, osc.encode_message("/time", 10.0), 100.02)
+        for k, packet in enumerate(refresh_reply(recording=True, playing=True)):
+            self.hear(app, packet, 100.04 + k * 0.001)
+        self.t[0] = 100.1
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["known"])
+        self.assertTrue(recording["recording"])
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_ROLLING)
+        await app.start_recording()
+        self.assertNotIn("/record", self.reaper_sender.addresses())
+
+    async def test_an_entry_made_during_the_refresh_stall_is_not_stamped(self):
+        app = self.build_timed()
+        self.hear(app, osc.encode_message("/time", 10.0), 100.0)
+        for at in (100.2, 100.4, 100.6):
+            self.hear(app, meter_packet(), at)
+        await app.annotate("note")
+        self.log.close()
+        entry = [e for e in ann.read_entries(self.log.path) if e.event == "note"][-1]
+        self.assertIsNone(entry.project_seconds)
 
 
 class TestTheExpectedFaderStateIsVisible(AppTestCase):

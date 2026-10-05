@@ -66,3 +66,75 @@ def mid_take_stream(lead: float, *, clock: bool = True, seconds: float = MIX_SEC
     events.sort()
     for at, _, packet in events:
         yield at, packet
+
+
+#: The refresh all surfaces action, answered (bench, 2026-10-04, #172).
+#: Worst reply latency measured.
+REFRESH_REPLY_SECONDS = 0.04
+#: How long `/time` stalled while the reply's dump went out.
+REFRESH_STALL_SECONDS = 1.5
+#: The dump on the 30-track template was 3,300 to 3,600 messages; its middle.
+REFRESH_DUMP_MESSAGES = 3400
+#: Messages in the transport report, in bench order: record, stop, pause, play.
+REFRESH_TRANSPORT_MESSAGES = 4
+#: Addresses the dump is made of. None of them is `/time`.
+DUMP_ADDRESSES = ("/track/{n}/name", "/track/{n}/recarm", "/tempo/raw", "/lastmarker/name")
+DUMP_TRACKS = 30
+
+
+def refresh_reply(*, recording: bool, playing: bool) -> list[bytes]:
+    """The transport report a refresh draws, in bench order, one packet each."""
+    stopped = not recording and not playing
+    return [
+        osc.encode_message("/record", float(recording)),
+        osc.encode_message("/stop", float(stopped)),
+        osc.encode_message("/pause", 0.0),
+        osc.encode_message("/play", float(playing)),
+    ]
+
+
+def refresh_dump(sent_at: float, *, recording: bool, playing: bool, transport_first: bool = True):
+    """The reply to a refresh sent at `sent_at`, one message per packet (the
+    worst case for prefixes). Yields `(time, packet)`.
+
+    Spread evenly from the reply latency to the end of the stall, with the four
+    transport messages at the start of it, or at the end when
+    `transport_first` is False.
+    """
+    transport = refresh_reply(recording=recording, playing=playing)
+    others = [
+        osc.encode_message(DUMP_ADDRESSES[k % len(DUMP_ADDRESSES)].format(n=k % DUMP_TRACKS), float(k))
+        for k in range(REFRESH_DUMP_MESSAGES - REFRESH_TRANSPORT_MESSAGES)
+    ]
+    packets = transport + others if transport_first else others + transport
+    first = sent_at + REFRESH_REPLY_SECONDS
+    last = sent_at + REFRESH_STALL_SECONDS
+    for k, packet in enumerate(packets):
+        yield first + (last - first) * k / (len(packets) - 1), packet
+
+
+def rolling_with_refresh(
+    sent_at: float,
+    *,
+    recording: bool = True,
+    transport_first: bool = True,
+    seconds: float = MIX_SECONDS,
+    lead: float = 0.05,
+):
+    """A rolling Reaper that is asked for its state at `sent_at`, one packet at
+    a time, in arrival order: the mix with its `/time` family silent for the
+    stall, and the dump interleaved. Meters keep flowing, as they did on the
+    bench. The mix starts at `sent_at`."""
+    stall_end = sent_at + REFRESH_STALL_SECONDS
+    events: list[tuple[float, int, bytes]] = []
+    for at, packet in mid_take_stream(lead, seconds=seconds, start=sent_at):
+        decoded = osc.decode_packet(packet)
+        assert isinstance(decoded, osc.Message)
+        if decoded.address in CLOCK_FAMILY and at < stall_end:
+            continue
+        events.append((at, len(events), packet))
+    for at, packet in refresh_dump(sent_at, recording=recording, playing=recording, transport_first=transport_first):
+        events.append((at, len(events), packet))
+    events.sort()
+    for at, _, packet in events:
+        yield at, packet

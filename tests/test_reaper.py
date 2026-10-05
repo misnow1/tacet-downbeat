@@ -4,11 +4,18 @@ from tacet import osc, reaper
 from tacet.net import TransportError
 from tests.reaper_stream import (
     METER,
+    METERS_PER_SECOND,
     MIX_SECONDS,
+    REFRESH_REPLY_SECONDS,
+    REFRESH_STALL_SECONDS,
     ROLLING_MIX,
     TICKS_PER_SECOND,
+    meter_packet,
     mid_take_stream,
+    refresh_dump,
+    refresh_reply,
     rolling_tick,
+    rolling_with_refresh,
 )
 
 
@@ -29,8 +36,47 @@ class FakeSender:
 
 
 class FailingSender:
+    def __init__(self):
+        self.attempts = 0
+
     def send(self, packet: bytes) -> None:
+        self.attempts += 1
         raise TransportError("reaper is not listening")
+
+
+class Clock:
+    """A settable monotonic clock for a `ReaperClient`."""
+
+    def __init__(self, now: float = 100.0):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def hear(c, clock: Clock, packet: bytes, at: float):
+    """Deliver one packet to a `ReaperClient` at `at`."""
+    clock.now = at
+    return c.handle_packet(packet)
+
+
+def timed_client(**kwargs):
+    clock = Clock()
+    c, sender = client(monotonic=clock, **kwargs)
+    return c, sender, clock
+
+
+def actions(sender) -> int:
+    return sender.addresses().count(reaper.DEFAULT_ADDRESSES.action)
+
+
+def fold(packets):
+    """Replay `(time, packet)` pairs through `apply_feedback`, yielding the
+    time and state after each one: every prefix."""
+    state = reaper.TransportState()
+    for at, packet in packets:
+        state = reaper.apply_feedback(packet, state, now=at)
+        yield at, state
 
 
 def client(**kwargs):
@@ -299,9 +345,22 @@ class TestCurrentPosition(unittest.TestCase):
         state = feed(state, "/time", "not a number", now=102.5)
         self.assertIsNone(state.current_position(103.0, timeout=2.0))
 
-    def test_the_default_timeout_is_the_feedback_timeout(self):
+    def test_the_default_window_is_the_current_window(self):
         state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
-        self.assertEqual(state.current_position(100.0 + reaper.DEFAULT_FEEDBACK_TIMEOUT), 4.5)
+        self.assertEqual(state.current_position(100.0 + reaper.POSITION_CURRENT_SECONDS), 4.5)
+
+    def test_a_position_older_than_the_current_window_is_not_current(self):
+        # The refresh's dump stalls `/time` for about 1.5 s: still moving, but a
+        # position that old is not where the playhead is (#172).
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        at = 100.0 + reaper.POSITION_CURRENT_SECONDS + 0.1
+        self.assertTrue(state.clock_running(at))
+        self.assertIsNone(state.current_position(at))
+
+    def test_the_current_window_is_six_clock_intervals(self):
+        self.assertEqual(reaper.TIME_RATE_PER_SECOND, 12)
+        self.assertEqual(reaper.POSITION_CURRENT_SECONDS, 6 / reaper.TIME_RATE_PER_SECOND)
+        self.assertEqual(reaper.POSITION_CURRENT_SECONDS, 0.5)
 
 
 class TestRecordReports(unittest.TestCase):
@@ -434,13 +493,11 @@ class TestMotionIsTheClock(unittest.TestCase):
         self.assertTrue(state.clock_running(100.4 + reaper.DEFAULT_FEEDBACK_TIMEOUT))
         self.assertFalse(state.clock_running(100.4 + reaper.DEFAULT_FEEDBACK_TIMEOUT + 0.5))
 
-    def test_current_position_and_clock_running_agree(self):
+    def test_a_current_position_implies_a_running_clock(self):
         state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
-        for now in (100.0, 101.0, 102.0, 102.5, 200.0):
-            self.assertEqual(
-                state.clock_running(now),
-                state.current_position(now) is not None,
-            )
+        for now in (100.0, 100.4, 101.0, 102.0, 102.5, 200.0):
+            if state.current_position(now) is not None:
+                self.assertTrue(state.clock_running(now))
 
 
 class TestPresence(unittest.TestCase):
@@ -595,6 +652,7 @@ class TestCommands(unittest.TestCase):
         c.play()
         c.pause()
         c.run_action(40157)
+        c.refresh()
         self.assertNotIn(reaper.DEFAULT_ADDRESSES.stop, sender.addresses())
 
     def test_a_send_failure_is_raised_and_recorded(self):
@@ -622,6 +680,237 @@ class TestCommands(unittest.TestCase):
         c.handle_packet(osc.encode_message("/record", 1.0))
         self.assertTrue(c.state.recording)
         self.assertEqual(c.state.last_packet, 42.0)
+
+
+class TestRefreshIsAskedOncePerRun(unittest.TestCase):
+    """#172: the box asks Reaper for its transport state once at the start of
+    each run of feedback, and never otherwise."""
+
+    def test_the_first_packet_ever_sends_one_refresh(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        self.assertEqual(sender.addresses(), [reaper.DEFAULT_ADDRESSES.action])
+
+    def test_packets_within_a_run_send_no_refresh(self):
+        c, sender, clock = timed_client()
+        for k in range(20):
+            hear(c, clock, meter_packet(), 100.0 + k * 0.09)
+        self.assertEqual(actions(sender), 1)
+
+    def test_feedback_resuming_after_a_gap_sends_one_refresh(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        hear(c, clock, osc.encode_message("/record", 0.0), 100.1)
+        hear(c, clock, meter_packet(), 110.0)
+        hear(c, clock, meter_packet(), 110.1)
+        self.assertEqual(actions(sender), 2)
+
+    def test_a_gap_no_longer_than_the_timeout_sends_no_refresh(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, osc.encode_message("/record", 0.0), 100.0)
+        hear(c, clock, meter_packet(), 100.0 + reaper.DEFAULT_FEEDBACK_TIMEOUT)
+        self.assertEqual(actions(sender), 1)
+
+    def test_a_malformed_packet_sends_no_refresh(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, b"not osc", 100.0)
+        self.assertEqual(sender.packets, [])
+        self.assertIsNone(c.refresh_request)
+
+    def test_an_unanswered_refresh_is_not_repeated_when_feedback_resumes(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        hear(c, clock, meter_packet(), 110.0)
+        hear(c, clock, meter_packet(), 120.0)
+        self.assertEqual(actions(sender), 1)
+
+    def test_a_reply_that_arrives_after_a_gap_does_not_ask_again(self):
+        # The self-trigger case: the dump is slow enough to start a run of its
+        # own, and its first packet is the `/record` that answers the refresh.
+        c, sender, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        for k, packet in enumerate(refresh_reply(recording=False, playing=False)):
+            hear(c, clock, packet, 110.0 + k * 0.001)
+        self.assertEqual(actions(sender), 1)
+
+    def test_any_record_report_answers_the_refresh(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        hear(c, clock, osc.encode_message("/record", 0.0), 101.0)
+        hear(c, clock, meter_packet(), 110.0)
+        self.assertEqual(actions(sender), 2)
+
+    def test_the_refresh_is_action_41743_as_an_int(self):
+        c, sender, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        decoded = osc.decode_packet(sender.packets[0])
+        assert isinstance(decoded, osc.Message)
+        self.assertEqual(decoded.address, "/action")
+        self.assertEqual(decoded.args, (41743,))
+        self.assertEqual(reaper.REFRESH_ACTION, 41743)
+        # The type tag is the second field: ",i", padded.
+        self.assertIn(b",i\x00\x00", sender.packets[0])
+
+    def test_the_request_is_remembered_as_sent(self):
+        c, _, clock = timed_client()
+        hear(c, clock, osc.encode_message("/record", 1.0), 100.0)
+        self.assertEqual(c.refresh_request, reaper.RecordRequest(sent_at=100.0, reports_before=1))
+
+    def test_a_refresh_that_fails_to_send_is_visible_and_retried_next_run(self):
+        sender = FailingSender()
+        c, _, clock = timed_client(sender=sender)
+        state = hear(c, clock, meter_packet(), 100.0)
+        self.assertIsNotNone(state.last_packet)
+        self.assertFalse(c.healthy)
+        self.assertIsNone(c.refresh_request)
+        self.assertEqual(sender.attempts, 1)
+        hear(c, clock, meter_packet(), 100.1)
+        self.assertEqual(sender.attempts, 1)
+        hear(c, clock, meter_packet(), 110.0)
+        self.assertEqual(sender.attempts, 2)
+
+    def test_a_long_stream_with_no_gap_sends_exactly_one_refresh(self):
+        c, sender, clock = timed_client()
+        step = 1 / METERS_PER_SECOND
+        at = 100.0
+        for _ in range(30 * METERS_PER_SECOND):
+            hear(c, clock, meter_packet(), at)
+            at += step
+        hear(c, clock, osc.encode_message("/record", 1.0), at)
+        hear(c, clock, osc.encode_message("/play", 1.0), at)
+        for tick_at, packet in mid_take_stream(0.05, seconds=30, start=at):
+            hear(c, clock, packet, tick_at)
+        at += 30
+        hear(c, clock, osc.encode_message("/record", 0.0), at)
+        hear(c, clock, osc.encode_message("/play", 0.0), at)
+        for _ in range(30 * METERS_PER_SECOND):
+            at += step
+            hear(c, clock, meter_packet(), at)
+        self.assertEqual(actions(sender), 1)
+
+
+class TestRefreshReplies(unittest.TestCase):
+    """What the three forms of reply do to the state, all through #163's rules."""
+
+    def reply(self, state, *, recording, playing, at):
+        for packet in refresh_reply(recording=recording, playing=playing):
+            state = reaper.apply_feedback(packet, state, now=at)
+        return state
+
+    def test_a_reply_while_recording_reports_recording_and_refuses(self):
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        state = self.reply(state, recording=True, playing=True, at=100.04)
+        self.assertIs(state.recording, True)
+        self.assertEqual(reaper.record_refusal(state, 100.05), reaper.RECORD_REFUSED_ROLLING)
+
+    def test_a_reply_while_playing_reports_not_recording(self):
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        state = self.reply(state, recording=False, playing=True, at=100.04)
+        self.assertIs(state.recording, False)
+        self.assertIs(state.playing, True)
+
+    def test_a_reply_while_stopped_permits_a_start_at_once(self):
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        state = feed(state, METER, 0.0, now=100.5)
+        self.assertEqual(reaper.record_refusal(state, 100.5), reaper.RECORD_REFUSED_LISTENING)
+        state = self.reply(state, recording=False, playing=False, at=100.54)
+        self.assertIsNone(reaper.record_refusal(state, 100.55))
+
+    def test_a_reply_clears_a_stale_recording_after_a_relaunch(self):
+        state = feed(reaper.TransportState(), "/record", 1.0, now=100.0)
+        state = feed(state, "/play", 1.0, now=100.0)
+        now = 100.0
+        while now <= 110.0:
+            state = feed(state, "/time", now - 100.0, now=now)
+            now += 0.1
+        for at in (130.0, 131.0):
+            state = feed(state, METER, 0.0, now=at)
+        self.assertEqual(reaper.record_refusal(state, 131.0), reaper.RECORD_REFUSED_LOST)
+        state = self.reply(state, recording=False, playing=False, at=131.04)
+        self.assertIs(state.liveness(131.05), reaper.Liveness.LIVE)
+        self.assertIsNone(reaper.record_refusal(state, 131.05))
+
+    def test_a_reply_answers_an_outstanding_start(self):
+        request = reaper.RecordRequest(sent_at=100.0, reports_before=0)
+        state = feed(reaper.TransportState(), METER, 0.0, now=100.0)
+        self.assertEqual(reaper.record_refusal(state, 100.1, request=request), reaper.RECORD_REFUSED_UNANSWERED)
+        state = self.reply(state, recording=False, playing=False, at=100.04)
+        self.assertTrue(request.answered_by(state))
+        self.assertIsNone(reaper.record_refusal(state, 100.5, request=request))
+
+
+class TestTheRefreshStall(unittest.TestCase):
+    """The reply is thousands of messages and `/time` stalls about 1.5 s while
+    it goes out (bench, 2026-10-04). Replayed one packet at a time, never
+    bundled: at every prefix, and at every instant just before the next packet,
+    a box that is recording must refuse and must not read LINK LOST."""
+
+    #: Just short of the next packet, where the state is what the last one left.
+    JUST_BEFORE = 1e-6
+
+    def instants(self, stream):
+        """`(state, instant)` for each packet's arrival and the moment before
+        the next one."""
+        packets = list(stream)
+        for k, (at, state) in enumerate(fold(packets)):
+            yield state, at
+            if k + 1 < len(packets):
+                yield state, packets[k + 1][0] - self.JUST_BEFORE
+
+    def check_never_sends(self, *, transport_first):
+        seen = 0
+        for state, at in self.instants(rolling_with_refresh(100.0, transport_first=transport_first)):
+            seen += 1
+            for prior in (False, True):
+                self.assertIsNotNone(reaper.record_refusal(state, at, prior_recording=prior), at)
+        self.assertGreater(seen, 3000)
+
+    def check_never_lost(self, *, transport_first):
+        for state, at in self.instants(rolling_with_refresh(100.0, transport_first=transport_first)):
+            self.assertIsNot(state.liveness(at), reaper.Liveness.LOST, at)
+
+    def test_a_refresh_while_recording_never_permits_a_send_at_any_prefix(self):
+        self.check_never_sends(transport_first=True)
+
+    def test_the_same_when_the_transport_report_comes_last(self):
+        self.check_never_sends(transport_first=False)
+
+    def test_a_box_started_mid_take_never_permits_a_send_through_the_refresh(self):
+        # No earlier state; the refresh goes out at the first packet, as the
+        # client sends it, and every prefix refuses.
+        c, sender, clock = timed_client()
+        for at, packet in rolling_with_refresh(100.0):
+            hear(c, clock, packet, at)
+            self.assertIsNotNone(reaper.record_refusal(c.state, at, request=c.record_request), at)
+            self.assertIsNotNone(reaper.record_refusal(c.state, at), at)
+        self.assertEqual(actions(sender), 1)
+        self.assertEqual(c.refresh_request, reaper.RecordRequest(sent_at=100.0, reports_before=0))
+
+    def test_a_refresh_while_recording_never_reads_link_lost_at_any_prefix(self):
+        self.check_never_lost(transport_first=True)
+        self.check_never_lost(transport_first=False)
+
+    def test_the_stall_is_inside_the_timeout(self):
+        # The margin the tests above stand on, pinned so that a longer measured
+        # stall cannot slip in unnoticed.
+        self.assertLess(REFRESH_STALL_SECONDS, reaper.DEFAULT_FEEDBACK_TIMEOUT)
+        self.assertLess(REFRESH_REPLY_SECONDS, REFRESH_STALL_SECONDS)
+
+    def test_the_dump_is_one_message_per_packet(self):
+        packets = list(refresh_dump(100.0, recording=True, playing=True))
+        for _, packet in packets:
+            self.assertIsInstance(osc.decode_packet(packet), osc.Message)
+        times = [at for at, _ in packets]
+        self.assertEqual(times, sorted(times))
+
+    def test_an_unanswered_refresh_leaves_every_state_as_163_shipped(self):
+        parked = [(100.0 + k / METERS_PER_SECOND, meter_packet()) for k in range(60)]
+        for stream in (list(mid_take_stream(0.05)), parked):
+            c, sender, clock = timed_client()
+            for (at, packet), (_, state) in zip(stream, fold(stream), strict=True):
+                hear(c, clock, packet, at)
+                self.assertEqual(c.state, state)
+            self.assertEqual(actions(sender), 1)
 
 
 if __name__ == "__main__":
