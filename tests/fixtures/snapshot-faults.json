@@ -229,6 +229,12 @@
   },
   "open_spans": [],
   "prompt": null,
+  "provenance": {
+    "dirty": true,
+    "error": null,
+    "source": "checkout",
+    "where": "157-fix @ 0123456 (worktree)"
+  },
   "recording": {
     "can_start": false,
     "confirmed": false,

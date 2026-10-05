@@ -765,6 +765,14 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #link{color:#fff;display:none}
 #link.connecting{display:block;background:var(--attention);color:var(--attention-text)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
+/* What code the box runs (#157): shown only while it runs uncommitted code or
+   cannot tell. Static for the run, so nothing below it moves after the first
+   paint; max-width keeps it on the strip's first line beside duty and target on
+   the iPad, and a tap expands it. */
+#strip > #provenance{display:none;max-width:240px;cursor:pointer}
+#strip > #provenance.warn{display:block;background:var(--attention);color:var(--attention-text)}
+#strip > #provenance.note{display:block;color:#ffca7a}
+#strip > #provenance[data-expanded="1"]{max-width:100%}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
@@ -886,6 +894,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 <div id="strip">
   <div id="duty"></div>
   <div id="target-level"></div>
+  <div id="provenance"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>

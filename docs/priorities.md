@@ -92,7 +92,7 @@ come first; the layout change lands early so the pre-game runthrough (about
 | 4 | [#153](https://github.com/misnow1/tacet-downbeat/issues/153) Target set while open: stored, not moved | Small, and it was a real moment of confusion at Game 3 |
 | 5 | [#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride | What the operator reached for at Game 3; a real fader tap, so after the cheap message |
 | 6 | ~~[#163](https://github.com/misnow1/tacet-downbeat/issues/163) Say why the record button is grey~~ (done); [#158](https://github.com/misnow1/tacet-downbeat/issues/158) write the anchor when Reaper starts recording | The button greyed out silently at games 2 and 3, so neither has a page-started take; Game 3 has no anchor and its markers cannot regenerate |
-| 7 | [#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag | Game 3 ran from a worktree and had to be reconstructed |
+| ~~7~~ | ~~[#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag~~ | Done. A `box-started` entry first in every run, a `code` banner row, and an amber chip on the page while the tree is dirty |
 | 8 | [#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue | Before the runthrough, so it runs from the updated runbook |
 
 Nice for Game 4: [#156](https://github.com/misnow1/tacet-downbeat/issues/156)

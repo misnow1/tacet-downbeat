@@ -455,6 +455,45 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
             self.assertIn(f'$("{element_id}")', body)
 
 
+class TestThePageCarriesTheProvenanceChip(WebTestCase):
+    """#157: shown only while the box runs uncommitted code or cannot tell. Static
+    for the run, so nothing below it moves after the first paint."""
+
+    async def body(self):
+        return await (await self.client.get("/")).text()
+
+    def rule(self, body, selector):
+        return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+    async def test_the_chip_ships_empty_in_the_strip_after_the_target_chip_and_before_the_link(self):
+        body = await self.body()
+        self.assertIn('<div id="provenance"></div>', body)
+        strip = body.split('<div id="strip">', 1)[1].split('<div id="prompt">', 1)[0]
+        self.assertLess(strip.index('id="target-level"'), strip.index('id="provenance"'))
+        self.assertLess(strip.index('id="provenance"'), strip.index('id="link"'))
+
+    async def test_the_chip_is_before_the_fader_column(self):
+        body = await self.body()
+        self.assertLess(body.index('id="provenance"'), body.index('id="fader-column"'))
+
+    async def test_the_chip_rules_are_scoped_to_the_strip(self):
+        body = await self.body()
+        base = self.rule(body, "#strip > #provenance")
+        self.assertIn("display:none", base)
+        self.assertIn("max-width:240px", base)
+        warn = self.rule(body, "#strip > #provenance.warn")
+        self.assertIn("var(--attention)", warn)
+        self.assertIn("var(--attention-text)", warn)
+        self.assertIn("max-width:100%", self.rule(body, '#strip > #provenance[data-expanded="1"]'))
+
+    async def test_the_chip_rules_use_no_fixed_or_absolute_positioning(self):
+        body = await self.body()
+        for selector in ("#strip > #provenance", "#strip > #provenance.warn", "#strip > #provenance.note"):
+            rule = self.rule(body, selector)
+            self.assertNotIn("position:fixed", rule, selector)
+            self.assertNotIn("position:absolute", rule, selector)
+
+
 class TestThePageHasWhereTapsReport(WebTestCase):
     async def test_the_tap_line_is_on_the_page(self):
         # The script writes a failed tap here (#11); a page without it throws
