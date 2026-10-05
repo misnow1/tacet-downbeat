@@ -30,15 +30,35 @@ function check(label, got, want) {
 
 function element(id) {
   const classes = new Set();
+  const children = [];
+  let text = "";
+  let html = "";
   return {
     id,
-    textContent: "",
     className: "",
-    innerHTML: "",
     style: {},
     dataset: {},
     onclick: null,
     disabled: false,
+    children,
+    // As the DOM: a node's text is its descendants' text, and setting it (or
+    // innerHTML) replaces the children. The page's buttons hold an icon and a
+    // label span since #155, and the tests read a button's text as before.
+    get textContent() {
+      return children.length ? children.map((c) => c.textContent).join("") : text;
+    },
+    set textContent(value) {
+      children.length = 0;
+      text = String(value);
+    },
+    get innerHTML() {
+      return html;
+    },
+    set innerHTML(value) {
+      children.length = 0;
+      text = "";
+      html = String(value);
+    },
     classList: {
       toggle(name, on) {
         if (on) classes.add(name);
@@ -46,7 +66,10 @@ function element(id) {
       },
       contains: (name) => classes.has(name),
     },
-    appendChild() {},
+    appendChild(child) {
+      children.push(child);
+      return child;
+    },
   };
 }
 
@@ -800,7 +823,7 @@ for (const known of [false, true]) {
   for (const key of SNAP_KEYS) {
     check(`${at}: ${key} (a snap open) is never disabled`, column(key).disabled, false);
   }
-  for (const key of ["band-enters-stands", "q1", "touchdown", "note"]) {
+  for (const key of ["band-enters-stands", "last-two-minutes", "touchdown", "note"]) {
     check(`${at}: the annotation ${key} is never disabled by the belief`, column(key).disabled, false);
   }
   for (const key of COLUMN_KEYS) {
@@ -952,7 +975,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("standing down: an unheard Reaper is unknown", nodes.get("rec").textContent, "unknown");
   check("standing down: and says so", nodes.get("rec-tag").textContent, "no feedback");
   check("standing down: nothing is wrong with saving", nodes.get("saving").className, "");
-  check("standing down: the whole vocabulary is on screen", button("q1").textContent, "Q1 (start)");
+  check("standing down: the whole vocabulary is on screen", button("last-two-minutes").textContent, "Last two minutes (start)");
 }
 
 {
@@ -962,7 +985,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("open: confirmed", nodes.get("rec-tag").textContent, "confirmed");
   check("open: where", nodes.get("rec-pos").textContent, "at 0:12:34.500");
   check("open: the record button will not be pressed twice", nodes.get("btn-record").disabled, true);
-  check("open: the open quarter offers to end", button("q2").textContent, "Q2 (end)");
+  check("open: the open media timeout offers to end", button("timeout-media").textContent, "Timeout: media (end)");
 }
 
 {
@@ -1273,14 +1296,14 @@ check(
 
 // Span ids are `<key>-<seq>` and keys contain hyphens, so a key that prefixes
 // another looked like it owned that key's span: with a home timeout running,
-// "Timeout: unspecified" read (end) and tapping it closed the *home* timeout,
+// "Official timeout" read (end) and tapping it closed the *home* timeout,
 // and Halftime could never open during the exodus. Real vocabulary keys, since
 // those are the pairs that collide.
 const PREFIXED = [
   { key: "halftime", label: "Halftime", category: "GAME", kind: "span" },
   { key: "halftime-exodus", label: "Halftime exodus", category: "GAME", kind: "span" },
   { key: "timeout-home", label: "Timeout: home", category: "GAME", kind: "span" },
-  { key: "timeout", label: "Timeout: unspecified", category: "GAME", kind: "span" },
+  { key: "timeout", label: "Official timeout", category: "GAME", kind: "span" },
 ];
 
 function prefixed(openSpans) {
@@ -1306,7 +1329,7 @@ function prefixed(openSpans) {
   check(
     "a span key that prefixes another does not claim its open span",
     found.get("timeout").textContent,
-    "Timeout: unspecified (start)",
+    "Official timeout (start)",
   );
   check("nor is it highlighted by it", found.get("timeout").classList.contains("on"), false);
   check(
@@ -1347,7 +1370,7 @@ function prefixed(openSpans) {
 // annotation grids are, so they still carry the styling that tells them apart.
 const MIXED = [
   { key: "band-enters-stands", label: "Band enters stands", category: "BAND", kind: "instant" },
-  { key: "q1", label: "Q1", category: "GAME", kind: "span" },
+  { key: "last-two-minutes", label: "Last two minutes", category: "GAME", kind: "span" },
   { key: "up-whistle", label: "Up on whistle", category: "FDR", kind: "instant", action: "open" },
   { key: "out", label: "Faded out", category: "FDR", kind: "instant", action: "release" },
 ];
@@ -1376,15 +1399,15 @@ check(
 );
 check(
   "a span that does not act is not marked as acting",
-  byKey.get("q1").dataset.action,
+  byKey.get("last-two-minutes").dataset.action,
   undefined,
 );
 // #5: the fader buttons move to their own pinned column, which carries no
-// heading of its own - there is nothing to sort against any more. q1 lands in
-// MAIN's "Game" group (Scoring and Timeouts have nothing to show and get no
+// heading of its own - there is nothing to sort against any more.
+// last-two-minutes lands in MAIN's "Game" group (Scoring and Timeouts have nothing to show and get no
 // heading of their own); band-enters-stands lands in MORE under its category.
 check("the fader column carries no heading", headings().includes("FDR"), false);
-check("q1 lands in MAIN's Game group", headings()[0], "Game");
+check("last-two-minutes lands in MAIN's Game group", headings()[0], "Game");
 check("band-enters-stands lands in MORE under its category", headings()[1], "BAND");
 check("only the groups with something to show get a heading", headings().length, 2);
 check(
@@ -1879,7 +1902,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 {
   // A span whose button still exists is handled by that button, as before.
   const { context, created } = browser();
-  context.render(snapshot({}, {}, undefined, [{ span_id: "q1-9", event: "q1", label: "Q1" }]));
+  context.render(snapshot({}, {}, undefined, [{ span_id: "timeout-home-9", event: "timeout-home", label: "Timeout: home" }]));
   const labels = created.filter((node) => node.tag === "button").map((node) => node.textContent);
   check("no orphan control for a span that has its own button",
         labels.some((label) => label.startsWith("End: ")), false);
@@ -2280,6 +2303,129 @@ for (const [label, fader] of [["unknown", { level_known: false }], ["known", { l
     presetSegments(created).map((node) => node.textContent),
     ["0 dB", "-3 dB", "-6 dB"],
   );
+}
+
+// -- MAIN after Game 3 (#155) ------------------------------------------------
+
+// The real, regenerated standing-down snapshot, rendered once per test that
+// needs a fresh page; `openSpans` is as the box sends them.
+function game3(openSpans = []) {
+  const { context, created, posted } = browser();
+  context.render(snapshot({}, {}, undefined, openSpans));
+  const buttons = created.filter((node) => node.tag === "button");
+  return { context, created, posted, buttons, byKey: new Map(buttons.map((node) => [node.dataset.key, node])) };
+}
+
+const SCORING_KEYS = ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"];
+const TIMEOUT_KEYS = ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"];
+const FADER_KEYS = ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"];
+const toneOf = (tone) => (node) => node.dataset.tone === tone;
+
+{
+  const { created } = game3();
+  check(
+    "MAIN's groups are Scoring, Timeouts, Game, in that order",
+    created.filter((node) => node.tag === "h2").slice(0, 3).map((node) => node.textContent),
+    ["Scoring", "Timeouts", "Game"],
+  );
+}
+
+{
+  const { buttons, byKey } = game3();
+  check(
+    "Scoring renders Touchdown, Field goal, Safety, First down, Defensive stop",
+    buttons.filter(toneOf("score")).map((node) => node.dataset.key),
+    SCORING_KEYS,
+  );
+  const timeouts = buttons.filter(toneOf("timeout"));
+  check("Official timeout leads the Timeouts group", timeouts[0].dataset.key, "timeout");
+  check("and says Official timeout", timeouts[0].textContent, "Official timeout (start)");
+  check("the Timeouts group is the five timeouts", timeouts.map((node) => node.dataset.key), TIMEOUT_KEYS);
+  for (const key of ["q1", "q2", "q3", "q4", "halftime", "timeout-official"]) {
+    check(`no ${key} button renders`, byKey.has(key), false);
+  }
+  check("halftime exodus is still on MAIN", byKey.has("halftime-exodus"), true);
+  check("halftime exodus is untoned", byKey.get("halftime-exodus").dataset.tone, undefined);
+  check(
+    "every scoring button, Safety included, carries the score tone",
+    SCORING_KEYS.map((key) => byKey.get(key).dataset.tone),
+    SCORING_KEYS.map(() => "score"),
+  );
+  check(
+    "every timeout carries the timeout tone",
+    TIMEOUT_KEYS.map((key) => byKey.get(key).dataset.tone),
+    TIMEOUT_KEYS.map(() => "timeout"),
+  );
+  check(
+    "nothing else carries a tone",
+    [...new Set(buttons.map((node) => node.dataset.tone).filter((tone) => tone !== undefined))].sort(),
+    ["score", "timeout"],
+  );
+  check(
+    "no tone outside Scoring and Timeouts, the fader column and MORE included",
+    buttons.filter((node) => node.dataset.tone && !SCORING_KEYS.concat(TIMEOUT_KEYS).includes(node.dataset.key)).length,
+    0,
+  );
+}
+
+{
+  const { created } = game3();
+  const grid = created.find(
+    (node) => node.tag === "div" && node.children.some((child) => child.dataset.key === "touchdown"),
+  );
+  check("the scoring grid is marked for its own layout", grid.dataset.tone, "score");
+}
+
+const iconOf = (node) => node.children[0];
+const svgOf = (node) => iconOf(node).innerHTML;
+
+{
+  const { byKey } = game3();
+  const keyed = FADER_KEYS.concat(SCORING_KEYS);
+  for (const key of keyed) {
+    check(`${key} leads with an icon`, iconOf(byKey.get(key)).className, "ico");
+    check(`${key}'s icon is an svg`, svgOf(byKey.get(key)).startsWith("<svg"), true);
+  }
+  check("all 11 fader and scoring icons are pairwise distinct", new Set(keyed.map((key) => svgOf(byKey.get(key)))).size, 11);
+
+  const shared = new Set(TIMEOUT_KEYS.map((key) => svgOf(byKey.get(key))));
+  check("the timeouts share one icon", shared.size, 1);
+  check("and it differs from all 11 others", keyed.map((key) => svgOf(byKey.get(key))).includes([...shared][0]), false);
+
+  for (const key of ["halftime-exodus", "band-enters-stands"]) {
+    check(`a grey button (${key}) has one child`, byKey.get(key).children.length, 1);
+    check(`and it is the label`, byKey.get(key).children[0].className, "lbl");
+  }
+
+  const everyIcon = [...new Set(keyed.concat(TIMEOUT_KEYS).map((key) => svgOf(byKey.get(key))))];
+  for (const html of everyIcon) {
+    check("an icon follows the button's colour", html.includes("currentColor"), true);
+    check("and is hidden from assistive tech", html.includes('aria-hidden="true"'), true);
+    check("and fetches nothing", /http|xmlns|<script/.test(html), false);
+    check("and has no whitespace between tags", />\s+</.test(html), false);
+  }
+}
+
+{
+  const span = { span_id: "timeout-9", event: "timeout", label: "Official timeout" };
+  const { context, created } = browser();
+  context.render(snapshot({}, {}, undefined, [span]));
+  const node = created.find((n) => n.tag === "button" && n.dataset.key === "timeout");
+  check("an open span's button says (end)", node.textContent, "Official timeout (end)");
+  check("and keeps its icon", iconOf(node).className, "ico");
+  context.render(snapshot({}, {}, undefined, []));
+  check("a closed span says (start) again", node.textContent, "Official timeout (start)");
+  check("and still keeps its icon", iconOf(node).className, "ico");
+}
+
+{
+  const { created, posted } = game3([{ span_id: "q1-9", event: "q1", label: "Q1" }]);
+  const ender = created.find((node) => node.tag === "button" && node.textContent === "End: Q1");
+  check("a quarter left open by an older log is offered in MORE", ender !== undefined, true);
+  posted.length = 0;
+  ender.onclick();
+  check("and tapping it ends that span", posted[0].path, "/api/span/end");
+  check("by its id", posted[0].body.span_id, "q1-9");
 }
 
 // -- report -----------------------------------------------------------------

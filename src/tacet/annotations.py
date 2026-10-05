@@ -263,9 +263,11 @@ VOCABULARY: tuple[EventType, ...] = (
     # almost always plays (the operator, 2026-09-15, on #6). Each of these is
     # why a ride-in was started, tapped when there is a moment rather than
     # before the fader moves: the reason must never stand between the operator
-    # and the downbeat. RTD can raise the same facts later (#95).
+    # and the downbeat. RTD can raise the same facts later (#95). Safety means
+    # the home team scored one, like touchdown above: home team only.
     _instant("touchdown", "Touchdown", Category.GAME),
     _instant("field-goal", "Field goal", Category.GAME),
+    _instant("safety", "Safety", Category.GAME),
     _instant("first-down", "First down", Category.GAME),
     _instant("defensive-stop", "Defensive stop", Category.GAME),
     # No cannon here, deliberately. It fires only on a touchdown or a field
@@ -273,12 +275,16 @@ VOCABULARY: tuple[EventType, ...] = (
     # of those rather than tapped in the busiest ten seconds of the night. It
     # is still a detector hard case - a broadband simultaneous onset on all 14
     # mics - and #15 says where that gets labelled.
-    # Game timing. Stands in for RTD until it exists (design.md 5.4).
-    _span("q1", "Q1", Category.GAME),
-    _span("q2", "Q2", Category.GAME),
-    _span("q3", "Q3", Category.GAME),
-    _span("q4", "Q4", Category.GAME),
-    _span("halftime", "Halftime", Category.GAME),
+    # Game timing. Stood in for RTD until it exists (design.md 5.4). Quarters
+    # and halftime were retired as buttons in #155: they are reconstructed
+    # offline from `Announcer Mic Dry` and `HokieVision` (#159). The keys are
+    # never deleted: a span an older log left open is still ended through the
+    # page's OPEN FROM AN EARLIER RUN.
+    _span("q1", "Q1", Category.GAME, button=False),
+    _span("q2", "Q2", Category.GAME, button=False),
+    _span("q3", "Q3", Category.GAME, button=False),
+    _span("q4", "Q4", Category.GAME, button=False),
+    _span("halftime", "Halftime", Category.GAME, button=False),
     _span(HALFTIME_EXODUS, "Halftime exodus", Category.GAME),
     _span("last-two-minutes", "Last two minutes", Category.GAME),
     # Timeouts are not one thing. The band plays through most of them, but not
@@ -289,12 +295,19 @@ VOCABULARY: tuple[EventType, ...] = (
     _span("timeout-home", "Timeout: home", Category.GAME),
     _span("timeout-away", "Timeout: away", Category.GAME),
     _span("timeout-media", "Timeout: media", Category.GAME),
-    _span("timeout-official", "Timeout: officials", Category.GAME),
+    # Retired as a button in #155. In NCAA usage an official's timeout is the
+    # referee's umbrella stoppage, which TV/media and injury timeouts both fall
+    # under, so two such buttons would mean the same thing. Entries from Games
+    # 2-3 keep whatever they meant then.
+    _span("timeout-official", "Timeout: officials", Category.GAME, button=False),
     _span("timeout-injury", "Timeout: injury", Category.GAME),
-    # Kept, and deliberately last. The operator is watching a field, and an
-    # unclassified timeout beats one that went unmarked while they decided.
-    # Also the key old logs already carry.
-    _span("timeout", "Timeout: unspecified", Category.GAME),
+    # The default timeout, and the announcer's wording ("official timeout on
+    # the field"). Use it whenever the kind is not obvious: the operator is
+    # watching a field, and a timeout marked at once beats one that went
+    # unmarked while they decided. The corrections sidecar (#159) classifies it
+    # offline. Also the key old logs already carry; its place on MAIN comes
+    # from app.js, not from here.
+    _span("timeout", "Official timeout", Category.GAME),
     # Fader moves. `commanded` is written by the box itself; the rest both move
     # the fader and say why, in one tap.
     #
@@ -364,7 +377,7 @@ def operator_event(key: str) -> EventType:
     """
     event = lookup(key)
     if not event.button:
-        raise NotAButtonError(f"{key!r} is written by the box, not by an operator")
+        raise NotAButtonError(f"{key!r} is not a button: the box writes it, or it has been retired")
     return event
 
 

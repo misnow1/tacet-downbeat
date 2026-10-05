@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import re
 import time
 import unittest
 from pathlib import Path
@@ -401,8 +402,8 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         self.assertIn("#strip > #target-level{", body)
         self.assertIn("cursor:default", self.rule(body, "#strip > #target-level"))
         amber = self.rule(body, "#strip > #target-level.off-default")
-        self.assertIn("var(--fade)", amber)
-        self.assertIn("var(--fade-text)", amber)
+        self.assertIn("var(--attention)", amber)
+        self.assertIn("var(--attention-text)", amber)
 
     async def test_the_segments_are_96_by_72(self):
         body = await self.body()
@@ -416,7 +417,7 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         body = await self.body()
         rule = self.rule(body, "#target-control button.selected")
         self.assertNotIn("var(--open)", rule)
-        self.assertNotIn("var(--fade)", rule)
+        self.assertNotIn("var(--attention)", rule)
         self.assertIn("var(--text)", rule)
 
     async def test_the_new_rules_use_no_fixed_or_absolute_positioning(self):
@@ -742,9 +743,12 @@ class TestAnnotation(WebTestCase):
         self.assertEqual(response.status, 200)
 
     async def test_spans_open_and_close(self):
-        opened = await (await self.client.post("/api/span/start", json={"key": "q1"})).json()
+        opened = await (await self.client.post("/api/span/start", json={"key": "last-two-minutes"})).json()
         span_id = opened["span_id"]
-        self.assertIn({"span_id": span_id, "event": "q1", "label": "Q1"}, opened["state"]["open_spans"])
+        self.assertIn(
+            {"span_id": span_id, "event": "last-two-minutes", "label": "Last two minutes"},
+            opened["state"]["open_spans"],
+        )
         closed = await (await self.client.post("/api/span/end", json={"span_id": span_id})).json()
         self.assertEqual(closed["state"]["open_spans"], [])
 
@@ -894,9 +898,14 @@ class TestFailures(WebTestCase):
         state = await (await self.client.get("/api/state")).json()
         self.assertFalse(state["log"]["healthy"])
 
+    async def test_a_retired_span_start_is_a_bad_request(self):
+        response = await self.client.post("/api/span/start", json={"key": "q1"})
+        self.assertEqual(response.status, 400)
+        self.assertIn("retired", (await response.json())["error"])
+
     async def test_a_span_that_was_not_saved_says_so(self):
         self.disk.full = True
-        response = await self.client.post("/api/span/start", json={"key": "q3"})
+        response = await self.client.post("/api/span/start", json={"key": "last-two-minutes"})
         self.assertEqual(response.status, 200)
         self.log.flush()
         state = await (await self.client.get("/api/state")).json()
@@ -1309,7 +1318,7 @@ class TestTapsAreStampedOnTheWayIn(WebTestCase):
     async def test_annotations_and_spans_read_it_too(self):
         body = self.stamp(at=6000.0, offset=1000.5, uncertainty=0.01)
         await self.client.post("/api/annotate", json={"key": "note", "data": {"text": "x"}, **body})
-        started = await (await self.client.post("/api/span/start", json={"key": "q1", **body})).json()
+        started = await (await self.client.post("/api/span/start", json={"key": "last-two-minutes", **body})).json()
         await self.client.post("/api/span/end", json={"span_id": started["span_id"], **body})
         for entry in self.logged():
             with self.subTest(entry.event, phase=entry.phase):
@@ -1374,3 +1383,115 @@ class TestTheTimestampAloneIsNotNews(WebTestCase):
         before = self.tacet.snapshot()
         after = {**before, "at": before["at"] + 1.0}
         self.assertFalse(web.should_broadcast(before, after, elapsed=5.0))
+
+
+class TestCategoryTones(unittest.TestCase):
+    """#155: colour and icon by category, and the colours that are never a category.
+
+    Read off the stylesheet itself, comments stripped, so a rule that drifts
+    fails here rather than on a Saturday.
+    """
+
+    # Palette A's state colours, and the tints the page already uses for them.
+    STATE_VARIABLES = ("var(--warn)", "var(--attention)", "var(--attention-text)", "var(--ok)", "var(--state-fading)")
+    STATE_HEX = ("#c62828", "#ffb300", "#1a1400", "#2e7d32", "#ffb4a9", "#ff9d94", "#ffca7a", "#9fd8a2")
+    # Where a number below comes from: the press-box iPad is 1024px wide, the
+    # fader column is 280px (`#fader-column`), and the tab panel pads 16px a side.
+    IPAD_WIDTH = 1024
+    FADER_COLUMN_WIDTH = 280
+    TABPANEL_PADDING = 32
+    GRID_GAP = 8
+    SCORING_BUTTONS = 5
+    # An action button's 2px border, either side.
+    ACTION_BORDER = 2
+    # A grid button's 1px border, either side.
+    GRID_BORDER = 2
+    SCORING_LINE_HEIGHT = 1.4
+    SHRINK_FLOOR = 64
+    # The most a stacked scoring row may cost over a plain grid row.
+    ROW_BUDGET = 3
+
+    def setUp(self):
+        style = web.PAGE.split("<style>", 1)[1].split("</style>", 1)[0]
+        self.css = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+        self.rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css)]
+
+    def rule(self, selector):
+        bodies = [body for sel, body in self.rules if sel == selector]
+        self.assertTrue(bodies, f"no rule for {selector!r}")
+        return bodies[0]
+
+    def root(self):
+        declarations = {}
+        for pair in self.rule(":root").split(";"):
+            if pair.strip():
+                name, value = pair.split(":", 1)
+                declarations[name.strip()] = value.strip()
+        return declarations
+
+    def number(self, pattern, text):
+        found = re.search(pattern, text)
+        assert found is not None, pattern
+        return float(found.group(1))
+
+    def test_every_tone_has_a_rule(self):
+        self.rule('button[data-tone="score"]')
+        self.rule('button[data-tone="timeout"]')
+
+    def test_no_category_rule_uses_a_state_colour(self):
+        for sel, body in self.rules:
+            if "data-tone=" in sel or "data-action=" in sel or ".ico" in sel:
+                for forbidden in self.STATE_VARIABLES + self.STATE_HEX:
+                    with self.subTest(selector=sel, colour=forbidden):
+                        self.assertNotIn(forbidden, body)
+
+    def test_category_colours_differ_from_every_state_colour(self):
+        root = self.root()
+        category = [root[name] for name in ("--open", "--tone-out", "--tone-score", "--tone-timeout")]
+        self.assertEqual(len(set(category)), len(category))
+        for name in ("--warn", "--attention", "--ok", "--state-fading"):
+            self.assertNotIn(root[name], category, name)
+
+    def test_faded_out_no_longer_borrows_the_attention_colour(self):
+        self.assertIn("var(--tone-out)", self.rule('button[data-action="release"]'))
+
+    def test_the_fading_colour_is_reserved(self):
+        self.assertIn("--state-fading", self.root())
+
+    def test_the_direction_arrow_rides_on_the_label(self):
+        selectors = [sel for sel, _ in self.rules]
+        self.assertTrue(any('[data-action="open"] .lbl::before' in sel for sel in selectors))
+        self.assertTrue(any('[data-action="release"] .lbl::before' in sel for sel in selectors))
+        self.assertNotIn('button[data-action="release"]::before', selectors)
+
+    def test_the_column_icon_fits_the_shrink_floor(self):
+        icon = self.number(r"height:(\d+)px", self.rule("#fader-column .ico"))
+        padding = self.number(r"padding:(\d+)px", self.rule("#fader-top button,#fader-bottom button"))
+        line_height = self.number(r"line-height:([\d.]+)", self.rule("#fader-column .lbl"))
+        gap = self.number(r"margin:0 auto (\d+)px", self.rule("#fader-column .ico"))
+        font = self.number(r"font-size:(\d+)px", self.rule("#fader-column button"))
+        used = 2 * self.ACTION_BORDER + 2 * padding + icon + gap + font * line_height
+        self.assertLessEqual(used, self.SHRINK_FLOOR)
+
+    def test_five_scoring_buttons_fit_one_row_on_the_ipad(self):
+        grid = self.rule('.grid[data-tone="score"]')
+        cell = self.number(r"minmax\((\d+)px", grid)
+        room = self.IPAD_WIDTH - self.FADER_COLUMN_WIDTH - self.TABPANEL_PADDING
+        self.assertLessEqual(self.SCORING_BUTTONS * cell + (self.SCORING_BUTTONS - 1) * self.GRID_GAP, room)
+
+        padding = self.number(r"padding:(\d+)px", self.rule('.grid[data-tone="score"] button'))
+        icon = self.number(r"height:(\d+)px", self.rule('.grid[data-tone="score"] .ico'))
+        gap = self.number(r"margin:0 auto (\d+)px", self.rule('.grid[data-tone="score"] .ico'))
+        font = self.number(r"font-size:(\d+)px", self.rule('.grid[data-tone="score"] button'))
+        plain = self.rule(".grid button")
+        plain_padding = self.number(r"padding:(\d+)px", plain)
+        plain_font = self.number(r"font-size:(\d+)px", plain)
+        stacked = self.GRID_BORDER + 2 * padding + icon + gap + font * self.SCORING_LINE_HEIGHT
+        flat = self.GRID_BORDER + 2 * plain_padding + plain_font * self.SCORING_LINE_HEIGHT
+        self.assertLessEqual(stacked, flat + self.ROW_BUDGET)
+
+    def test_no_icon_rule_positions_anything(self):
+        for sel, body in self.rules:
+            if ".ico" in sel:
+                with self.subTest(selector=sel):
+                    self.assertNotIn("position:", body)

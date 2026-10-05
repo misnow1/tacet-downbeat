@@ -109,14 +109,14 @@ async def standing_down(root: Path) -> dict[str, Any]:
 
 
 async def open_recording(root: Path) -> dict[str, Any]:
-    """Armed, open at unity, Reaper rolling, a quarter under way."""
+    """Armed, open at unity, Reaper rolling, a media timeout under way."""
     box = _build(root, console=_Sender(), machine=_known())
     await box.app.arm()
     await box.app.annotate("up-whistle")
     box.reaper_says("/record", 1.0)
     box.reaper_says("/play", 1.0)
     box.reaper_says("/time", POSITION)
-    await box.app.start_span("q2")
+    await box.app.start_span("timeout-media")
     return box.app.snapshot()
 
 
