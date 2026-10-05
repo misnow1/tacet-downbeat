@@ -704,6 +704,23 @@ function recordingTag(liveness, known) {
   return ["confirmed", liveness === "quiet" ? "confirmed (idle)" : "confirmed"];
 }
 
+// #157: the chip's head words. Quoted in serve.py's banner and the docs; tests hold them together.
+const PROVENANCE_DIRTY = "Unreviewed code running";
+const PROVENANCE_UNKNOWN = "Running code not identified";
+
+// What code the box runs (#157), or null when there is nothing to say: a clean
+// checkout on any branch, not a checkout, or a box from before #157 that sends
+// no `provenance`.
+function provenanceChip(p) {
+  if (!p) return null;
+  if (p.source === "unknown") {
+    return ["note", PROVENANCE_UNKNOWN + ": " + p.error + ". It may include uncommitted changes."];
+  }
+  if (p.source !== "checkout" || p.dirty !== true) return null;
+  return ["warn", PROVENANCE_DIRTY + ": uncommitted changes on " + p.where
+    + ". The log names the commit, not the changes."];
+}
+
 // Whether annotations are reaching the disk. A full disk leaves the fader
 // buttons working and nothing else on the page looking wrong, while every
 // annotation from then on is lost - the half nothing can recover afterwards
@@ -792,6 +809,10 @@ function render(received) {
   // else on the page changes to say so, and the operator has to decide again
   // (#16).
   showRefusal(next.refusal, Boolean(next.stale_tap));
+  // #157: guarded like duty and target - a box from before it sends no field.
+  const code = provenanceChip(next.provenance);
+  $("provenance").className = code ? code[0] : "";
+  setText($("provenance"), code ? code[1] : "");
   const saving = savingBanner(next.log, next.mirror);
   $("saving").className = saving ? saving[0] : "";
   $("saving").textContent = saving ? saving[1] : "";
@@ -1076,7 +1097,7 @@ for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-read
 // than a class: the functional colour classes above (loud, failed, fault...)
 // are overwritten wholesale on every render, and a class toggled here would be
 // wiped the next time one of those runs.
-for (const id of ["link", "refusal", "tap", "saving"]) {
+for (const id of ["link", "refusal", "tap", "saving", "provenance"]) {
   $(id).onclick = () => {
     const node = $(id);
     node.dataset.expanded = node.dataset.expanded ? "" : "1";

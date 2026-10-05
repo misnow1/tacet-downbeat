@@ -11,6 +11,7 @@ from unittest import mock
 from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
+from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream
 from tests.test_annotations import Gate, Killed
@@ -148,6 +149,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         steady=False,
         level_known=True,
         tick_hz=200.0,
+        provenance=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -185,6 +187,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             monotonic=clock,
             stale_tap_seconds=stale_tap_seconds,
             machine=state.Machine(level_known=level_known),
+            provenance=provenance,
         )
 
     def reaper_parked(self, app):
@@ -4148,3 +4151,54 @@ class TestTheDutyClock(AppTestCase):
         self.assertTrue(app.snapshot()["duty"]["armed"])
         await app.wait_for_fade()
         self.assertFalse(app.snapshot()["duty"]["armed"])
+
+
+CODE = prov.Provenance(
+    source=prov.Source.CHECKOUT,
+    commit="0123456789abcdef0123456789abcdef01234567",
+    branch="157-fix",
+    detached=False,
+    dirty=True,
+    untracked=0,
+    worktree=True,
+    path="/checkout",
+    error=None,
+)
+
+
+class TestTheBoxSaysWhatCodeItRuns(AppTestCase):
+    """The run's first entry names the code (#157)."""
+
+    async def test_box_started_carries_the_provenance(self):
+        app = self.build(provenance=CODE)
+        app.log_box_started()
+        last = self.entries()[-1]
+        self.assertEqual(last.event, ann.BOX_STARTED)
+        self.assertEqual(last.data, CODE.as_data())
+
+    async def test_box_started_is_not_stamped_with_a_playhead(self):
+        # Reaper has said nothing about this run when the box starts.
+        app = self.build(provenance=CODE)
+        app.handle_recorder_packet(osc.encode_message("/time", 1234.5))
+        app.log_box_started()
+        self.assertIsNone(self.entries()[-1].project_seconds)
+
+    async def test_the_snapshot_carries_what_the_page_needs(self):
+        app = self.build(provenance=CODE)
+        self.assertEqual(app.snapshot()["provenance"], CODE.as_snapshot())
+
+    async def test_a_box_built_without_one_says_null(self):
+        app = self.build()
+        self.assertIsNone(app.snapshot()["provenance"])
+
+    async def test_a_box_started_that_cannot_be_saved_is_counted_not_raised(self):
+        disk = Disk()
+        disk.full = True
+        app = self.build(provenance=CODE, opener=disk.open)
+        app.log_box_started()
+        self.log.flush()
+        self.assertFalse(app.snapshot()["log"]["healthy"])
+
+
+if __name__ == "__main__":
+    unittest.main()

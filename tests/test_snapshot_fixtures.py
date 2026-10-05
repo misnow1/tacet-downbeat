@@ -48,6 +48,14 @@ class TestSnapshotFixtures(unittest.TestCase):
             with self.subTest(fixture=path.name):
                 self.assertEqual(json.loads(text)["log"]["path"], f"{snapshots.LOG_DIR}/game.jsonl")
 
+    def test_every_fixture_says_what_code_the_box_runs(self):
+        for path, text in self.snapshots_only().items():
+            with self.subTest(fixture=path.name):
+                code = json.loads(text)["provenance"]
+                self.assertEqual(set(code), {"source", "dirty", "where", "error"})
+                # Only the fix on the day is dirty; no machine path is in any of them.
+                self.assertEqual(code["dirty"], path.name == "snapshot-faults.json")
+
     def test_each_state_is_the_state_it_is_named_for(self):
         states = {path.name: json.loads(text) for path, text in self.snapshots_only().items()}
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")

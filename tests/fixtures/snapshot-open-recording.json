@@ -235,6 +235,12 @@
     }
   ],
   "prompt": null,
+  "provenance": {
+    "dirty": false,
+    "error": null,
+    "source": "checkout",
+    "where": "main @ 0123456"
+  },
   "recording": {
     "can_start": false,
     "confirmed": true,

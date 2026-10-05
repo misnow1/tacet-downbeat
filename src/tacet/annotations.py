@@ -183,6 +183,10 @@ def _span(key: str, label: str, category: Category, *, button: bool = True) -> E
 #: which is the exact failure the warning exists to prevent.
 ANCHOR_EVENT = "recording-started"
 
+#: The box saying what code it is (#157). Written once per run, first, by
+#: `tacet.app` before anything is served. Named once, like `ANCHOR_EVENT`.
+BOX_STARTED = "box-started"
+
 #: The three taps the box answers with a question (#19): the band entering the
 #: stands asks whether to arm, the band leaving them - or the halftime exodus
 #: starting - asks whether to stand down. Named once, like `ANCHOR_EVENT`, so
@@ -197,6 +201,10 @@ HALFTIME_EXODUS = "halftime-exodus"
 #: operator sees on a button and may be reworded without breaking old logs.
 VOCABULARY: tuple[EventType, ...] = (
     # Session. Written by the box, not tapped by anyone.
+    # Written once per run, first, before anything is served; carries what code
+    # is running (#157). A restart mid-game leaves a SYS|box-started marker
+    # where it happened.
+    _instant(BOX_STARTED, "Box started", Category.SESSION, button=False),
     _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),
     _instant("recording-stopped", "Recording stopped", Category.SESSION, button=False),
     _instant("armed", "Armed", Category.SESSION, button=False),

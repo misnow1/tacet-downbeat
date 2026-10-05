@@ -3030,6 +3030,84 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("parked and unreported: no reason", nodes.get("rec-why").textContent, "");
 }
 
+// -- what code the box runs (#157) ----------------------------------------------
+
+{
+  const chip = browser().context.provenanceChip;
+  const checkout = (changes) => ({
+    source: "checkout",
+    dirty: false,
+    where: "main @ 0123456",
+    error: null,
+    ...changes,
+  });
+  check("no provenance says nothing", [chip(undefined), chip(null)], [null, null]);
+  check("a clean checkout says nothing", chip(checkout({})), null);
+  check("a clean checkout on another branch says nothing", chip(checkout({ where: "157-fix @ 0123456" })), null);
+  check("not a checkout says nothing", chip({ source: "not-a-checkout", dirty: null, where: null, error: null }), null);
+  check(
+    "a dirty tree is a warning that names where",
+    chip(checkout({ dirty: true, where: "157-fix @ 0123456 (worktree)" })),
+    [
+      "warn",
+      "Unreviewed code running: uncommitted changes on 157-fix @ 0123456 (worktree). "
+        + "The log names the commit, not the changes.",
+    ],
+  );
+  check(
+    "an unknown is a quiet note with its reason",
+    chip({ source: "unknown", dirty: null, where: null, error: "git did not answer within 5s" }),
+    ["note", "Running code not identified: git did not answer within 5s. It may include uncommitted changes."],
+  );
+}
+
+{
+  const { nodes } = renderedFixture("standing-down");
+  check("standing down: a clean checkout shows no chip", nodes.get("provenance").className, "");
+  check("standing down: and no text", nodes.get("provenance").textContent, "");
+}
+
+{
+  const { nodes } = renderedFixture("faults");
+  check("faults: a dirty tree shows the amber chip", nodes.get("provenance").className, "warn");
+  check(
+    "faults: and says so first",
+    nodes.get("provenance").textContent.startsWith("Unreviewed code running"),
+    true,
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  delete snap.provenance;
+  let error = null;
+  try {
+    context.render(snap);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no provenance does not throw", error, null);
+  check("and the rest of the page still renders", nodes.get("state").textContent, "STANDING DOWN");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS.faults));
+  const writes = nodes.get("provenance").writes;
+  context.render(structuredClone(SNAPSHOTS.faults));
+  check("the same chip is not rewritten", nodes.get("provenance").writes, writes);
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS.faults));
+  nodes.get("provenance").onclick();
+  check("a tap expands the chip", nodes.get("provenance").dataset.expanded, "1");
+  nodes.get("provenance").onclick();
+  check("and a second tap collapses it", nodes.get("provenance").dataset.expanded, "");
+}
+
 // -- report -----------------------------------------------------------------
 
 console.log(`${checks} checks, ${failures} failures`);

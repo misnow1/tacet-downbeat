@@ -27,6 +27,7 @@ from typing import Any
 
 from . import annotations as ann
 from . import dm7, moves, prompts, state, taps, targets
+from . import provenance as prov
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, record_refusal
 
@@ -231,8 +232,13 @@ class App:
         target_levels: targets.Targets = targets.DEFAULT_TARGETS,
         monotonic: Callable[[], float] = time.monotonic,
         stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
+        provenance: prov.Provenance | None = None,
     ) -> None:
         self._console = console
+        #: What code this box is (#157). None only in tests that do not care;
+        #: `serve.build` always passes one. Never probed here: git is asked once,
+        #: by `serve.main`, before the loop exists.
+        self._provenance = provenance
         self._log = log
         self._recorder = recorder
         self.machine = machine if machine is not None else state.Machine()
@@ -1008,6 +1014,16 @@ class App:
             self._prompt = None
             self._notify()
 
+    def log_box_started(self) -> ann.Entry | None:
+        """The run's first entry: what code this is (#157).
+
+        Written once by `serve.build`, before anything is served. Through
+        `_record`, so a disk that refuses it is counted on the page rather than
+        raised. Not stamped with a playhead: Reaper has not been heard from.
+        """
+        data = None if self._provenance is None else self._provenance.as_data()
+        return self._record(ann.BOX_STARTED, data=data)
+
     def _record(
         self,
         event_key: str,
@@ -1262,6 +1278,9 @@ class App:
             "log": {"path": str(self._log.path), **_health(self._log.health)},
             # Only the live markers. They can be rebuilt from the log afterwards.
             "mirror": _health(self._log.mirror_health),
+            # What code the box is running (#157), fixed for the run, so it never
+            # churns the snapshot. None only when built without it (tests).
+            "provenance": None if self._provenance is None else self._provenance.as_snapshot(),
         }
 
     # -- change notification ----------------------------------------------
