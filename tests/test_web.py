@@ -467,8 +467,55 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
 
     async def test_the_script_and_the_page_agree_on_the_ids(self):
         body = await self.body()
-        for element_id in ("target-control", "target-level"):
+        for element_id in ("target-control", "target-level", "target-note"):
             self.assertIn(f'$("{element_id}")', body)
+
+    async def test_the_note_sits_directly_under_the_segments_and_reserves_two_lines(self):
+        # #153: in MORE's panel, so it cannot move the fader column or MAIN.
+        body = await self.body()
+        self.assertIn('<div id="target-control"></div>\n  <div id="target-note"></div>', body)
+        rule = self.rule(body, "#target-note")
+        self.assertIn("min-height:34px", rule)
+        self.assertNotIn("position:", rule)
+
+
+class TestThePageCarriesTheProvenanceChip(WebTestCase):
+    """#157: shown only while the box runs uncommitted code or cannot tell. Static
+    for the run, so nothing below it moves after the first paint."""
+
+    async def body(self):
+        return await (await self.client.get("/")).text()
+
+    def rule(self, body, selector):
+        return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+    async def test_the_chip_ships_empty_in_the_strip_after_the_target_chip_and_before_the_link(self):
+        body = await self.body()
+        self.assertIn('<div id="provenance"></div>', body)
+        strip = body.split('<div id="strip">', 1)[1].split('<div id="prompt">', 1)[0]
+        self.assertLess(strip.index('id="target-level"'), strip.index('id="provenance"'))
+        self.assertLess(strip.index('id="provenance"'), strip.index('id="link"'))
+
+    async def test_the_chip_is_before_the_fader_column(self):
+        body = await self.body()
+        self.assertLess(body.index('id="provenance"'), body.index('id="fader-column"'))
+
+    async def test_the_chip_rules_are_scoped_to_the_strip(self):
+        body = await self.body()
+        base = self.rule(body, "#strip > #provenance")
+        self.assertIn("display:none", base)
+        self.assertIn("max-width:240px", base)
+        warn = self.rule(body, "#strip > #provenance.warn")
+        self.assertIn("var(--attention)", warn)
+        self.assertIn("var(--attention-text)", warn)
+        self.assertIn("max-width:100%", self.rule(body, '#strip > #provenance[data-expanded="1"]'))
+
+    async def test_the_chip_rules_use_no_fixed_or_absolute_positioning(self):
+        body = await self.body()
+        for selector in ("#strip > #provenance", "#strip > #provenance.warn", "#strip > #provenance.note"):
+            rule = self.rule(body, selector)
+            self.assertNotIn("position:fixed", rule, selector)
+            self.assertNotIn("position:absolute", rule, selector)
 
 
 class TestThePageHasWhereTapsReport(WebTestCase):
@@ -701,6 +748,22 @@ class TestTheTargetRoute(WebTestCase):
         payload = await (await self.post(body)).json()
         self.assertEqual(payload["target"]["db"], -3.0)
         self.assertIsNone(payload["stale_tap"])
+
+    async def test_a_target_post_while_open_answers_with_the_stored_note(self):
+        # #153: the fader is up, so the tap stores and the response says so.
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        await self.client.post("/api/trigger")
+        before = len(self.console_sender.packets)
+        payload = await (await self.post({"db": -3.0})).json()
+        self.assertEqual(payload["target"]["stored"], {"db": -3.0, "because": "open"})
+        self.assertEqual(len(self.console_sender.packets), before)
+
+    async def test_a_target_post_while_standing_down_answers_with_no_note(self):
+        # #153: nothing is up, so storing is what the operator expects.
+        payload = await (await self.post({"db": -3.0})).json()
+        self.assertEqual(payload["state"], "standing-down")
+        self.assertIsNone(payload["target"]["stored"])
 
     async def test_a_malformed_stamp_is_a_client_error_and_changes_nothing(self):
         response = await self.post({"db": -3.0, "tap": {"at": "soon"}})

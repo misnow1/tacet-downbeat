@@ -711,6 +711,12 @@ margin:4px 0 0}
 #target-control{display:flex;flex-wrap:wrap;gap:8px}
 #target-control button{width:96px;height:72px;font-size:16px;font-weight:700}
 #target-control button.selected{background:var(--text);color:var(--bg);border-color:var(--text)}
+/* The note under the segments when a tap stored and moved nothing (#153).
+   Reserves two lines whether or not it has text, so showing, changing or
+   clearing it moves nothing: the same reservation as #rec-why. Attention is
+   the text colour only, never a button fill (#155). */
+#target-note{color:var(--dim);font-size:13px;line-height:17px;min-height:34px;margin-top:8px}
+#target-note.attention{color:#ffca7a}
 /* Spans are a different kind of control from instants and must not look like
    them: one tap of these opens a region and the next one closes it. Not
    scoped to .grid: the fader column's buttons carry the same data attributes
@@ -765,6 +771,14 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #link{color:#fff;display:none}
 #link.connecting{display:block;background:var(--attention);color:var(--attention-text)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
+/* What code the box runs (#157): shown only while it runs uncommitted code or
+   cannot tell. Static for the run, so nothing below it moves after the first
+   paint; max-width keeps it on the strip's first line beside duty and target on
+   the iPad, and a tap expands it. */
+#strip > #provenance{display:none;max-width:240px;cursor:pointer}
+#strip > #provenance.warn{display:block;background:var(--attention);color:var(--attention-text)}
+#strip > #provenance.note{display:block;color:#ffca7a}
+#strip > #provenance[data-expanded="1"]{max-width:100%}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
@@ -888,6 +902,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 <div id="strip">
   <div id="duty"></div>
   <div id="target-level"></div>
+  <div id="provenance"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>
@@ -942,9 +957,11 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <!-- #9: the standing target level, from fader.presets. Below the hand-off
        confirmation, never between it and its button (#108). The segments are
        built by script from the snapshot; storing a level moves nothing and a
-       tap here leaves the operator on MORE (#109). -->
+       tap here leaves the operator on MORE (#109). #target-note says, while the
+       fader is up, that a tap stored and did not move it (#153). -->
   <h2>Target level</h2>
   <div id="target-control"></div>
+  <div id="target-note"></div>
 </div>
 <div id="wake"></div>
 </div>

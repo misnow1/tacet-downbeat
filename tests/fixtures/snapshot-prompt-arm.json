@@ -233,6 +233,12 @@
     "seq": 1,
     "source": "band-enters-stands"
   },
+  "provenance": {
+    "dirty": false,
+    "error": null,
+    "source": "checkout",
+    "where": "main @ 0123456"
+  },
   "recording": {
     "can_start": false,
     "confirmed": false,
@@ -255,7 +261,8 @@
       0.0,
       -3.0,
       -6.0
-    ]
+    ],
+    "stored": null
   },
   "why": "Standing down. You can still drive the fader; an open arms the box. The box does not know where the fader really is - it can only say what it last asked for, never what the console did with it; close it now, or open, to say where it is. You are driving; the detector cannot move the fader."
 }

@@ -11,6 +11,7 @@ from unittest import mock
 from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
+from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply
 from tests.test_annotations import Gate, Killed
@@ -148,6 +149,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         steady=False,
         level_known=True,
         tick_hz=200.0,
+        provenance=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -185,6 +187,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             monotonic=clock,
             stale_tap_seconds=stale_tap_seconds,
             machine=state.Machine(level_known=level_known),
+            provenance=provenance,
         )
 
     def reaper_parked(self, app):
@@ -2832,6 +2835,9 @@ class TestTheStandingTarget(AppTestCase):
                 "previous_db": 0.0,
                 "default": False,
                 "state": state.State.IDLE.value,
+                # The log keeps the reason even though the page shows nothing
+                # for a tap while the fader is closed (#153).
+                "stored_because": "closed",
             },
         )
 
@@ -2894,6 +2900,165 @@ class TestTheStandingTarget(AppTestCase):
             self.assertEqual(address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3")
         for level in self.console_sender.levels():
             self.assertIsInstance(level, int)
+
+
+class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
+    """#153: a target tap stores and moves nothing, and while the fader is up
+    the page is told so, with the reason. A tap while the fader is closed is
+    what the operator expects, so the page is told nothing - but the log still
+    says why it only stored."""
+
+    FADER_UP = (state.State.OPEN, state.State.READY, state.State.RELEASING)
+
+    def stored(self, app):
+        return app.snapshot()["target"]["stored"]
+
+    def target_set(self):
+        return [e for e in self.entries() if e.event == tacet_app.TARGET_SET][-1]
+
+    async def open_it(self, app):
+        await app.arm()
+        await app.annotate("up-whistle")
+
+    async def ready_it(self, app):
+        app._ready_ride_seconds = 0.05
+        await app.arm()
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.READY)
+
+    def test_stored_only_because_names_every_state(self):
+        expected = {
+            state.State.STANDING_DOWN: tacet_app.StoredOnly.CLOSED,
+            state.State.IDLE: tacet_app.StoredOnly.CLOSED,
+            state.State.OPEN: tacet_app.StoredOnly.OPEN,
+            state.State.READY: tacet_app.StoredOnly.READY,
+            state.State.RELEASING: tacet_app.StoredOnly.RELEASING,
+        }
+        self.assertEqual(set(expected), set(state.State))
+        for which, because in expected.items():
+            with self.subTest(state=which.value):
+                machine = state.Machine(state=which)
+                self.assertIs(tacet_app.stored_only_because(machine, unchanged=False), because)
+                self.assertIs(tacet_app.stored_only_because(machine, unchanged=True), tacet_app.StoredOnly.UNCHANGED)
+        riding = state.Machine(state=state.State.OPEN, riding_in=True)
+        self.assertIs(tacet_app.stored_only_because(riding, unchanged=False), tacet_app.StoredOnly.OPEN)
+
+    def test_stored_note_shown_only_while_the_fader_is_up(self):
+        for which in state.State:
+            with self.subTest(state=which.value):
+                self.assertEqual(
+                    tacet_app.stored_note_shown(state.Machine(state=which)),
+                    which in self.FADER_UP,
+                )
+
+    async def test_nothing_is_stored_before_any_target_tap(self):
+        app = self.build()
+        self.assertIsNone(self.stored(app))
+
+    async def test_a_target_set_while_open_says_it_stored_and_did_not_move(self):
+        app = self.build()
+        await self.open_it(app)
+        before = len(self.console_sender.packets)
+        await app.set_target(-3.0)
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "open"})
+        self.assertEqual(len(self.console_sender.packets), before)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def test_a_target_set_while_closed_shows_no_note_but_logs_why(self):
+        for label, level_known, arm in (
+            ("standing down", True, False),
+            ("idle", True, True),
+            ("standing down, level unknown", False, False),
+        ):
+            with self.subTest(state=label):
+                app = self.build(level_known=level_known)
+                if arm:
+                    await app.arm()
+                await app.set_target(-3.0)
+                self.assertIsNone(self.stored(app))
+                self.assertEqual(self.target_set().data["stored_because"], "closed")
+
+    async def test_a_target_set_while_ready_or_releasing_says_which(self):
+        app = self.build()
+        await self.ready_it(app)
+        await app.set_target(-3.0)
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "ready"})
+        app = self.build()
+        app.machine = state.Machine(state=state.State.RELEASING, level_known=True)
+        await app.set_target(-6.0)
+        self.assertEqual(self.stored(app), {"db": -6.0, "because": "releasing"})
+
+    async def test_a_tap_on_the_target_already_set_while_open_says_nothing_changed(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.set_target(0.0)
+        self.assertEqual(self.stored(app), {"db": 0.0, "because": "unchanged"})
+        self.assertEqual(self.target_set().data["stored_because"], "unchanged")
+
+    async def test_a_tap_on_the_target_already_set_while_closed_shows_no_note(self):
+        app = self.build()
+        await app.arm()
+        await app.set_target(0.0)
+        self.assertIsNone(self.stored(app))
+        self.assertEqual(self.target_set().data["stored_because"], "unchanged")
+
+    async def test_the_note_clears_when_the_fader_next_moves(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        self.assertIsNotNone(self.stored(app))
+        await app.release()
+        self.assertIsNone(self.stored(app))
+        await app.wait_for_fade()
+
+        app = self.build()
+        await self.ready_it(app)
+        await app.set_target(-6.0)
+        self.assertIsNotNone(self.stored(app))
+        await app.trigger()
+        self.assertIsNone(self.stored(app))
+
+    async def test_the_note_clears_when_the_state_changes(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.release()
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        await app.set_target(-3.0)
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "releasing"})
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertIsNone(self.stored(app))
+
+    async def test_a_handoff_that_leaves_the_state_alone_keeps_the_note(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await app.handoff()
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "open"})
+
+    async def test_a_refused_level_leaves_the_note_alone(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await app.set_target(-2.5)
+        self.assertEqual(self.stored(app), {"db": -3.0, "because": "open"})
+
+    async def test_a_newer_tap_replaces_the_note(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await app.set_target(-6.0)
+        self.assertEqual(self.stored(app), {"db": -6.0, "because": "open"})
+
+    async def test_target_set_logs_why_it_only_stored(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        self.assertEqual(self.target_set().data["stored_because"], "open")
+        await app.set_target(-3.0)
+        self.assertEqual(self.target_set().data["stored_because"], "unchanged")
 
 
 class SwallowingConsole(dm7.Dm7Client):
@@ -4107,3 +4272,54 @@ class TestTheDutyClock(AppTestCase):
         self.assertTrue(app.snapshot()["duty"]["armed"])
         await app.wait_for_fade()
         self.assertFalse(app.snapshot()["duty"]["armed"])
+
+
+CODE = prov.Provenance(
+    source=prov.Source.CHECKOUT,
+    commit="0123456789abcdef0123456789abcdef01234567",
+    branch="157-fix",
+    detached=False,
+    dirty=True,
+    untracked=0,
+    worktree=True,
+    path="/checkout",
+    error=None,
+)
+
+
+class TestTheBoxSaysWhatCodeItRuns(AppTestCase):
+    """The run's first entry names the code (#157)."""
+
+    async def test_box_started_carries_the_provenance(self):
+        app = self.build(provenance=CODE)
+        app.log_box_started()
+        last = self.entries()[-1]
+        self.assertEqual(last.event, ann.BOX_STARTED)
+        self.assertEqual(last.data, CODE.as_data())
+
+    async def test_box_started_is_not_stamped_with_a_playhead(self):
+        # Reaper has said nothing about this run when the box starts.
+        app = self.build(provenance=CODE)
+        app.handle_recorder_packet(osc.encode_message("/time", 1234.5))
+        app.log_box_started()
+        self.assertIsNone(self.entries()[-1].project_seconds)
+
+    async def test_the_snapshot_carries_what_the_page_needs(self):
+        app = self.build(provenance=CODE)
+        self.assertEqual(app.snapshot()["provenance"], CODE.as_snapshot())
+
+    async def test_a_box_built_without_one_says_null(self):
+        app = self.build()
+        self.assertIsNone(app.snapshot()["provenance"])
+
+    async def test_a_box_started_that_cannot_be_saved_is_counted_not_raised(self):
+        disk = Disk()
+        disk.full = True
+        app = self.build(provenance=CODE, opener=disk.open)
+        app.log_box_started()
+        self.log.flush()
+        self.assertFalse(app.snapshot()["log"]["healthy"])
+
+
+if __name__ == "__main__":
+    unittest.main()

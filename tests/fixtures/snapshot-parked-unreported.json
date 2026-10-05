@@ -229,6 +229,12 @@
   },
   "open_spans": [],
   "prompt": null,
+  "provenance": {
+    "dirty": false,
+    "error": null,
+    "source": "checkout",
+    "where": "main @ 0123456"
+  },
   "recording": {
     "can_start": true,
     "confirmed": true,
@@ -251,7 +257,8 @@
       0.0,
       -3.0,
       -6.0
-    ]
+    ],
+    "stored": null
   },
   "why": "Standing down. You can still drive the fader; an open arms the box. You are driving; the detector cannot move the fader."
 }

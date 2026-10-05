@@ -1017,7 +1017,17 @@ for (const known of [false, true]) {
 check(
   "the box wrote the snapshots these tests read",
   Object.keys(SNAPSHOTS).sort(),
-  ["faults", "open-recording", "parked-unreported", "prompt", "prompt-arm", "releasing", "riding", "standing-down"],
+  [
+    "faults",
+    "open-recording",
+    "parked-unreported",
+    "prompt",
+    "prompt-arm",
+    "releasing",
+    "riding",
+    "standing-down",
+    "target-stored",
+  ],
 );
 
 function renderedFixture(name) {
@@ -2448,6 +2458,104 @@ for (const [label, fader] of [["unknown", { level_known: false }], ["known", { l
   );
 }
 
+// -- a target tap that stored and did not move says so (#153) -----------------
+//
+// The box sends `target.stored` ({db, because}) or null; the page words it
+// under the segments. Null is also what the box sends for every tap made while
+// the fader is closed: storing is what the operator expects there, so the page
+// says nothing at all.
+
+const NOT_MOVED_SENTENCE = "The fader did not move.";
+const pure = browser().context;
+
+check(
+  "storedNote: open says stored and that the fader did not move",
+  pure.storedNote({ db: -3, because: "open" }),
+  { text: "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE, attention: true },
+);
+check(
+  "storedNote: ready",
+  pure.storedNote({ db: -6, because: "ready" }),
+  { text: "Stored: -6 dB on the next open. " + NOT_MOVED_SENTENCE, attention: true },
+);
+check(
+  "storedNote: releasing says the fade carries on",
+  pure.storedNote({ db: -3, because: "releasing" }),
+  { text: "Stored: -3 dB on the next open. The fade carries on to -inf.", attention: true },
+);
+check(
+  "storedNote: unchanged",
+  pure.storedNote({ db: -3, because: "unchanged" }),
+  { text: "Already the target: -3 dB. Nothing changed.", attention: false },
+);
+check(
+  "storedNote: unity reads 0 dB",
+  pure.storedNote({ db: 0, because: "unchanged" }).text,
+  "Already the target: 0 dB. Nothing changed.",
+);
+check(
+  "storedNote: an unknown reason falls back to did-not-move",
+  pure.storedNote({ db: -3, because: "from-a-newer-box" }),
+  { text: "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE, attention: true },
+);
+check("storedNote: null is empty", pure.storedNote(null), { text: "", attention: false });
+check("storedNote: undefined is empty", pure.storedNote(undefined), { text: "", attention: false });
+for (const because of ["open", "ready", "releasing", "unchanged", "from-a-newer-box"]) {
+  check(
+    `storedNote: every sentence is ASCII (${because})`,
+    /^[\x20-\x7e]*$/.test(pure.storedNote({ db: -3, because }).text),
+    true,
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  const note = nodes.get("target-note");
+  check("target-stored: the note is the open sentence", note.textContent, "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE);
+  check("target-stored: and wants attention", note.className, "attention");
+  check("target-stored: the chip says it is for the next open", nodes.get("target-level").textContent, "target -3 dB (next open)");
+
+  // The box clears a note when the fader moves or the state changes, and the
+  // page follows its next snapshot (a later `at`, or the page ignores it as
+  // old) with the note cleared.
+  const cleared = structuredClone(SNAPSHOTS["target-stored"]);
+  cleared.at += 1;
+  cleared.target.stored = null;
+  context.render(cleared);
+  check("a snapshot with no note empties it", note.textContent, "");
+  check("and drops the attention colour", note.className, "");
+  check("and drops (next open) from the chip", nodes.get("target-level").textContent, "target -3 dB");
+}
+
+{
+  // #153's Done-when as the maintainer kept it: a tap while the fader is closed
+  // leaves no note and no (next open). The box sends `stored: null` for it.
+  const { context, nodes } = browser();
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  check("closed: no note", nodes.get("target-note").textContent, "");
+  check("closed: no attention colour", nodes.get("target-note").className, "");
+  check("closed: the chip does not say (next open)", nodes.get("target-level").textContent, "target -3 dB");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  const note = nodes.get("target-note");
+  const written = note.writes;
+  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  check("an unchanged note is not rewritten (#51)", note.writes, written);
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = structuredClone(SNAPSHOTS["target-stored"]);
+  snap.target.stored = { db: -3, because: "unchanged" };
+  context.render(snap);
+  check("unchanged while open: dim, not attention", nodes.get("target-note").className, "");
+  check("unchanged while open: the chip adds nothing", nodes.get("target-level").textContent, "target -3 dB");
+}
+
 // -- MAIN after Game 3 (#155) ------------------------------------------------
 
 // The real, regenerated standing-down snapshot, rendered once per test that
@@ -2933,6 +3041,84 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("parked and unreported: the button is live", nodes.get("btn-record").disabled, false);
   check("parked and unreported: not yet reported", nodes.get("rec-tag").textContent, "not yet reported");
   check("parked and unreported: no reason", nodes.get("rec-why").textContent, "");
+}
+
+// -- what code the box runs (#157) ----------------------------------------------
+
+{
+  const chip = browser().context.provenanceChip;
+  const checkout = (changes) => ({
+    source: "checkout",
+    dirty: false,
+    where: "main @ 0123456",
+    error: null,
+    ...changes,
+  });
+  check("no provenance says nothing", [chip(undefined), chip(null)], [null, null]);
+  check("a clean checkout says nothing", chip(checkout({})), null);
+  check("a clean checkout on another branch says nothing", chip(checkout({ where: "157-fix @ 0123456" })), null);
+  check("not a checkout says nothing", chip({ source: "not-a-checkout", dirty: null, where: null, error: null }), null);
+  check(
+    "a dirty tree is a warning that names where",
+    chip(checkout({ dirty: true, where: "157-fix @ 0123456 (worktree)" })),
+    [
+      "warn",
+      "Unreviewed code running: uncommitted changes on 157-fix @ 0123456 (worktree). "
+        + "The log names the commit, not the changes.",
+    ],
+  );
+  check(
+    "an unknown is a quiet note with its reason",
+    chip({ source: "unknown", dirty: null, where: null, error: "git did not answer within 5s" }),
+    ["note", "Running code not identified: git did not answer within 5s. It may include uncommitted changes."],
+  );
+}
+
+{
+  const { nodes } = renderedFixture("standing-down");
+  check("standing down: a clean checkout shows no chip", nodes.get("provenance").className, "");
+  check("standing down: and no text", nodes.get("provenance").textContent, "");
+}
+
+{
+  const { nodes } = renderedFixture("faults");
+  check("faults: a dirty tree shows the amber chip", nodes.get("provenance").className, "warn");
+  check(
+    "faults: and says so first",
+    nodes.get("provenance").textContent.startsWith("Unreviewed code running"),
+    true,
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  delete snap.provenance;
+  let error = null;
+  try {
+    context.render(snap);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no provenance does not throw", error, null);
+  check("and the rest of the page still renders", nodes.get("state").textContent, "STANDING DOWN");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS.faults));
+  const writes = nodes.get("provenance").writes;
+  context.render(structuredClone(SNAPSHOTS.faults));
+  check("the same chip is not rewritten", nodes.get("provenance").writes, writes);
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS.faults));
+  nodes.get("provenance").onclick();
+  check("a tap expands the chip", nodes.get("provenance").dataset.expanded, "1");
+  nodes.get("provenance").onclick();
+  check("and a second tap collapses it", nodes.get("provenance").dataset.expanded, "");
 }
 
 // -- report -----------------------------------------------------------------

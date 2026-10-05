@@ -48,6 +48,14 @@ class TestSnapshotFixtures(unittest.TestCase):
             with self.subTest(fixture=path.name):
                 self.assertEqual(json.loads(text)["log"]["path"], f"{snapshots.LOG_DIR}/game.jsonl")
 
+    def test_every_fixture_says_what_code_the_box_runs(self):
+        for path, text in self.snapshots_only().items():
+            with self.subTest(fixture=path.name):
+                code = json.loads(text)["provenance"]
+                self.assertEqual(set(code), {"source", "dirty", "where", "error"})
+                # Only the fix on the day is dirty; no machine path is in any of them.
+                self.assertEqual(code["dirty"], path.name == "snapshot-faults.json")
+
     def test_each_state_is_the_state_it_is_named_for(self):
         states = {path.name: json.loads(text) for path, text in self.snapshots_only().items()}
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")
@@ -69,6 +77,14 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertEqual(riding["fader"]["move"]["kind"], "ride")
         self.assertEqual(riding["fader"]["move"]["by"], "up-slow")
         self.assertIsNotNone(riding["fader"]["move"]["knee"])
+        stored = states["snapshot-target-stored.json"]
+        self.assertEqual(stored["state"], "open")
+        self.assertEqual(stored["fader"]["db"], 0.0)
+        self.assertIsNone(stored["fader"]["move"])
+        self.assertEqual(stored["target"]["db"], -3.0)
+        self.assertEqual(stored["target"]["level"], -300)
+        self.assertEqual(stored["target"]["stored"], {"because": "open", "db": -3.0})
+        self.assertIsNone(stored["refusal"])
         prompt = states["snapshot-prompt.json"]
         self.assertEqual(prompt["state"], "open")
         self.assertEqual(prompt["prompt"], {"seq": 1, "kind": "stand-down", "source": "band-exits-stands"})
@@ -130,6 +146,15 @@ class TestSnapshotFixtures(unittest.TestCase):
                 self.assertIn("move", fader)
                 self.assertEqual(fader["move"] is not None, path.name in self.MOVING)
                 self.assertEqual(fader["moving"], fader["move"] is not None)
+
+    def test_every_fixture_says_whether_a_target_tap_only_stored(self):
+        # #153: `target.stored` is the note under the segments, or null. Only a
+        # tap made while the fader is up leaves one.
+        for path, text in self.snapshots_only().items():
+            target = json.loads(text)["target"]
+            with self.subTest(fixture=path.name):
+                self.assertIn("stored", target)
+                self.assertEqual(target["stored"] is not None, path.name == "snapshot-target-stored.json")
 
     def test_the_page_tests_load_the_fixtures_rather_than_a_copy(self):
         source = PAGE_TESTS.read_text(encoding="utf-8")

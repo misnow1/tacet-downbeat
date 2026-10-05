@@ -127,6 +127,7 @@ Reaper, and where the log and queue are going:
 ```
 ==========================================================================
   tacet       band DCA - Phase 0/1, the detector drives nothing
+  code        main @ 3a5613d
   config      /Users/you/tacet.toml
 --------------------------------------------------------------------------
   console     10.0.0.5:49900   DCA 3
@@ -155,6 +156,17 @@ the two can be compared without scrolling.
 Everything in the banner is what the box was *told*, not what it has confirmed.
 Nothing has been sent to the console at this point, and the console could not
 answer if it had been.
+
+The `code` row is the one thing the box *did* check: it asked git, once, before
+anything binds, read-only, with a 5 second limit (#157). It reads
+`<branch> @ <commit>` and adds `(worktree)` when the box runs from a linked
+worktree, `detached HEAD @ <commit>` on a detached head, and `, uncommitted
+changes` when the tree is dirty, which also prints a `WARNING`. Untracked files
+count as dirty only under `src/`; a scratch file elsewhere is logged and does
+not warn. `not a git checkout` is an installed copy, and `unknown - <reason>`
+means git could not be asked, which also prints a `WARNING`. The same facts are
+the first entry of every run, `box-started`, and become a `SYS|box-started`
+marker in Reaper, so a restart mid-game shows on the timeline.
 
 If the `config` row says `none (flags only)`, it did not find a file and
 everything above came from flags and defaults. A `WARNING` row is explained in
@@ -231,6 +243,12 @@ readings tell you two different things:
 It says nothing about the console. Nothing can - OSC is write-only, and a packet
 sent into a black hole succeeds (design.md 5.3). `Console unreachable` appears
 only when the box's own send fails.
+
+**An amber `Unreviewed code running` chip in the strip** means the box is running
+uncommitted changes, so the log's commit does not describe what ran (#157). It
+shows only while that is true, never changes during a run, and a tap reads the
+whole sentence. `Running code not identified` is the quieter version: git could
+not be asked, so the tree may be dirty. A clean checkout shows nothing.
 
 **The duty chip (`ARMED 10:42` / `STOOD DOWN 12:51`), first in the strip, is
 on the box's own monotonic clock** (#19), the same one `at` and every log

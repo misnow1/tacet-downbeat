@@ -1,5 +1,5 @@
 {
-  "at": 5060.02,
+  "at": 5000.02,
   "buttons": [
     {
       "action": null,
@@ -204,22 +204,22 @@
     "since": 5000.0
   },
   "fader": {
-    "commanded": -32768,
+    "commanded": 0,
     "confirmed": false,
-    "db": null,
-    "error": "no route to host",
-    "healthy": false,
-    "level_known": false,
+    "db": 0.0,
+    "error": null,
+    "healthy": true,
+    "level_known": true,
     "move": null,
     "moving": false,
-    "sent_at": null,
+    "sent_at": 5000.02,
     "target": null,
     "target_db": null
   },
   "log": {
-    "error": "could not write game.jsonl: No space left on device",
-    "failures": 3,
-    "healthy": false,
+    "error": null,
+    "failures": 0,
+    "healthy": true,
     "path": "/games/game.jsonl"
   },
   "mirror": {
@@ -230,35 +230,38 @@
   "open_spans": [],
   "prompt": null,
   "provenance": {
-    "dirty": true,
+    "dirty": false,
     "error": null,
     "source": "checkout",
-    "where": "157-fix @ 0123456 (worktree)"
+    "where": "main @ 0123456"
   },
   "recording": {
     "can_start": false,
     "confirmed": false,
-    "error": "no route to host",
-    "healthy": false,
+    "error": null,
+    "healthy": true,
     "known": false,
-    "liveness": "lost",
+    "liveness": "unknown",
     "position": null,
-    "recording": true,
-    "refusal": "Reaper has stopped answering: it says it is recording but its playhead is not moving. Check Reaper, and start the recording there if it is not rolling."
+    "recording": false,
+    "refusal": "Reaper is not answering. Open it, with its audio device running, or start the recording in Reaper."
   },
-  "refusal": "Reaper has stopped answering: it says it is recording but its playhead is not moving. Check Reaper, and start the recording there if it is not rolling.",
+  "refusal": null,
   "stale_tap": null,
   "state": "open",
   "target": {
-    "db": 0.0,
+    "db": -3.0,
     "default_db": 0.0,
-    "level": 0,
+    "level": -300,
     "presets_db": [
       0.0,
       -3.0,
       -6.0
     ],
-    "stored": null
+    "stored": {
+      "because": "open",
+      "db": -3.0
+    }
   },
-  "why": "Open at unity. The box does not know where the fader really is - it can only say what it last asked for, never what the console did with it; close it now, or open, to say where it is. The last fader move did not finish; tap it again to retry. You are driving; the detector cannot move the fader."
+  "why": "Open at unity. You are driving; the detector cannot move the fader."
 }

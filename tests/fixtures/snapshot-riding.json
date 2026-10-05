@@ -242,6 +242,12 @@
   },
   "open_spans": [],
   "prompt": null,
+  "provenance": {
+    "dirty": false,
+    "error": null,
+    "source": "checkout",
+    "where": "main @ 0123456"
+  },
   "recording": {
     "can_start": false,
     "confirmed": false,
@@ -264,7 +270,8 @@
       0.0,
       -3.0,
       -6.0
-    ]
+    ],
+    "stored": null
   },
   "why": "Open at unity. You are driving; the detector cannot move the fader."
 }

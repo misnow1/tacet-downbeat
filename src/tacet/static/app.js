@@ -307,7 +307,11 @@ function renderButtons(buttons, orphans) {
 // `snapshot.target` is the STANDING setting: the level the next open goes to and
 // the READY hold is measured from. It is what this section shows (the chip in
 // the strip) and changes (the segments in MORE > Target level). Changing it
-// stores a value and moves nothing. `snapshot.fader.target` is where a move
+// stores a value and moves nothing; while the fader is up the box says it
+// stored and why (`snapshot.target.stored`), the page words that under the
+// segments, and the box clears it (a later tap, a fader move, a state change).
+// While the fader is closed the box sends null: storing is what the operator
+// expects there, so there is no note (#153). `snapshot.fader.target` is where a move
 // already in flight is heading, null when nothing is moving; the fader readout
 // below draws that as the arrow in "-10.00 dB -> 0.00 dB" (from `fader.move`
 // since #154, which carries the same destination). A move in flight can
@@ -323,6 +327,31 @@ function renderButtons(buttons, orphans) {
 // selected segment is painted from the snapshot on every render and never
 // optimistically: a refused or lost tap must not look like a change. The tap's
 // own feedback is the `sending` outline `post` puts on the node.
+
+// The sentences under the segments when a tap stored and did not move (#153).
+// The box sends only the reason. ASCII only: `-inf`, not the infinity sign.
+const NOT_MOVED = "The fader did not move.";
+// No `closed` entry: the box never sends one, because a tap while the fader is
+// closed has no note (#153).
+const STORED_COPY = {
+  open: NOT_MOVED,
+  ready: NOT_MOVED,
+  releasing: "The fade carries on to -inf.",
+};
+// Reasons whose note wants attention, and whose chip says (next open).
+const STORED_ATTENTION = new Set(["open", "ready", "releasing"]);
+
+// Pure: the note under the segments, `{text, attention}`. A reason this page
+// does not know (a newer box) reads as not-moved, which is true of every
+// store-only case and the safe side, as MOVE_TAG_FALLBACK is.
+function storedNote(stored) {
+  if (!stored) return {text: "", attention: false};
+  if (stored.because === "unchanged") {
+    return {text: "Already the target: " + String(stored.db) + " dB. Nothing changed.", attention: false};
+  }
+  const copy = STORED_COPY[stored.because] || NOT_MOVED;
+  return {text: "Stored: " + String(stored.db) + " dB on the next open. " + copy, attention: true};
+}
 
 // Pure: the chip's text. `nextOpenOnly` is true while a ride is heading
 // somewhere other than the standing target.
@@ -366,10 +395,16 @@ function renderTargetControl(target) {
 function paintTarget(target, fader) {
   // A ride to somewhere other than the standing target, and not a fade.
   const ridingElsewhere = fader.target !== null && fader.target_db !== null && fader.target !== target.level;
+  const stored = target.stored || null;
+  const nextOpenOnly = ridingElsewhere || (stored !== null && STORED_ATTENTION.has(stored.because));
   const chip = $("target-level");
-  chip.textContent = targetChipText(target.db, ridingElsewhere);
+  chip.textContent = targetChipText(target.db, nextOpenOnly);
   chip.classList.toggle("off-default", target.db !== target.default_db);
   renderTargetControl(target);
+  const note = storedNote(stored);
+  const noteNode = $("target-note");
+  setText(noteNode, note.text);
+  noteNode.className = note.attention ? "attention" : "";
 }
 
 // -- MAIN / MORE ---------------------------------------------------------
@@ -673,6 +708,23 @@ function recordingTag(liveness, known) {
   return ["confirmed", liveness === "quiet" ? "confirmed (idle)" : "confirmed"];
 }
 
+// #157: the chip's head words. Quoted in serve.py's banner and the docs; tests hold them together.
+const PROVENANCE_DIRTY = "Unreviewed code running";
+const PROVENANCE_UNKNOWN = "Running code not identified";
+
+// What code the box runs (#157), or null when there is nothing to say: a clean
+// checkout on any branch, not a checkout, or a box from before #157 that sends
+// no `provenance`.
+function provenanceChip(p) {
+  if (!p) return null;
+  if (p.source === "unknown") {
+    return ["note", PROVENANCE_UNKNOWN + ": " + p.error + ". It may include uncommitted changes."];
+  }
+  if (p.source !== "checkout" || p.dirty !== true) return null;
+  return ["warn", PROVENANCE_DIRTY + ": uncommitted changes on " + p.where
+    + ". The log names the commit, not the changes."];
+}
+
 // Whether annotations are reaching the disk. A full disk leaves the fader
 // buttons working and nothing else on the page looking wrong, while every
 // annotation from then on is lost - the half nothing can recover afterwards
@@ -761,6 +813,10 @@ function render(received) {
   // else on the page changes to say so, and the operator has to decide again
   // (#16).
   showRefusal(next.refusal, Boolean(next.stale_tap));
+  // #157: guarded like duty and target - a box from before it sends no field.
+  const code = provenanceChip(next.provenance);
+  $("provenance").className = code ? code[0] : "";
+  setText($("provenance"), code ? code[1] : "");
   const saving = savingBanner(next.log, next.mirror);
   $("saving").className = saving ? saving[0] : "";
   $("saving").textContent = saving ? saving[1] : "";
@@ -1046,7 +1102,7 @@ for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-read
 // than a class: the functional colour classes above (loud, failed, fault...)
 // are overwritten wholesale on every render, and a class toggled here would be
 // wiped the next time one of those runs.
-for (const id of ["link", "refusal", "tap", "saving"]) {
+for (const id of ["link", "refusal", "tap", "saving", "provenance"]) {
   $(id).onclick = () => {
     const node = $(id);
     node.dataset.expanded = node.dataset.expanded ? "" : "1";

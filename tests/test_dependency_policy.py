@@ -74,5 +74,27 @@ class TestConfigStaysImportableFromTheControlPath(unittest.TestCase):
             self.assertIn(module, allowed, f"tacet.config imports {module!r}, which is not in the standard library")
 
 
+class TestOnlyServeAsksGit(unittest.TestCase):
+    """What code the box runs is asked once, by `serve.main`, before the loop (#157, #41)."""
+
+    def test_provenance_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "provenance.py"):
+            self.assertIn(module, allowed, f"tacet.provenance imports {module!r}, which is not in the standard library")
+
+    def test_no_control_path_module_imports_subprocess_or_provenance(self):
+        for name in CONTROL_PATH:
+            source = (PACKAGE_ROOT / f"{name}.py").read_text(encoding="utf-8")
+            self.assertNotIn("subprocess", source, name)
+            self.assertNotIn("provenance", source, name)
+
+    def test_only_serve_asks_git(self):
+        for path in sorted(PACKAGE_ROOT.glob("*.py")):
+            if path.name in ("provenance.py", "serve.py"):
+                continue
+            self.assertNotIn("subprocess", _imported_top_level_modules(path), path.name)
+            self.assertNotIn("probe(", path.read_text(encoding="utf-8"), path.name)
+
+
 if __name__ == "__main__":
     unittest.main()

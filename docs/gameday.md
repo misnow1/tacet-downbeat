@@ -181,7 +181,8 @@ else in the console: [troubleshooting.md](troubleshooting.md#the-mirror-console)
 tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl
 ```
 
-A fresh `--log` every game, named for the date. Read the banner's `queue` line
+A fresh `--log` every game, named for the date. Read the `code` row: a normal
+game says `main @ <commit>` and no WARNING. Read the banner's `queue` line
 against the path the ReaScript printed in step 2: **they must be the same
 path**, or everything looks healthy and nothing mirrors. A `WARNING` row or a
 refusal: [troubleshooting.md](troubleshooting.md#the-terminal).
@@ -215,6 +216,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 | Fader | `unknown`, tagged **unknown**. The box does not know where the fader is at any boot, and says so rather than showing a number it cannot vouch for |
 | Recording | `stopped`, tagged **confirmed**, with Start recording live (Reaper open, its audio device running): the box asks Reaper for its state when it first hears it. `unknown` tagged **not yet reported** means Reaper did not answer; Start recording is still live within five seconds. **no feedback** with the button grey means Reaper is not open, or its OSC device is not sending to the box: the line under the panel says so |
 | Top of the screen | Nothing. No banner is the healthy state |
+| Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
@@ -396,8 +398,13 @@ in MORE, under **Target level**: tap a segment, and the solid one is the
 target now. **Nothing moves when you tap it.** The fader stays where it is
 and the next open goes to the new level; **Ready**'s hold level is measured
 from it too. It works in every state, even while the fader reads `unknown`.
-If the chip adds `(next open)`, a move in flight is heading somewhere other
-than the target: a ride that began before you changed it, or Ready's own
+While the fader is up (open, Ready or fading) a note under the segments says
+what happened - `Stored: -3 dB on the next open. The fader did not move.` -
+and the chip adds `(next open)` for as long as it stands. The note goes when
+the fader next moves, the state changes or you tap another level. While the
+fader is closed there is no note: the solid segment and the chip are the
+answer. Otherwise, `(next open)` means a move in flight is heading somewhere
+other than the target: a ride that began before you changed it, or Ready's own
 ride to its hold level. The target applies to the next open.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
@@ -446,8 +453,10 @@ wifi. The procedure, so it is not improvised next time:
 3. Run the box from a worktree on that branch, leaving the main checkout
    alone: `git worktree add ../tacet-<issue> <branch>`, then start
    `tacet-serve` from there.
-4. Write the commit it ran into the game notes. (#157 will make the box log
-   this itself, and show a dirty tree on the page.)
+4. **Commit the fix before starting the box.** The banner's `code` row names
+   the branch and commit, the log's `box-started` entry records them, and the
+   page shows `Unreviewed code running` if anything is left uncommitted (#157).
+   Write the commit into the game notes too.
 5. The PR merges after the game, the ordinary way. Push to `main` with the
    admin bypass only when the fix has to outlive the game before it can be
    reviewed.

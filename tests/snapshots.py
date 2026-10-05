@@ -19,6 +19,7 @@ in real time, and the temporary log directory is written as `LOG_DIR`.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import sys
 from collections.abc import Awaitable, Callable
@@ -28,7 +29,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tacet import annotations as ann
-from tacet import dm7, moves, osc, reaper
+from tacet import dm7, moves, osc, provenance, reaper
 from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
@@ -54,6 +55,23 @@ READY_SECONDS = 4.0
 POSITION = 754.5
 #: Long enough that no Reaper feedback counts as current any more.
 SILENCE = reaper.DEFAULT_FEEDBACK_TIMEOUT * 30
+
+
+#: What every fixture box says it runs (#157): a clean checkout. Fixed, so a
+#: fixture never depends on the checkout that generated it.
+CLEAN = provenance.Provenance(
+    source=provenance.Source.CHECKOUT,
+    commit="0123456789abcdef0123456789abcdef01234567",
+    branch="main",
+    detached=False,
+    dirty=False,
+    untracked=0,
+    worktree=False,
+    path="/checkout",
+    error=None,
+)
+#: The faults page also runs a fix on the day: uncommitted changes, from a worktree.
+DIRTY = dataclasses.replace(CLEAN, branch="157-fix", dirty=True, worktree=True)
 
 
 class _Sender:
@@ -83,6 +101,7 @@ def _build(
     console: _Sender | _Unreachable,
     recorder: _Sender | _Unreachable | None = None,
     machine: Machine | None = None,
+    code: provenance.Provenance = CLEAN,
 ) -> Box:
     clock = [CLOCK_START]
 
@@ -102,6 +121,7 @@ def _build(
         recorder=reaper.ReaperClient(sender=recorder or _Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],
         machine=machine,
+        provenance=code,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
@@ -171,6 +191,16 @@ async def riding(root: Path) -> dict[str, Any]:
     return snapshot
 
 
+async def target_stored(root: Path) -> dict[str, Any]:
+    """Open at unity; the operator taps -3 dB on MORE. Under #9 that stores and
+    moves nothing, and the page says so under the segments (#153)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.set_target(-3.0)
+    return box.app.snapshot()
+
+
 async def prompt_open(root: Path) -> dict[str, Any]:
     """The box has asked: the band left the stands mid-game, and a Stand down
     question is on the page, unanswered. Produced the way the box produces it -
@@ -201,7 +231,7 @@ async def faults(root: Path) -> dict[str, Any]:
     The snap open's send never left the box, and it was absolute, so the
     level goes back to unknown (#116): this fixture's fader reads unknown too,
     for real, not just at cold boot."""
-    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known())
+    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known(), code=DIRTY)
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE
@@ -220,6 +250,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "parked-unreported": parked_unreported,
     "releasing": releasing,
     "riding": riding,
+    "target-stored": target_stored,
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,
     "faults": faults,

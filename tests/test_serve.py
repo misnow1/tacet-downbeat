@@ -1,3 +1,5 @@
+import asyncio
+import dataclasses
 import io
 import unittest
 from pathlib import Path
@@ -5,7 +7,23 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
-from tacet import annotations, disk, dm7, serve, targets
+from tacet import annotations, disk, dm7, provenance, serve, targets
+
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+CLEAN_CODE = provenance.Provenance(
+    source=provenance.Source.CHECKOUT,
+    commit=COMMIT,
+    branch="main",
+    detached=False,
+    dirty=False,
+    untracked=0,
+    worktree=False,
+    path="/checkout",
+    error=None,
+)
+DIRTY_CODE = dataclasses.replace(CLEAN_CODE, branch="157-fix", dirty=True, worktree=True)
+UNKNOWN_CODE = provenance.Provenance.unknown("git did not answer within 5s", path=Path("/checkout"), worktree=False)
+NOT_A_CHECKOUT_CODE = provenance.Provenance.not_a_checkout()
 
 
 class TestStopConfirmation(unittest.TestCase):
@@ -62,10 +80,10 @@ FULL = [
 ]  # fmt: skip
 
 
-def banner(*extra, argv=None):
+def banner(*extra, argv=None, code=None):
     """The banner for a set of flags, as one string. No config file, no sockets."""
     args = serve.parser().parse_args((FULL if argv is None else argv) + list(extra))
-    return "\n".join(serve.startup_lines(args, None))
+    return "\n".join(serve.startup_lines(args, None, code=code))
 
 
 class TestStartupBannerSaysWhatItWasTold(unittest.TestCase):
@@ -390,6 +408,7 @@ class _RunMain(unittest.TestCase):
             mock.patch("sys.stderr", stderr),
             mock.patch("sys.stdout", io.StringIO()),
             mock.patch("tacet.serve.asyncio.run") as run,
+            mock.patch("tacet.serve.provenance.probe", return_value=CLEAN_CODE),
             self.assertRaises(SystemExit) as caught,
         ):
             serve.main(["--config", str(self.config), *argv])
@@ -443,7 +462,7 @@ class TestAPresetAboveTheCapStopsTheBoxInWords(_RunMain):
     def test_build_enforces_the_cap_before_it_opens_anything(self):
         args = serve.parser().parse_args([*self.ARGV, "--log", str(self.log), "--presets", "3,0"])
         with self.assertRaises(targets.TargetError):
-            serve.build(args)
+            serve.build(args, CLEAN_CODE)
         self.assertFalse(self.log.exists())
 
     def test_a_leading_minus_needs_the_equals_form(self):
@@ -571,6 +590,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         self.log = self.root / "game.jsonl"
         self.queue = self.root / "queue.tsv"
         self.free = PLENTY
+        self.code = CLEAN_CODE
+        self.probe = mock.Mock(side_effect=lambda: self.code)
 
     def start(self, argv, *, config=True):
         """(exit code, stdout, stderr) for `serve.main`, which never binds:
@@ -585,6 +606,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
             # Fixed, so a start and a check of the same command print the same
             # banner however the real disk moves between them.
             mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(self.free)),
+            # Never git against the checkout the tests run in (#157).
+            mock.patch("tacet.serve.provenance.probe", self.probe),
         ):
             code: int | str | None
             try:
@@ -713,3 +736,150 @@ class TestTheBoxRefusesWithoutRoomForTheGame(TestCheckAnswersWithoutStarting):
         code, stdout, _ = self.start([*self.CONSOLE, "--log", str(self.log), disk.OVERRIDE_FLAG])
         self.assertEqual(code, 0)
         self.assertIn(f"not checked ({disk.OVERRIDE_FLAG})", stdout)
+
+
+class TestStartupBannerSaysWhatCodeItRuns(unittest.TestCase):
+    """The one row the box checked rather than was told (#157)."""
+
+    def lines(self, code):
+        return serve.startup_lines(serve.parser().parse_args(FULL), None, code=code)
+
+    def test_the_code_row_comes_straight_after_the_tacet_row(self):
+        lines = self.lines(CLEAN_CODE)
+        self.assertTrue(lines[1].startswith("  tacet"))
+        self.assertTrue(lines[2].startswith("  code"))
+        self.assertTrue(lines[3].startswith("  config"))
+
+    def test_the_code_row_names_the_branch_and_short_commit(self):
+        self.assertIn("  code        main @ 0123456", banner(code=CLEAN_CODE))
+
+    def test_a_worktree_says_so(self):
+        text = banner(code=dataclasses.replace(CLEAN_CODE, branch="157-fix", worktree=True))
+        self.assertIn("157-fix @ 0123456 (worktree)", text)
+
+    def test_a_detached_head_says_so(self):
+        text = banner(code=dataclasses.replace(CLEAN_CODE, branch=None, detached=True))
+        self.assertIn("detached HEAD @ 0123456", text)
+
+    def test_not_a_checkout_says_so_in_those_words(self):
+        self.assertIn("  code        not a git checkout", banner(code=NOT_A_CHECKOUT_CODE))
+
+    def test_a_clean_checkout_gets_no_warning(self):
+        self.assertNotIn("WARNING", banner(code=CLEAN_CODE))
+        self.assertNotIn("WARNING", banner(code=NOT_A_CHECKOUT_CODE))
+
+    def test_a_dirty_tree_is_a_warning_that_names_the_page_chip(self):
+        lines = self.lines(DIRTY_CODE)
+        self.assertIn(f"  WARNING     {serve.DIRTY_WARNING}", lines)
+        self.assertTrue(any(f'"{serve.PAGE_DIRTY_CHIP}"' in line for line in lines))
+        self.assertIn("157-fix @ 0123456 (worktree), uncommitted changes", banner(code=DIRTY_CODE))
+
+    def test_an_unknown_is_a_warning_with_its_reason(self):
+        text = banner(code=UNKNOWN_CODE)
+        self.assertIn(f"  WARNING     {serve.UNKNOWN_CODE_WARNING}", text)
+        self.assertIn("unknown - git did not answer within 5s", text)
+
+    def test_no_code_row_without_a_provenance(self):
+        text = banner()
+        self.assertNotIn("  code ", text)
+        self.assertNotIn("WARNING", text)
+
+    def test_the_code_lines_are_ascii_and_never_blank(self):
+        for code in (CLEAN_CODE, DIRTY_CODE, UNKNOWN_CODE, NOT_A_CHECKOUT_CODE):
+            for line in self.lines(code):
+                line.encode("ascii")
+                self.assertTrue(line.strip())
+
+
+class TestGitIsAskedOnceBeforeTheLoop(TestCheckAnswersWithoutStarting):
+    def test_a_start_asks_git_exactly_once_before_the_loop_runs(self):
+        asked: list[int] = []
+
+        def enter(coroutine):
+            asked.append(self.probe.call_count)
+            coroutine.close()
+
+        with (
+            mock.patch("sys.stdout", io.StringIO()),
+            mock.patch("sys.stderr", io.StringIO()),
+            mock.patch("tacet.serve.asyncio.run", side_effect=enter),
+            mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(PLENTY)),
+            mock.patch("tacet.serve.provenance.probe", self.probe),
+        ):
+            serve.main(["--config", str(self.config), *self.good()])
+        self.assertEqual(asked, [1])
+        self.assertEqual(self.probe.call_count, 1)
+
+    def test_git_is_never_asked_on_the_event_loop(self):
+        seen: list[str] = []
+
+        def probe():
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                seen.append("no loop")
+            else:
+                seen.append("on the loop")
+            return CLEAN_CODE
+
+        self.probe = mock.Mock(side_effect=probe)
+        self.start(self.good())
+        self.assertEqual(seen, ["no loop"])
+
+    def test_a_refused_start_never_asks_git(self):
+        code, _, _ = self.start([*self.CONSOLE])  # no --log
+        self.assertEqual(code, 2)
+        unreadable = self.root / "unreadable.jsonl"
+        unreadable.write_text("{ not json\n" + '{"v": 1}\n', encoding="utf-8")
+        code, _, _ = self.start([*self.CONSOLE, "--log", str(unreadable)])
+        self.assertNotEqual(code, 0)
+        self.probe.assert_not_called()
+
+    def test_check_prints_the_code_row_a_start_prints(self):
+        _, started, _ = self.start(self.good())
+        _, checked, _ = self.start([*self.good(), "--check"])
+        self.assertIn("code        main @ 0123456", started)
+        self.assertEqual(checked, started)
+
+    def test_a_dirty_tree_is_a_warning_not_a_refusal(self):
+        self.code = DIRTY_CODE
+        code, stdout, _ = self.start([*self.good(), "--check"])
+        self.assertEqual(code, 0)
+        self.assertIn("WARNING", stdout)
+        code, _, _ = self.start(self.good())
+        self.assertEqual(code, 0)
+        self.assertTrue(self.ran)
+
+    def test_the_coroutine_is_given_the_probed_code(self):
+        async def nothing():
+            pass
+
+        coroutine = nothing()
+        self.addCleanup(coroutine.close)
+        with mock.patch("tacet.serve._run", return_value=coroutine) as run:
+            self.start(self.good())
+        self.assertEqual(run.call_args.args[1], CLEAN_CODE)
+
+
+class TestBuildWritesBoxStartedFirst(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.log = Path(self._tmp.name) / "game.jsonl"
+        self.args = serve.parser().parse_args(["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)])
+
+    def test_the_first_entry_of_a_run_is_box_started_with_its_code(self):
+        app, log, queue = serve.build(self.args, DIRTY_CODE)
+        self.assertIsNone(queue)
+        self.assertEqual(app.snapshot()["provenance"], DIRTY_CODE.as_snapshot())
+        log.close()
+        first = next(iter(annotations.read_entries(self.log)))
+        self.assertEqual(first.event, annotations.BOX_STARTED)
+        self.assertEqual(first.data, DIRTY_CODE.as_data())
+
+    def test_a_restart_on_the_same_log_writes_another(self):
+        for _ in range(2):
+            _, log, _ = serve.build(self.args, CLEAN_CODE)
+            log.close()
+        events = [e.event for e in annotations.read_entries(self.log)]
+        self.assertEqual(events, [annotations.BOX_STARTED, annotations.BOX_STARTED])
