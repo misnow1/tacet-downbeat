@@ -309,7 +309,8 @@ function renderButtons(buttons, orphans) {
 // the strip) and changes (the segments in MORE > Target level). Changing it
 // stores a value and moves nothing. `snapshot.fader.target` is where a move
 // already in flight is heading, null when nothing is moving; the fader readout
-// below draws that as the arrow in "-10.00 dB -> 0.00 dB". A move in flight can
+// below draws that as the arrow in "-10.00 dB -> 0.00 dB" (from `fader.move`
+// since #154, which carries the same destination). A move in flight can
 // head somewhere other than the standing target: a ride that began before a
 // change keeps going to its old destination, and Ready's own ride goes to its
 // hold level (target - hold_below_db), never to the target. While that lasts
@@ -476,7 +477,10 @@ function timecode(seconds) {
 // reading - because JSON cannot carry -inf and a blank there would read as a
 // link problem rather than a closed DCA.
 function faderDb(db) {
-  return db === null ? "-∞ dB" : db.toFixed(2) + " dB";
+  if (db === null) return "-∞ dB";
+  // A sweep passing through unity can round to a negative zero.
+  const text = db.toFixed(2);
+  return (text === "-0.00" ? "0.00" : text) + " dB";
 }
 
 // The age of the last thing actually sent to the console - a snap, a ramp
@@ -496,43 +500,152 @@ function ageText(seconds) {
 
 // Seconds since the box last sent, with no clock estimate in it (#147). The box
 // stamps both `sentAt` and the snapshot's `at` on one monotonic clock, so the
-// gap between them is exact; the page's own clock measures how long ago the
-// snapshot arrived, also exact. Only transit time is uncounted. Nothing here
-// converts between the two clocks, so it keeps climbing on a link that has never
-// timed a round trip - the degraded case the #12 age is for. Null when nothing
-// has been sent, or the snapshot has no usable `at` or arrival time. Never
-// negative, whatever the clocks do.
-function commandAge(sentAt, at, arrivedAt, nowSeconds) {
-  if (sentAt === null || !Number.isFinite(at) || arrivedAt === null) return null;
-  return Math.max(0, (at - sentAt) + (nowSeconds - arrivedAt));
+// gap between them is exact; `since` is how long ago the snapshot arrived by
+// this page's own clock (`secondsSince`), also exact. Only transit time is
+// uncounted. Nothing here converts between the two clocks, so it keeps
+// climbing on a link that has never timed a round trip - the degraded case the
+// #12 age is for. Null when nothing has been sent, or the snapshot has no
+// usable `at` or arrival time. Never negative, whatever the clocks do.
+function commandAge(sentAt, at, since) {
+  if (sentAt === null || !Number.isFinite(at) || since === null) return null;
+  return Math.max(0, (at - sentAt) + since);
 }
 
-// The fader readout: the commanded level and how long ago the console was last
-// told anything. Painted from the snapshot on screen both when a snapshot
-// arrives and on the page's own timer, because the age is the page's to count
-// (#147). The box used to send it as an age, which made every snapshot differ
-// from the last and defeated its own playhead coalescing; it sends the time of
-// the send now, which only changes at a send. The #12 hazard stays covered:
-// the box going quiet is exactly when nothing arrives, and the number must
-// keep ageing on the screen anyway.
+// -- a move in flight (#154) ---------------------------------------------------
+//
+// The box describes a fade or a ride once, in `fader.move`, and holds the rest
+// of the fader block still until the move ends. The page draws the sweep from
+// that description and counts the time itself. Nothing arrives per ramp step.
+
+// The tag while a move is in flight, by the move's kind. Never `commanded` or
+// `confirmed`: a number still changing is neither, and the two must stay
+// tellable apart from it. A kind this page does not know (a newer box) reads
+// as the fallback rather than as nothing.
+const MOVE_TAGS = {fade: "fading", ride: "riding"};
+const MOVE_TAG_FALLBACK = "moving";
+
+// How far past its expected end a move may run before the readout says it is
+// late. Inside this the readout points at the destination without a sweep; a
+// snapshot in flight on the wifi is normal for that long.
+const MOVE_LATE_SECONDS = 1.0;
+const MOVE_LATE_WORD = "late";
+
+// Mirror of `dm7.ramp_steps` in dB, with null for -inf, so the page draws what
+// the console is being told. `tests/fixtures/move-curves.json` holds the two
+// together: the box writes the steps and the description, and the page's
+// checks hold this to within one console unit of every step. A close to -inf
+// ramps to the floor and steps the rest; a rise from -inf starts at the floor;
+// a taper only shapes a rise that crosses its knee. Display only: the console
+// is never told anything from here.
+function moveDbAt(move, elapsed) {
+  const from = move.from_db;
+  const to = move.to_db;
+  if (!(elapsed > 0)) return from;
+  if (elapsed >= move.seconds || from === to) return to;
+  let start = from;
+  let end = to;
+  if (to === null) {
+    if (from <= move.floor_db) return from;
+    end = move.floor_db;
+  } else if (from === null) {
+    if (to <= move.floor_db) return from;
+    start = move.floor_db;
+  }
+  const fraction = elapsed / move.seconds;
+  const knee = move.knee;
+  if (knee && start < knee.db && knee.db < end) {
+    if (fraction <= knee.fraction) return start + (knee.db - start) * (fraction / knee.fraction);
+    return knee.db + (end - knee.db) * ((fraction - knee.fraction) / (1 - knee.fraction));
+  }
+  return start + (end - start) * fraction;
+}
+
+// Seconds into the move, with no clock estimate in it: the same pattern as
+// `commandAge`. The box stamps `started_at` and the snapshot's `at` on one
+// clock; `since` is how long ago the snapshot arrived by this page's clock.
+// The only error is the transit time of the snapshot that carried the
+// description, and it runs the animation that much behind the console. Null
+// when either end is unusable.
+function moveElapsed(move, at, since) {
+  if (!Number.isFinite(move.started_at) || !Number.isFinite(at) || since === null) return null;
+  return (at - move.started_at) + since;
+}
+
+// The fader readout and its tag, from the snapshot's fader block. Pure.
+//
+// While a move is described the line sweeps toward its destination, and the
+// age is not shown: the move is the news. Past the move's expected end the
+// sweep stops and the line points at the destination; past that by
+// MOVE_LATE_SECONDS it says how late. It never goes back to a settled number
+// on its own: the in-flight state ends only when a snapshot arrives without the
+// move, because that is the box saying the move landed. The page's timer
+// running out says only that the page has not heard (fail visible, #154).
+function levelReadout(fader, at, since) {
+  const age = ageText(commandAge(fader.sent_at, at, since));
+  if (!fader.level_known) {
+    // The box does not know where the fader is (#107): at every cold boot, and
+    // again after a hand-off to StageMix (#12). `commanded` is only a belief
+    // until an absolute command says otherwise, and the number must say so
+    // rather than sit there looking confident - the game 2 hazard this whole
+    // feature exists for.
+    return {text: age ? "unknown - " + age : "unknown", tag: "unknown", tagClass: "tag unknown"};
+  }
+  const move = fader.move;
+  if (!move) {
+    const value = faderDb(fader.db);
+    return {text: age ? value + " - " + age : value, tag: "commanded", tagClass: "tag commanded"};
+  }
+  const elapsed = moveElapsed(move, at, since);
+  const over = elapsed === null ? 0 : elapsed - move.seconds;
+  const destination = faderDb(move.to_db);
+  let text;
+  if (over < 0) {
+    text = faderDb(moveDbAt(move, elapsed === null ? 0 : elapsed)) + " → " + destination;
+  } else {
+    text = "→ " + destination;
+    if (over >= MOVE_LATE_SECONDS) text += " - " + Math.round(over) + "s " + MOVE_LATE_WORD;
+  }
+  return {text, tag: MOVE_TAGS[move.kind] || MOVE_TAG_FALLBACK, tagClass: "tag fading"};
+}
+
+// The vocabulary key of the button that started the move in flight, or null:
+// a bare command (the Release route, stand-down's fade) names none, and so
+// colours no button, while the tag still says it.
+function fadingKey(fader) {
+  return fader.level_known && fader.move ? fader.move.by : null;
+}
+
+// The fader readout and the tag beside it. Painted from the snapshot on screen
+// both when a snapshot arrives, on every animation frame while a move is
+// running, and on the page's own timer, because the age and the lateness are
+// the page's to count (#147, #154). The box going quiet is exactly when nothing
+// arrives, and the number must keep moving on the screen anyway.
 function paintLevel() {
   if (!snapshot) return;
+  const since = secondsSince(snapshotArrivedAt, pageStamp());
+  const readout = levelReadout(snapshot.fader, snapshot.at, since);
+  $("level").textContent = readout.text;
+  const tag = $("level-tag");
+  tag.textContent = readout.tag;
+  tag.className = readout.tagClass;
+}
+
+// At most one frame requested at a time, and only while a move is described
+// and not yet past its end. Past the end the 1 s tick carries the late counter.
+let framePending = false;
+function scheduleMoveFrame() {
+  if (framePending || !snapshot || typeof requestAnimationFrame !== "function") return;
   const fader = snapshot.fader;
-  // While a fade runs the number on the left sweeps, so the destination is
-  // shown beside it: a close takes two seconds and "-3.00 dB" on its own reads
-  // as a fader that is not moving. Null dB is -inf, never a missing reading.
-  // Compared as console units, not dB: -inf has no number to compare with.
-  const arrived = fader.target === null || fader.target === fader.commanded;
-  // The box does not know where the fader is (#107): at every cold boot, and
-  // again after a hand-off to StageMix (#12). `commanded` is only a belief
-  // until an absolute command says otherwise, and the number must say so
-  // rather than sit there looking confident - the game 2 hazard this whole
-  // feature exists for.
-  const value = fader.level_known
-    ? (arrived ? faderDb(fader.db) : faderDb(fader.db) + " \u2192 " + faderDb(fader.target_db))
-    : "unknown";
-  const age = ageText(commandAge(fader.sent_at, snapshot.at, snapshotArrivedAt, now()));
-  $("level").textContent = age ? value + " - " + age : value;
+  const move = fader.level_known ? fader.move : null;
+  if (!move) return;
+  const elapsed = moveElapsed(move, snapshot.at, secondsSince(snapshotArrivedAt, pageStamp()));
+  if (elapsed === null || elapsed >= move.seconds) return;
+  framePending = true;
+  requestAnimationFrame(() => {
+    framePending = false;
+    paintLevel();
+    scheduleMoveFrame();
+  });
 }
 
 function recordingTag(liveness, known) {
@@ -569,20 +682,47 @@ function savingBanner(log, mirror) {
 // overtaken it, and nothing corrected it until something else changed (#11).
 let renderedAt = null;
 
-// When, by the page's own clock, the snapshot on screen arrived. The readout's
-// age counts from it (#147), so it needs no estimate of the box's clock.
+// When, by the page's own clock, the snapshot on screen arrived (a `pageStamp`).
+// The readout's age and a move's progress count from it (#147, #154), so they
+// need no estimate of the box's clock.
 let snapshotArrivedAt = null;
+
+// The vocabulary the page last had. The box sends it once per socket (#51) and
+// leaves it out of later pushes; a snapshot without one is read against this.
+let lastButtons = null;
+
+// Pure: `next` with the buttons it lacks filled in from `buttons`. A snapshot
+// that carries its own is taken as it is; with none to fall back on, it stays
+// without, and the page builds no buttons until it is told some.
+function withButtons(next, buttons) {
+  if (next.buttons || !buttons) return next;
+  return {...next, buttons};
+}
+
+// Writes only when the text differs. A paint that rewrites a button's label
+// every snapshot churns the DOM for nothing, and on a button under a thumb it
+// is the churn the rebuild signature above exists to avoid (#51).
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+// The same for `disabled`: assigned only when it changes.
+function setDisabled(node, disabled) {
+  if (node.disabled !== disabled) node.disabled = disabled;
+}
 
 function isOlder(next, at) {
   return at !== null && typeof next.at === "number" && next.at < at;
 }
 
-function render(next) {
-  if (!next) return;
-  if (isOlder(next, renderedAt)) return;
+function render(received) {
+  if (!received) return;
+  if (isOlder(received, renderedAt)) return;
+  const next = withButtons(received, lastButtons);
+  if (next.buttons) lastButtons = next.buttons;
   if (typeof next.at === "number") renderedAt = next.at;
   snapshot = next;
-  snapshotArrivedAt = now();
+  snapshotArrivedAt = pageStamp();
   $("state").textContent = next.state.replace(/-/g, " ").toUpperCase();
   $("why").textContent = next.why;
   // #19: ARMED / STOOD DOWN and since when, on the box's own clock. Guarded
@@ -603,9 +743,7 @@ function render(next) {
 
   const fader = next.fader;
   paintLevel();
-  const levelTag = $("level-tag");
-  levelTag.textContent = fader.level_known ? "commanded" : "unknown";
-  levelTag.className = "tag " + (fader.level_known ? "commanded" : "unknown");
+  scheduleMoveFrame();
   $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
   // Said once, in the column, rather than on each button: see RAMPING_ACTIONS.
   // Suppressed while a refusal is showing - that line says the same thing in
@@ -620,7 +758,7 @@ function render(next) {
   // absolute and always right, so it is never disabled. "It's at the ready
   // level" is a report about a belief the box does not yet have, so it only
   // means something while the level is unknown.
-  $("btn-report-ready").disabled = fader.level_known;
+  setDisabled($("btn-report-ready"), fader.level_known);
   // The hand-off button is never disabled and never relabelled here (#118).
   // A hand-off while the level already reads unknown is a real tap with a real
   // log entry - the box may have restarted while StageMix had the DCA, and
@@ -649,8 +787,8 @@ function render(next) {
   // not invite a second press. The box refuses it anyway; this is the
   // affordance, not the guard.
   const record = $("btn-record");
-  record.disabled = !rec.can_start;
-  record.textContent = rec.known && rec.recording ? "Recording" : "Start recording";
+  setDisabled(record, !rec.can_start);
+  setText(record, rec.known && rec.recording ? "Recording" : "Start recording");
 
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
@@ -661,11 +799,16 @@ function render(next) {
   // fires. This is the grid tapped without looking by someone watching a field,
   // and it carries the fader buttons, so a dropped tap there is a missed open.
   const orphans = orphanSpans(next);
-  const signature = buttonSignature(next.buttons) + JSON.stringify(orphans.map(span => span.span_id));
-  if (signature !== renderedButtons) {
-    renderButtons(next.buttons, orphans);
-    renderedButtons = signature;
+  if (next.buttons) {
+    const signature = buttonSignature(next.buttons) + JSON.stringify(orphans.map(span => span.span_id));
+    if (signature !== renderedButtons) {
+      renderButtons(next.buttons, orphans);
+      renderedButtons = signature;
+    }
   }
+  // The button that started a move in flight, painted until the box says the
+  // move has landed (#154). By key, so only a vocabulary button is ever painted.
+  const fading = fadingKey(fader);
   for (const node of document.querySelectorAll(
     "#fader-top button, #fader-bottom button, #tab-main button, #tab-more-vocabulary button"
   )) {
@@ -674,11 +817,12 @@ function render(next) {
     if (node.dataset.orphan || node.dataset.preset !== undefined) continue;
     const open = openSpan(next, node.dataset.key) !== undefined;
     node.classList.toggle("on", open);
-    labelOf(node).textContent = buttonLabel(node.dataset.label, node.dataset.kind, open);
+    node.classList.toggle("fading", fading !== null && node.dataset.key === fading);
+    setText(labelOf(node), buttonLabel(node.dataset.label, node.dataset.kind, open));
     // In this paint loop and not in buildButtonNode, so that the belief stays
     // out of the rebuild signature above: a belief change re-enables these in
     // place, and never tears the grid down under a thumb.
-    node.disabled = !fader.level_known && RAMPING_ACTIONS.has(node.dataset.action);
+    setDisabled(node, !fader.level_known && RAMPING_ACTIONS.has(node.dataset.action));
   }
 }
 
@@ -789,7 +933,7 @@ function paintPrompt() {
     promptShownAt = now();
   }
   $("prompt-question").textContent = copy.question;
-  $("btn-prompt-accept").textContent = copy.accept;
+  setText($("btn-prompt-accept"), copy.accept);
   $("prompt-panel").style.display = "block";
 }
 
@@ -933,6 +1077,25 @@ const LINK_TICK_MS = 1000;
 
 const now = () => Date.now() / 1000;
 
+// A point on this page's two clocks at once (#51, #154). "Seconds since" is
+// the larger of the two deltas, because each fails differently: the wall clock
+// can be stepped (a network time sync, a manual change) and the monotonic clock
+// can stop while the device sleeps. Taking the larger can only show a silence
+// or a lateness early, never late, which is the safe side for a page whose job
+// is to say it has not heard. Taps, pings and the duty chip keep `now()`: they
+// compare against the box's wall-clock offsets, not elapsed time.
+function pageStamp() {
+  const wall = now();
+  const mono = typeof performance === "object" && performance ? performance.now() / 1000 : wall;
+  return {wall, mono};
+}
+
+// Null for a stamp never taken, so "nothing yet" stays a distinct fact.
+function secondsSince(stamp, at) {
+  if (stamp === null) return null;
+  return Math.max(at.wall - stamp.wall, at.mono - stamp.mono);
+}
+
 // What is known about the connection, as distinct from what the box last said
 // through it. `staleAfter` is null until the box names it, which is what
 // separates "connecting" from "connected": an open socket that has never
@@ -988,7 +1151,7 @@ function linkPulse(silence, staleAfter) {
 function paintLink() {
   // Null rather than a huge number, so "nothing has arrived on this socket yet"
   // stays a distinct fact from "nothing has arrived for a long time".
-  const silence = link.seen === null ? null : now() - link.seen;
+  const silence = secondsSince(link.seen, pageStamp());
   const banner = linkBanner(link.open, silence, link.staleAfter);
   const node = $("link");
   node.className = banner ? banner[0] : "";
@@ -1004,14 +1167,14 @@ function paintLink() {
 // is plainly alive. Only the keepalive carries how long to wait, so there is one
 // copy of that number and it lives next to the interval it is derived from.
 function noteFrame(message) {
-  link.seen = now();
+  link.seen = pageStamp();
   if (message.keepalive) link.staleAfter = message.stale_after;
   paintLink();
 }
 
 function connect() {
   const socket = new WebSocket(
-    (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?buttons=once");
   socket.onopen = () => { link.open = true; paintLink(); };
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
@@ -1084,8 +1247,8 @@ fetch("/api/state").then(r => r.json()).then(render);
 paintLink();
 paintTabs();
 paintSlot();
-// The level readout rides the same tick: its age has to count up while the box
-// says nothing (#147).
+// The level readout rides the same tick: its age, and a move's lateness, have to
+// count up while the box says nothing (#147, #154).
 setInterval(() => { paintLink(); paintLevel(); }, LINK_TICK_MS);
 connect();
 holdWake();

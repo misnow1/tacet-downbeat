@@ -35,6 +35,9 @@ function element(id) {
   let html = "";
   return {
     id,
+    // How many times the page assigned this node's text or HTML (#51): a
+    // repaint of something unchanged must not touch it.
+    writes: 0,
     className: "",
     style: {},
     dataset: {},
@@ -48,6 +51,7 @@ function element(id) {
       return children.length ? children.map((c) => c.textContent).join("") : text;
     },
     set textContent(value) {
+      this.writes += 1;
       children.length = 0;
       text = String(value);
     },
@@ -55,6 +59,7 @@ function element(id) {
       return html;
     },
     set innerHTML(value) {
+      this.writes += 1;
       children.length = 0;
       text = "";
       html = String(value);
@@ -79,6 +84,7 @@ function browser(options = {}) {
   const sockets = [];
   const posted = [];
   const intervals = [];
+  const frames = [];
   const context = createContext({
     console,
     // The page reads `Date.now()` for its own clock. A test that needs the
@@ -92,6 +98,17 @@ function browser(options = {}) {
           },
         }
       : {}),
+    // The page's monotonic clock. It follows `now` unless a test passes `perf`
+    // to make the two disagree (#51); with neither it is the real one.
+    performance: {
+      now: () => (options.perf ?? options.now ?? (() => performance.now()))(),
+    },
+    // Kept rather than run: a test fires `frames[i]()` itself, so it decides
+    // when the page repaints a move (#154).
+    requestAnimationFrame(callback) {
+      frames.push(callback);
+      return frames.length;
+    },
     document: {
       getElementById(id) {
         if (!nodes.has(id)) nodes.set(id, element(id));
@@ -152,7 +169,7 @@ function browser(options = {}) {
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes, created, sockets, posted, intervals };
+  return { context, nodes, created, sockets, posted, intervals, frames };
 }
 
 // -- snapshots --------------------------------------------------------------
@@ -172,6 +189,10 @@ const SNAPSHOTS = Object.fromEntries(
       JSON.parse(readFileSync(join(FIXTURES, name), "utf8")),
     ]),
 );
+
+// The curves the box's ramp takes, and the move description each was taken
+// from (#154): `moveDbAt` is held to them below.
+const CURVES = JSON.parse(readFileSync(join(FIXTURES, "move-curves.json"), "utf8"));
 
 // A copy of `base` with some fields changed. Only fields the box actually sends
 // may be: a change to one it does not describes a box that does not exist, and
@@ -361,19 +382,53 @@ check(
 // The box's boot snapshot does not know where the fader is (#107), so every
 // check about a number on the screen says the level is known, out loud: the
 // fixture stays honest about the cold boot and the checks are about the number.
+check("a sweep through unity never reads negative zero", context.faderDb(-0.004), "0.00 dB");
 check("a closed fader reads as minus infinity", rendered({}, { level_known: true }).get("level").textContent, "-∞ dB");
 check(
   "an open fader reads in dB",
   rendered({}, { level_known: true, db: -12.5 }).get("level").textContent,
   "-12.50 dB",
 );
+// A move is described once and the page draws it (#154), so these render on a
+// page whose clock is held still: the sweep is then exactly where it started.
+const STILL = () => 2_000_000_000;
+const MOVE_AT = SNAPSHOTS["standing-down"].at;
+
+// A move as the box describes it, started when the snapshot was taken.
+function moveFrom(kind, from, to, seconds, extra = {}) {
+  return {
+    seq: 1,
+    kind,
+    by: null,
+    from_db: from,
+    to_db: to,
+    seconds,
+    started_at: MOVE_AT,
+    floor_db: -60.0,
+    knee: null,
+    ...extra,
+  };
+}
+
+function renderedStill(fader) {
+  const { context, nodes } = browser({ now: STILL });
+  context.render(snapshot({}, fader));
+  return nodes;
+}
+
 // A close takes two seconds, so the number on its own reads as a fader that is
 // not moving. The destination is shown beside it while the move is in flight.
 check(
   "a fade in flight shows where it is heading",
-  rendered({}, { level_known: true, commanded: -300, db: -3.0, target: -32768, target_db: null, moving: true })
-    .get("level")
-    .textContent,
+  renderedStill({
+    level_known: true,
+    commanded: -300,
+    db: -3.0,
+    target: -32768,
+    target_db: null,
+    moving: true,
+    move: moveFrom("fade", -3.0, null, 2.0, { by: "out" }),
+  }).get("level").textContent,
   "-3.00 dB \u2192 -\u221E dB",
 );
 check(
@@ -382,17 +437,16 @@ check(
   "-3.00 dB",
 );
 check(
-  "a fade that has arrived does not point at itself",
-  rendered({}, { level_known: true, commanded: -32768, db: null, target: -32768, target_db: null, moving: true })
-    .get("level")
-    .textContent,
-  "-\u221E dB",
-);
-check(
   "an open in flight points at its destination too",
-  rendered({}, { level_known: true, commanded: -6000, db: -60.0, target: 0, target_db: 0.0, moving: true })
-    .get("level")
-    .textContent,
+  renderedStill({
+    level_known: true,
+    commanded: -6000,
+    db: -60.0,
+    target: 0,
+    target_db: 0.0,
+    moving: true,
+    move: moveFrom("ride", -60.0, 0.0, 1.5, { by: "up-slow" }),
+  }).get("level").textContent,
   "-60.00 dB \u2192 0.00 dB",
 );
 
@@ -421,16 +475,17 @@ function sentAgo(ago) {
   return SNAPSHOTS["standing-down"].at - ago;
 }
 
-check("commandAge: nothing sent yet has no age", ageContext.commandAge(null, 100, 50, 60), null);
-check("commandAge: a snapshot with no at has no age", ageContext.commandAge(90, null, 50, 60), null);
-check("commandAge: a non-numeric at has no age", ageContext.commandAge(90, "x", 50, 60), null);
-check("commandAge: a snapshot that never arrived has no age", ageContext.commandAge(90, 100, null, 60), null);
+// `since` is the page-side seconds since the snapshot arrived (#154).
+check("commandAge: nothing sent yet has no age", ageContext.commandAge(null, 100, 15), null);
+check("commandAge: a snapshot with no at has no age", ageContext.commandAge(90, null, 15), null);
+check("commandAge: a non-numeric at has no age", ageContext.commandAge(90, "x", 15), null);
+check("commandAge: a snapshot that never arrived has no age", ageContext.commandAge(90, 100, null), null);
 check(
   "commandAge: box-side gap plus page-side time since arrival",
-  ageContext.commandAge(90, 100, 50, 65),
+  ageContext.commandAge(90, 100, 15),
   25,
 );
-check("commandAge: never negative", ageContext.commandAge(100, 90, 50, 50), 0);
+check("commandAge: never negative", ageContext.commandAge(100, 90, 0), 0);
 
 check(
   "the readout carries the age of the last command, known level or not",
@@ -902,11 +957,11 @@ for (const known of [false, true]) {
 check(
   "the box wrote the snapshots these tests read",
   Object.keys(SNAPSHOTS).sort(),
-  ["faults", "open-recording", "prompt", "prompt-arm", "releasing", "standing-down"],
+  ["faults", "open-recording", "prompt", "prompt-arm", "releasing", "riding", "standing-down"],
 );
 
 function renderedFixture(name) {
-  const { context, nodes, created } = browser();
+  const { context, nodes, created } = browser({ now: STILL });
   let error = null;
   try {
     context.render(structuredClone(SNAPSHOTS[name]));
@@ -990,11 +1045,14 @@ for (const name of Object.keys(SNAPSHOTS)) {
 
 {
   const { nodes } = renderedFixture("releasing");
+  // The box's own fade snapshot, rendered as it came (#154): the sweep from
+  // where it started to where it is going, and no age while it is described.
   check(
     "releasing: where it is and where it is going",
     nodes.get("level").textContent,
-    "0.00 dB \u2192 -\u221e dB - 0s ago",
+    "0.00 dB \u2192 -\u221e dB",
   );
+  check("releasing: the tag says fading", nodes.get("level-tag").textContent, "fading");
 }
 
 {
@@ -2158,8 +2216,16 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
   // The chip and the fader readout do not fight (see the section comment in
   // app.js). A ride to the old target still shows its own arrow in the readout;
   // the chip says the standing target is for the NEXT open.
-  const ride = { level_known: true, commanded: -1000, db: -10, target: 0, target_db: 0, moving: true };
-  const { context, nodes } = browser();
+  const ride = {
+    level_known: true,
+    commanded: -1000,
+    db: -10,
+    target: 0,
+    target_db: 0,
+    moving: true,
+    move: moveFrom("ride", -10, 0, 1.5, { by: "up-slow" }),
+  };
+  const { context, nodes } = browser({ now: STILL });
   context.render(targetSnapshot({ db: -6, level: -600 }, ride));
   check("ride: the readout still shows where the ride is going", nodes.get("level").textContent.startsWith("-10.00 dB \u2192 0.00 dB"), true);
   check("ride: the chip says the new target is for the next open", nodes.get("target-level").textContent, "target -6 dB (next open)");
@@ -2167,7 +2233,7 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
   context.render(targetSnapshot({ db: 0, level: 0 }, ride));
   check("ride: no note when the ride is to the standing target", nodes.get("target-level").textContent, "target 0 dB");
 
-  const idle = { level_known: true, commanded: 0, db: 0, target: null, target_db: null, moving: false };
+  const idle = { level_known: true, commanded: 0, db: 0, target: null, target_db: null, moving: false, move: null };
   context.render(targetSnapshot({ db: -6, level: -600 }, idle));
   check("nothing moving: no note", nodes.get("target-level").textContent, "target -6 dB");
 
@@ -2175,12 +2241,28 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
   // target, so the chip carries the suffix there too even though nothing was
   // changed. Deliberate: the readout says "-inf dB -> -15.00 dB" at the same
   // moment and the chip must not seem to disagree with it.
-  const ready = { level_known: true, commanded: -32768, db: null, target: -1500, target_db: -15, moving: true };
+  const ready = {
+    level_known: true,
+    commanded: -32768,
+    db: null,
+    target: -1500,
+    target_db: -15,
+    moving: true,
+    move: moveFrom("ride", null, -15, 4.0, { by: "up-ready" }),
+  };
   context.render(targetSnapshot({}, ready));
   check("READY's ride to its hold level: the readout shows the hold level", nodes.get("level").textContent.startsWith("-\u221e dB \u2192 -15.00 dB"), true);
   check("READY's ride to its hold level: the chip says the target is for the next open", nodes.get("target-level").textContent, "target 0 dB (next open)");
 
-  const fade = { level_known: true, commanded: -1000, db: -10, target: -32768, target_db: null, moving: true };
+  const fade = {
+    level_known: true,
+    commanded: -1000,
+    db: -10,
+    target: -32768,
+    target_db: null,
+    moving: true,
+    move: moveFrom("fade", -10, null, 2.0, { by: "out" }),
+  };
   context.render(targetSnapshot({ db: -6, level: -600 }, fade));
   check("a fade to -inf is not a competing target: no note", nodes.get("target-level").textContent, "target -6 dB");
 }
@@ -2426,6 +2508,337 @@ const svgOf = (node) => iconOf(node).innerHTML;
   ender.onclick();
   check("and tapping it ends that span", posted[0].path, "/api/span/end");
   check("by its id", posted[0].body.span_id, "q1-9");
+}
+
+// -- a move is described once and animated here (#154) -------------------------
+
+const ONE_UNIT_DB = 0.01; // one console unit, the finest the console takes
+const MOVE_STEP = (move, elapsed) => context.moveDbAt(move, elapsed);
+
+{
+  const fade = (from, seconds = 2.0) => moveFrom("fade", from, null, seconds);
+  check("moveDbAt: a fade starts where it started", MOVE_STEP(fade(0), 0), 0);
+  check("moveDbAt: and is halfway to the floor at half the time", MOVE_STEP(fade(0), 1.0), -30);
+  check("moveDbAt: and is -inf at its end", MOVE_STEP(fade(0), 2.0), null);
+  check("moveDbAt: and after it", MOVE_STEP(fade(0), 9.0), null);
+  check("moveDbAt: a negative elapsed holds the start", MOVE_STEP(fade(0), -1), 0);
+  check("moveDbAt: a NaN elapsed holds the start", MOVE_STEP(fade(0), NaN), 0);
+  check("moveDbAt: a fade from below the floor holds, then closes", MOVE_STEP(fade(-70), 1.0), -70);
+  check("moveDbAt: and closes at its end", MOVE_STEP(fade(-70), 2.0), null);
+
+  const knee = { db: -20.0, fraction: 0.15 };
+  const ride = (from, to, seconds) => moveFrom("ride", from, to, seconds, { knee });
+  check("moveDbAt: a ride from -inf holds -inf at the start", MOVE_STEP(ride(null, 0, 1.5), 0), null);
+  check("moveDbAt: and reaches the knee at the knee's fraction", MOVE_STEP(ride(null, 0, 1.5), 0.225), -20);
+  check("moveDbAt: and arrives", MOVE_STEP(ride(null, 0, 1.5), 1.5), 0);
+  check("moveDbAt: a ride to below the floor holds -inf", MOVE_STEP(ride(null, -70, 1.5), 0.7), null);
+  check("moveDbAt: and arrives", MOVE_STEP(ride(null, -70, 1.5), 1.5), -70);
+  check("moveDbAt: a move whose from is its to returns it", MOVE_STEP(ride(-6, -6, 1.5), 0.5), -6);
+}
+
+// The page's curve against the console's own steps: the box wrote both, so a
+// drift on either side fails here. Within one console unit at every step; the
+// last step is where the move arrives.
+for (const curve of CURVES) {
+  let worst = 0;
+  let mismatched = null;
+  for (const [offset, db] of curve.steps) {
+    if (offset >= curve.move.seconds) continue;
+    const drawn = context.moveDbAt(curve.move, offset);
+    if ((drawn === null) !== (db === null)) mismatched = [offset, db, drawn];
+    else if (db !== null) worst = Math.max(worst, Math.abs(drawn - db));
+  }
+  check(`parity: ${curve.name}: no step is null on one side only`, mismatched, null);
+  check(`parity: ${curve.name}: within one console unit`, worst <= ONE_UNIT_DB, true);
+  const last = curve.steps[curve.steps.length - 1];
+  check(
+    `parity: ${curve.name}: arrives where the last step does`,
+    context.moveDbAt(curve.move, curve.move.seconds),
+    last[1],
+  );
+}
+check("parity: the curves fixture has cases", CURVES.length > 0, true);
+
+check("moveElapsed: the box's gap plus the page's", context.moveElapsed({ started_at: 90 }, 100, 5), 15);
+check("moveElapsed: no usable at has no elapsed", context.moveElapsed({ started_at: 90 }, null, 5), null);
+check("moveElapsed: no arrival has no elapsed", context.moveElapsed({ started_at: 90 }, 100, null), null);
+check("moveElapsed: no start has no elapsed", context.moveElapsed({ started_at: null }, 100, 5), null);
+
+check("secondsSince: a stamp never taken is null", context.secondsSince(null, { wall: 5, mono: 5 }), null);
+check(
+  "secondsSince: the larger of the two deltas",
+  [
+    context.secondsSince({ wall: 10, mono: 10 }, { wall: 12, mono: 15 }),
+    context.secondsSince({ wall: 10, mono: 10 }, { wall: 16, mono: 11 }),
+  ],
+  [5, 6],
+);
+
+// The snapshot the box sends when a fade starts, with `at` the moment it began
+// so the page's elapsed time is exactly the page's own.
+function fadeSnapshot(name = "releasing", offset = 0) {
+  const snap = structuredClone(SNAPSHOTS[name]);
+  snap.at = snap.fader.move.started_at + offset;
+  return snap;
+}
+
+// The snapshot the box sends once that move has landed: the move gone and the
+// live values back.
+function landedSnapshot(from, laterBy) {
+  const snap = structuredClone(from);
+  snap.at = from.at + laterBy;
+  snap.fader = {
+    ...from.fader,
+    move: null,
+    moving: false,
+    commanded: -32768,
+    db: null,
+    target: null,
+    target_db: null,
+    sent_at: snap.at,
+  };
+  return snap;
+}
+
+const fadingNodes = (created) =>
+  created.filter((node) => node.tag === "button" && node.classList.contains("fading"));
+
+{
+  let clock = 2_000_000;
+  const { context: page, nodes, created, frames } = browser({ now: () => clock * 1000 });
+  page.render(fadeSnapshot());
+  check("a fade renders as a sweep: on arrival", nodes.get("level").textContent, "0.00 dB → -∞ dB");
+  check("a fade says fading", nodes.get("level-tag").textContent, "fading");
+  check("and is styled fading", nodes.get("level-tag").className, "tag fading");
+  clock += 1;
+  frames[0]();
+  check("a second on, after a frame", nodes.get("level").textContent, "-30.00 dB → -∞ dB");
+  check("the page asks for the next frame itself", frames.length, 2);
+  check(
+    "the button that started it wears the fading colour, and only that one",
+    fadingNodes(created).map((node) => node.dataset.key),
+    ["out"],
+  );
+}
+
+{
+  const { context: page, nodes } = browser();
+  page.render(fadeSnapshot("riding"));
+  check("a ride renders as riding", nodes.get("level-tag").textContent, "riding");
+  check("and is styled fading", nodes.get("level-tag").className, "tag fading");
+}
+
+{
+  // The in-flight state ends on the box's word and on nothing else: not on the
+  // page's own timer running out, which only says the page has not heard.
+  let clock = 2_000_000;
+  const { context: page, nodes, created, intervals } = browser({ now: () => clock * 1000 });
+  const fading = fadeSnapshot();
+  page.render(fading);
+  clock += 10;
+  intervals[0]();
+  check("fading ends only on the box's word: still fading", nodes.get("level-tag").textContent, "fading");
+  check("the button is still painted", fadingNodes(created).map((node) => node.dataset.key), ["out"]);
+  check("and the readout says how late", nodes.get("level").textContent, "→ -∞ dB - 8s late");
+  page.render(landedSnapshot(fading, 10));
+  check("the landed snapshot ends it: tag", nodes.get("level-tag").textContent, "commanded");
+  check("and styles it commanded", nodes.get("level-tag").className, "tag commanded");
+  check("no button is painted", fadingNodes(created).length, 0);
+  check("and the settled readout is back", nodes.get("level").textContent, "-∞ dB - 0s ago");
+}
+
+{
+  const { context: page, nodes } = browser({ now: STILL });
+  page.render(fadeSnapshot("releasing", 2.5));
+  check(
+    "within the grace the readout points at the destination without a sweep",
+    nodes.get("level").textContent,
+    "→ -∞ dB",
+  );
+  check("and does not say late", nodes.get("level").textContent.includes("late"), false);
+}
+
+{
+  // A link that drops mid-fade is exactly when the fade must not look finished.
+  let clock = 2_000_000;
+  const { context: page, nodes, created, intervals, sockets } = browser({ now: () => clock * 1000 });
+  sockets[0].onopen();
+  sockets[0].onmessage({ data: JSON.stringify({ keepalive: true, stale_after: 37.5 }) });
+  sockets[0].onmessage({ data: JSON.stringify(fadeSnapshot()) });
+  clock += 1;
+  sockets[0].close();
+  clock += 5;
+  intervals[0]();
+  check("a link drop mid-fade: the banner says lost", nodes.get("link").className, "lost");
+  check("the tag still says fading", nodes.get("level-tag").textContent, "fading");
+  check("the button is still painted", fadingNodes(created).map((node) => node.dataset.key), ["out"]);
+  check("and the readout says late", nodes.get("level").textContent.includes("late"), true);
+}
+
+{
+  // Half-open: the socket never closes and nothing arrives.
+  let clock = 2_000_000;
+  const { nodes, created, intervals, sockets } = browser({ now: () => clock * 1000 });
+  sockets[0].onopen();
+  sockets[0].onmessage({ data: JSON.stringify({ keepalive: true, stale_after: 37.5 }) });
+  sockets[0].onmessage({ data: JSON.stringify(fadeSnapshot()) });
+  clock += 37.5 + 5;
+  intervals[0]();
+  check("a half-open link mid-fade: the banner says stale", nodes.get("link").className, "stale");
+  check("the tag still says fading", nodes.get("level-tag").textContent, "fading");
+  check("the button is still painted", fadingNodes(created).map((node) => node.dataset.key), ["out"]);
+  check("and the readout says late", nodes.get("level").textContent.includes("late"), true);
+}
+
+{
+  const { context: page, nodes, created } = browser({ now: STILL });
+  const fading = fadeSnapshot();
+  page.render(fading);
+  const open = structuredClone(SNAPSHOTS["open-recording"]);
+  open.at = fading.at + 1;
+  page.render(open);
+  check("a snap back to open mid-fade ends the animation: tag", nodes.get("level-tag").textContent, "commanded");
+  check("and no button is painted", fadingNodes(created).length, 0);
+}
+
+{
+  const { context: page, created } = browser({ now: STILL });
+  page.render(fadeSnapshot());
+  const riding = fadeSnapshot("riding");
+  riding.at += 1;
+  riding.fader.move.seq = 2;
+  riding.fader.move.started_at = riding.at;
+  page.render(riding);
+  check(
+    "a new move replaces the old one",
+    fadingNodes(created).map((node) => node.dataset.key),
+    ["up-slow"],
+  );
+}
+
+{
+  const { context: page, nodes } = browser({ now: STILL });
+  page.render(fadeSnapshot("releasing", 1.0));
+  check("a page that connects mid-fade joins the sweep", nodes.get("level").textContent, "-30.00 dB → -∞ dB");
+}
+
+{
+  const { context: page, nodes } = browser({ now: STILL });
+  const fading = fadeSnapshot();
+  page.render(landedSnapshot(fading, 3));
+  page.render(fading);
+  check("a held-up response cannot restart a landed fade", nodes.get("level-tag").textContent, "commanded");
+}
+
+{
+  const { context: page, nodes } = browser({ now: STILL });
+  page.render(fadeSnapshot());
+  check(
+    "the in-flight tag is never styled commanded or confirmed",
+    ["commanded", "confirmed"].some((word) => nodes.get("level-tag").className.includes(word)),
+    false,
+  );
+}
+
+{
+  const { context: page, frames } = browser({ now: STILL });
+  page.render(fadeSnapshot());
+  page.render(fadeSnapshot());
+  check("one animation frame at a time", frames.length, 1);
+}
+{
+  const { context: page, frames } = browser({ now: STILL });
+  page.render(structuredClone(SNAPSHOTS["standing-down"]));
+  check("no frame is asked for when nothing is moving", frames.length, 0);
+}
+{
+  const { context: page, frames } = browser({ now: STILL });
+  page.render(fadeSnapshot("releasing", 5));
+  check("none once past the end of the move", frames.length, 0);
+}
+
+{
+  const { context: page, nodes } = browser({ now: STILL });
+  const snap = snapshot({}, { level_known: false, moving: true, move: moveFrom("fade", 0.0, null, 2.0) });
+  page.render(snap);
+  check("a level that is not known never shows a move", nodes.get("level").textContent.startsWith("unknown"), true);
+  check("and is tagged unknown", nodes.get("level-tag").textContent, "unknown");
+}
+
+// -- the page keeps its buttons and its text still (#51) ---------------------
+
+{
+  const { context: page, nodes, created } = browser({ now: STILL });
+  page.render(structuredClone(SNAPSHOTS.prompt));
+  for (const node of [...created, nodes.get("btn-record"), nodes.get("btn-prompt-accept")]) node.writes = 0;
+  const again = structuredClone(SNAPSHOTS.prompt);
+  again.at += 1;
+  page.render(again);
+  const written = [...created, nodes.get("btn-record"), nodes.get("btn-prompt-accept")]
+    .filter((node) => node.writes > 0)
+    .map((node) => node.dataset.key || node.id || node.tag);
+  check("rendering an unchanged snapshot writes no button text", written, []);
+}
+
+{
+  const { context: page, nodes, created } = browser({ now: STILL });
+  page.render(structuredClone(SNAPSHOTS["open-recording"]));
+  const before = created.length;
+  const lean = structuredClone(SNAPSHOTS["open-recording"]);
+  delete lean.buttons;
+  lean.at += 1;
+  page.render(lean);
+  check("a snapshot without buttons keeps the ones on screen: nothing rebuilt", created.length, before);
+  check("MAIN is still populated", nodes.get("tab-main").children.length > 0, true);
+  check(
+    "and an open span of a known event is not listed as an orphan",
+    created.some((node) => node.dataset.orphan === "1"),
+    false,
+  );
+}
+
+{
+  const { context: page, created } = browser({ now: STILL });
+  const lean = structuredClone(SNAPSHOTS["standing-down"]);
+  delete lean.buttons;
+  let error = null;
+  try {
+    page.render(lean);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot without buttons, before any, does not throw", error, null);
+  check("and builds none", created.filter((node) => node.dataset.key !== undefined).length, 0);
+}
+
+{
+  const { sockets } = browser();
+  check("the page asks for its buttons once", sockets[0].url.endsWith("/ws?buttons=once"), true);
+}
+
+{
+  // The wall clock stepped back an hour must not delay the stale banner.
+  let wall = 2_000_000;
+  let perf = 1000;
+  const { nodes, intervals, sockets } = browser({ now: () => wall * 1000, perf: () => perf * 1000 });
+  sockets[0].onopen();
+  sockets[0].onmessage({ data: JSON.stringify({ keepalive: true, stale_after: 37.5 }) });
+  wall -= 3600;
+  perf += 50;
+  intervals[0]();
+  check("a wall clock stepped back does not delay the stale banner", nodes.get("link").className, "stale");
+}
+
+{
+  // A monotonic clock that paused (a device asleep) must not hide a silence.
+  let wall = 2_000_000;
+  const perf = 1000;
+  const { nodes, intervals, sockets } = browser({ now: () => wall * 1000, perf: () => perf * 1000 });
+  sockets[0].onopen();
+  sockets[0].onmessage({ data: JSON.stringify({ keepalive: true, stale_after: 37.5 }) });
+  wall += 50;
+  intervals[0]();
+  check("a monotonic clock that paused does not hide a silence", nodes.get("link").className, "stale");
 }
 
 // -- report -----------------------------------------------------------------
