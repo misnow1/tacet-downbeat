@@ -211,20 +211,23 @@
     "healthy": true,
     "level_known": true,
     "move": {
-      "by": "out",
+      "by": "target-set",
       "floor_db": -60.0,
       "from_db": 0.0,
-      "kind": "fade",
-      "knee": null,
-      "seconds": 2.0,
+      "kind": "ride",
+      "knee": {
+        "db": -20.0,
+        "fraction": 0.15
+      },
+      "seconds": 1.0,
       "seq": 1,
       "started_at": 5000.02,
-      "to_db": null
+      "to_db": -3.0
     },
     "moving": true,
     "sent_at": 5000.02,
-    "target": -32768,
-    "target_db": null
+    "target": -300,
+    "target_db": -3.0
   },
   "log": {
     "error": null,
@@ -239,12 +242,6 @@
   },
   "open_spans": [],
   "prompt": null,
-  "provenance": {
-    "dirty": false,
-    "error": null,
-    "source": "checkout",
-    "where": "main @ 0123456"
-  },
   "recording": {
     "can_start": false,
     "confirmed": false,
@@ -257,7 +254,7 @@
   },
   "refusal": null,
   "stale_tap": null,
-  "state": "releasing",
+  "state": "open",
   "target": {
     "db": -3.0,
     "default_db": 0.0,
@@ -267,10 +264,7 @@
       -3.0,
       -6.0
     ],
-    "stored": {
-      "because": "releasing",
-      "db": -3.0
-    }
+    "stored": null
   },
-  "why": "Fading out. Any trigger brings it straight back up. You are driving; the detector cannot move the fader."
+  "why": "Open at unity. You are driving; the detector cannot move the fader."
 }
