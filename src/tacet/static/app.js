@@ -307,7 +307,11 @@ function renderButtons(buttons, orphans) {
 // `snapshot.target` is the STANDING setting: the level the next open goes to and
 // the READY hold is measured from. It is what this section shows (the chip in
 // the strip) and changes (the segments in MORE > Target level). Changing it
-// stores a value and moves nothing. `snapshot.fader.target` is where a move
+// stores a value and moves nothing; while the fader is up the box says it
+// stored and why (`snapshot.target.stored`), the page words that under the
+// segments, and the box clears it (a later tap, a fader move, a state change).
+// While the fader is closed the box sends null: storing is what the operator
+// expects there, so there is no note (#153). `snapshot.fader.target` is where a move
 // already in flight is heading, null when nothing is moving; the fader readout
 // below draws that as the arrow in "-10.00 dB -> 0.00 dB" (from `fader.move`
 // since #154, which carries the same destination). A move in flight can
@@ -323,6 +327,31 @@ function renderButtons(buttons, orphans) {
 // selected segment is painted from the snapshot on every render and never
 // optimistically: a refused or lost tap must not look like a change. The tap's
 // own feedback is the `sending` outline `post` puts on the node.
+
+// The sentences under the segments when a tap stored and did not move (#153).
+// The box sends only the reason. ASCII only: `-inf`, not the infinity sign.
+const NOT_MOVED = "The fader did not move.";
+// No `closed` entry: the box never sends one, because a tap while the fader is
+// closed has no note (#153).
+const STORED_COPY = {
+  open: NOT_MOVED,
+  ready: NOT_MOVED,
+  releasing: "The fade carries on to -inf.",
+};
+// Reasons whose note wants attention, and whose chip says (next open).
+const STORED_ATTENTION = new Set(["open", "ready", "releasing"]);
+
+// Pure: the note under the segments, `{text, attention}`. A reason this page
+// does not know (a newer box) reads as not-moved, which is true of every
+// store-only case and the safe side, as MOVE_TAG_FALLBACK is.
+function storedNote(stored) {
+  if (!stored) return {text: "", attention: false};
+  if (stored.because === "unchanged") {
+    return {text: "Already the target: " + String(stored.db) + " dB. Nothing changed.", attention: false};
+  }
+  const copy = STORED_COPY[stored.because] || NOT_MOVED;
+  return {text: "Stored: " + String(stored.db) + " dB on the next open. " + copy, attention: true};
+}
 
 // Pure: the chip's text. `nextOpenOnly` is true while a ride is heading
 // somewhere other than the standing target.
@@ -366,10 +395,16 @@ function renderTargetControl(target) {
 function paintTarget(target, fader) {
   // A ride to somewhere other than the standing target, and not a fade.
   const ridingElsewhere = fader.target !== null && fader.target_db !== null && fader.target !== target.level;
+  const stored = target.stored || null;
+  const nextOpenOnly = ridingElsewhere || (stored !== null && STORED_ATTENTION.has(stored.because));
   const chip = $("target-level");
-  chip.textContent = targetChipText(target.db, ridingElsewhere);
+  chip.textContent = targetChipText(target.db, nextOpenOnly);
   chip.classList.toggle("off-default", target.db !== target.default_db);
   renderTargetControl(target);
+  const note = storedNote(stored);
+  const noteNode = $("target-note");
+  setText(noteNode, note.text);
+  noteNode.className = note.attention ? "attention" : "";
 }
 
 // -- MAIN / MORE ---------------------------------------------------------

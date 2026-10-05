@@ -1005,7 +1005,17 @@ for (const known of [false, true]) {
 check(
   "the box wrote the snapshots these tests read",
   Object.keys(SNAPSHOTS).sort(),
-  ["faults", "open-recording", "parked-unreported", "prompt", "prompt-arm", "releasing", "riding", "standing-down"],
+  [
+    "faults",
+    "open-recording",
+    "parked-unreported",
+    "prompt",
+    "prompt-arm",
+    "releasing",
+    "riding",
+    "standing-down",
+    "target-stored",
+  ],
 );
 
 function renderedFixture(name) {
@@ -2433,6 +2443,104 @@ for (const [label, fader] of [["unknown", { level_known: false }], ["known", { l
     presetSegments(created).map((node) => node.textContent),
     ["0 dB", "-3 dB", "-6 dB"],
   );
+}
+
+// -- a target tap that stored and did not move says so (#153) -----------------
+//
+// The box sends `target.stored` ({db, because}) or null; the page words it
+// under the segments. Null is also what the box sends for every tap made while
+// the fader is closed: storing is what the operator expects there, so the page
+// says nothing at all.
+
+const NOT_MOVED_SENTENCE = "The fader did not move.";
+const pure = browser().context;
+
+check(
+  "storedNote: open says stored and that the fader did not move",
+  pure.storedNote({ db: -3, because: "open" }),
+  { text: "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE, attention: true },
+);
+check(
+  "storedNote: ready",
+  pure.storedNote({ db: -6, because: "ready" }),
+  { text: "Stored: -6 dB on the next open. " + NOT_MOVED_SENTENCE, attention: true },
+);
+check(
+  "storedNote: releasing says the fade carries on",
+  pure.storedNote({ db: -3, because: "releasing" }),
+  { text: "Stored: -3 dB on the next open. The fade carries on to -inf.", attention: true },
+);
+check(
+  "storedNote: unchanged",
+  pure.storedNote({ db: -3, because: "unchanged" }),
+  { text: "Already the target: -3 dB. Nothing changed.", attention: false },
+);
+check(
+  "storedNote: unity reads 0 dB",
+  pure.storedNote({ db: 0, because: "unchanged" }).text,
+  "Already the target: 0 dB. Nothing changed.",
+);
+check(
+  "storedNote: an unknown reason falls back to did-not-move",
+  pure.storedNote({ db: -3, because: "from-a-newer-box" }),
+  { text: "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE, attention: true },
+);
+check("storedNote: null is empty", pure.storedNote(null), { text: "", attention: false });
+check("storedNote: undefined is empty", pure.storedNote(undefined), { text: "", attention: false });
+for (const because of ["open", "ready", "releasing", "unchanged", "from-a-newer-box"]) {
+  check(
+    `storedNote: every sentence is ASCII (${because})`,
+    /^[\x20-\x7e]*$/.test(pure.storedNote({ db: -3, because }).text),
+    true,
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  const note = nodes.get("target-note");
+  check("target-stored: the note is the open sentence", note.textContent, "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE);
+  check("target-stored: and wants attention", note.className, "attention");
+  check("target-stored: the chip says it is for the next open", nodes.get("target-level").textContent, "target -3 dB (next open)");
+
+  // The box clears a note when the fader moves or the state changes, and the
+  // page follows its next snapshot (a later `at`, or the page ignores it as
+  // old) with the note cleared.
+  const cleared = structuredClone(SNAPSHOTS["target-stored"]);
+  cleared.at += 1;
+  cleared.target.stored = null;
+  context.render(cleared);
+  check("a snapshot with no note empties it", note.textContent, "");
+  check("and drops the attention colour", note.className, "");
+  check("and drops (next open) from the chip", nodes.get("target-level").textContent, "target -3 dB");
+}
+
+{
+  // #153's Done-when as the maintainer kept it: a tap while the fader is closed
+  // leaves no note and no (next open). The box sends `stored: null` for it.
+  const { context, nodes } = browser();
+  context.render(targetSnapshot({ db: -3, level: -300 }));
+  check("closed: no note", nodes.get("target-note").textContent, "");
+  check("closed: no attention colour", nodes.get("target-note").className, "");
+  check("closed: the chip does not say (next open)", nodes.get("target-level").textContent, "target -3 dB");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  const note = nodes.get("target-note");
+  const written = note.writes;
+  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  check("an unchanged note is not rewritten (#51)", note.writes, written);
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = structuredClone(SNAPSHOTS["target-stored"]);
+  snap.target.stored = { db: -3, because: "unchanged" };
+  context.render(snap);
+  check("unchanged while open: dim, not attention", nodes.get("target-note").className, "");
+  check("unchanged while open: the chip adds nothing", nodes.get("target-level").textContent, "target -3 dB");
 }
 
 // -- MAIN after Game 3 (#155) ------------------------------------------------

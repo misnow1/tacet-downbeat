@@ -307,6 +307,11 @@ Worth checking:
   below the fold on a short landscape screen: they sit under the Control row,
   the hand-off confirmation and the whole vocabulary, so this wants a look on
   the device rather than on the desktop.
+- **The stored-not-moved note (#153).** While open, tap a segment in MORE >
+  **Target level**: a note appears directly under the segments (`Stored: ...
+  The fader did not move.`), the chip in the strip adds `(next open)`, and
+  nothing else on screen moves - the two-line slot under the segments is
+  reserved. While idle or standing down the same tap shows no note.
 - **The hallway test #19 exists for:** arm first (accept the Arm question, or
   **Arm** in MORE) - `band-exits-stands` raises nothing from a boot that is
   already STANDING DOWN, and the point of this test is the guard, not a

@@ -188,6 +188,16 @@ async def riding(root: Path) -> dict[str, Any]:
     return snapshot
 
 
+async def target_stored(root: Path) -> dict[str, Any]:
+    """Open at unity; the operator taps -3 dB on MORE. Under #9 that stores and
+    moves nothing, and the page says so under the segments (#153)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.set_target(-3.0)
+    return box.app.snapshot()
+
+
 async def prompt_open(root: Path) -> dict[str, Any]:
     """The box has asked: the band left the stands mid-game, and a Stand down
     question is on the page, unanswered. Produced the way the box produces it -
@@ -237,6 +247,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "parked-unreported": parked_unreported,
     "releasing": releasing,
     "riding": riding,
+    "target-stored": target_stored,
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,
     "faults": faults,

@@ -398,8 +398,13 @@ in MORE, under **Target level**: tap a segment, and the solid one is the
 target now. **Nothing moves when you tap it.** The fader stays where it is
 and the next open goes to the new level; **Ready**'s hold level is measured
 from it too. It works in every state, even while the fader reads `unknown`.
-If the chip adds `(next open)`, a move in flight is heading somewhere other
-than the target: a ride that began before you changed it, or Ready's own
+While the fader is up (open, Ready or fading) a note under the segments says
+what happened - `Stored: -3 dB on the next open. The fader did not move.` -
+and the chip adds `(next open)` for as long as it stands. The note goes when
+the fader next moves, the state changes or you tap another level. While the
+fader is closed there is no note: the solid segment and the chip are the
+answer. Otherwise, `(next open)` means a move in flight is heading somewhere
+other than the target: a ride that began before you changed it, or Ready's own
 ride to its hold level. The target applies to the next open.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
