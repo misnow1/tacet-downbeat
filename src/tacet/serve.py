@@ -39,6 +39,10 @@ would stop the box from ever starting.
 The box refuses to start without room for a whole game's recording (#53): set
 `capture.audio_path` and `capture.channels`, or pass `--no-disk-check`. See
 `tacet.disk`.
+
+The banner's `code` row says what commit and branch is running, and whether the
+tree is dirty (#157). The log's first entry of every run, `box-started`, records
+the same. git is asked once, here, before the event loop exists.
 """
 
 from __future__ import annotations
@@ -52,7 +56,7 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, reaper, taps, targets, web
+from . import config, disk, dm7, mirror, provenance, reaper, taps, targets, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -105,7 +109,9 @@ class _Feedback(asyncio.DatagramProtocol):
         self._app.handle_recorder_packet(data)
 
 
-def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
+def build(
+    args: argparse.Namespace, code: provenance.Provenance
+) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
     # First, so a preset above the cap, or a default that is not one of the
     # presets, raises before the log or the queue is opened. Held here as well
     # as in the config file (#9, #139): a flag can name values the file never
@@ -130,12 +136,15 @@ def build(args: argparse.Namespace) -> tuple[App, AnnotationLog, mirror.MirrorQu
         ready_ride_seconds=args.ready_ride,
         stale_tap_seconds=args.stale_tap,
         target_levels=levels,
+        provenance=code,
     )
+    # The run's first entry, before anything is served (#157).
+    app.log_box_started()
     return app, log, queue
 
 
-async def _run(args: argparse.Namespace) -> None:
-    app, log, queue = build(args)
+async def _run(args: argparse.Namespace, code: provenance.Provenance) -> None:
+    app, log, queue = build(args, code)
     server = web.create_app(app)
 
     loop = asyncio.get_running_loop()
@@ -324,6 +333,36 @@ def _prior_anchor_lines(prior: AnnotationEntry) -> list[str]:
     ]
 
 
+#: The chip the page shows for a dirty tree. Must equal app.js's PROVENANCE_DIRTY;
+#: tests/test_runbook.py holds the two together.
+PAGE_DIRTY_CHIP = "Unreviewed code running"
+DIRTY_WARNING = "the box is running uncommitted changes"
+UNKNOWN_CODE_WARNING = "cannot tell what code is running"
+
+
+def _code_warning_lines(code: provenance.Provenance | None) -> list[str]:
+    """Warned, not refused (#157): a box that will not start before kickoff is
+    worse than one running a fix the operator knows about. Silent is worse."""
+    if code is None:
+        return []
+    if code.dirty:
+        return [
+            _rule(),
+            _row("WARNING", DIRTY_WARNING),
+            _note("the log records the commit, not the changes made since it"),
+            _note(f'the page shows "{PAGE_DIRTY_CHIP}" while this runs'),
+            _note("commit, then restart, to leave a record of what ran"),
+        ]
+    if code.source is provenance.Source.UNKNOWN:
+        return [
+            _rule(),
+            _row("WARNING", UNKNOWN_CODE_WARNING),
+            _note(str(code.error)),
+            _note("it may include uncommitted changes; the page says so too"),
+        ]
+    return []
+
+
 def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
     """The block for a log written before this machine's clock last restarted.
 
@@ -395,6 +434,7 @@ def startup_lines(
     clock_reset: AnnotationEntry | None = None,
     open_spans: list[AnnotationEntry] | None = None,
     space: disk.Verdict | None = None,
+    code: provenance.Provenance | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -408,6 +448,7 @@ def startup_lines(
     lines = [
         _rule("="),
         _row("tacet", "band DCA - Phase 0/1, the detector drives nothing"),
+        *([_row("code", code.summary())] if code is not None else []),
         _row("config", str(config_path) if config_path else NO_CONFIG),
         _rule(),
         _row("console", f"{args.console_host}:{args.console_port}   DCA {args.dca}"),
@@ -451,6 +492,7 @@ def startup_lines(
         lines.extend(_torn_lines("log", args.log, torn_log, keeps_entries=True))
     if torn_queue is not None and args.queue:
         lines.extend(_torn_lines("queue", args.queue, torn_queue, keeps_entries=False))
+    lines.extend(_code_warning_lines(code))
     lines.append(_rule())
     lines.extend(_checklist(args))
     lines.append(_rule("="))
@@ -645,6 +687,10 @@ def main(argv: list[str] | None = None) -> int:
     space = disk.check(_disk_plan(args))
     if space.refusal is not None:
         p.error(space.refusal)
+    # What code this is (#157). Asked here, once, before the loop exists (#41), and
+    # after every refusal so a box that will not start never waits on git.
+    # Read-only, so --check asks too and prints what a start prints.
+    code = provenance.probe()
     banner = startup_lines(
         args,
         config_path,
@@ -654,6 +700,7 @@ def main(argv: list[str] | None = None) -> int:
         clock_reset=clock_reset,
         open_spans=open_spans,
         space=space,
+        code=code,
     )
     for line in banner:
         print(line)
@@ -662,7 +709,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return 0
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run(args))
+        asyncio.run(_run(args, code))
     return 0
 
 

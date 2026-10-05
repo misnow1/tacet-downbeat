@@ -159,12 +159,12 @@ class TestProbe(_TreeCase):
         return result
 
     def test_git_missing_is_unknown_and_says_so(self):
-        result = self._unknown(FakeGit(raises=prov.GitUnavailable(prov.GIT_NOT_FOUND)))
+        result = self._unknown(FakeGit(raises=prov.GitUnavailableError(prov.GIT_NOT_FOUND)))
         self.assertEqual(result.error, prov.GIT_NOT_FOUND)
 
     def test_a_timeout_is_unknown_and_names_the_limit(self):
         message = prov.GIT_TIMED_OUT.format(seconds=prov.GIT_TIMEOUT_SECONDS)
-        result = self._unknown(FakeGit(raises=prov.GitUnavailable(message)))
+        result = self._unknown(FakeGit(raises=prov.GitUnavailableError(message)))
         self.assertEqual(result.error, message)
         self.assertIn("5s", message)
 
@@ -206,12 +206,12 @@ class TestProbe(_TreeCase):
 
 class TestSubprocessGit(unittest.TestCase):
     def test_a_missing_executable_is_unavailable(self):
-        with self.assertRaises(prov.GitUnavailable) as caught:
+        with self.assertRaises(prov.GitUnavailableError) as caught:
             prov.SubprocessGit("tacet-no-such-git-157").run([], timeout=5)
         self.assertEqual(str(caught.exception), prov.GIT_NOT_FOUND)
 
     def test_a_timeout_is_unavailable_and_says_how_long(self):
-        with self.assertRaises(prov.GitUnavailable) as caught:
+        with self.assertRaises(prov.GitUnavailableError) as caught:
             prov.SubprocessGit(sys.executable).run(["-c", "import time; time.sleep(10)"], timeout=0.2)
         self.assertEqual(str(caught.exception), prov.GIT_TIMED_OUT.format(seconds=0.2))
 

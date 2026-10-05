@@ -3990,6 +3990,7 @@ class TestTheDutyClock(AppTestCase):
         await app.wait_for_fade()
         self.assertFalse(app.snapshot()["duty"]["armed"])
 
+
 CODE = prov.Provenance(
     source=prov.Source.CHECKOUT,
     commit="0123456789abcdef0123456789abcdef01234567",

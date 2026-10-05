@@ -84,7 +84,7 @@ class GitOutput:
     stderr: bytes
 
 
-class GitUnavailable(Exception):
+class GitUnavailableError(Exception):
     """git could not be asked at all: missing, timed out, or would not start."""
 
 
@@ -106,11 +106,11 @@ class SubprocessGit:
                 check=False,
             )
         except FileNotFoundError as exc:
-            raise GitUnavailable(GIT_NOT_FOUND) from exc
+            raise GitUnavailableError(GIT_NOT_FOUND) from exc
         except subprocess.TimeoutExpired as exc:
-            raise GitUnavailable(GIT_TIMED_OUT.format(seconds=timeout)) from exc
+            raise GitUnavailableError(GIT_TIMED_OUT.format(seconds=timeout)) from exc
         except OSError as exc:
-            raise GitUnavailable(GIT_COULD_NOT_RUN.format(error=exc)) from exc
+            raise GitUnavailableError(GIT_COULD_NOT_RUN.format(error=exc)) from exc
         return GitOutput(done.returncode, done.stdout, done.stderr)
 
 
@@ -276,7 +276,7 @@ def probe(
             detail = GIT_FAILED.format(code=output.returncode, detail=_first_line(output.stderr))
             return Provenance.unknown(detail, path=root, worktree=worktree)
         return Provenance.from_status(parse_status(output.stdout), path=root, worktree=worktree)
-    except GitUnavailable as exc:
+    except GitUnavailableError as exc:
         return Provenance.unknown(str(exc), path=root, worktree=worktree)
     except ValueError as exc:
         return Provenance.unknown(GIT_UNREADABLE.format(detail=exc), path=root, worktree=worktree)

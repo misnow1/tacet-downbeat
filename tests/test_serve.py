@@ -871,7 +871,7 @@ class TestBuildWritesBoxStartedFirst(unittest.TestCase):
         self.assertIsNone(queue)
         self.assertEqual(app.snapshot()["provenance"], DIRTY_CODE.as_snapshot())
         log.close()
-        first = list(annotations.read_entries(self.log))[0]
+        first = next(iter(annotations.read_entries(self.log)))
         self.assertEqual(first.event, annotations.BOX_STARTED)
         self.assertEqual(first.data, DIRTY_CODE.as_data())
 
