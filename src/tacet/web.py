@@ -857,7 +857,7 @@ justify-content:flex-start;overflow:hidden}
 #readout #level{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;
 text-overflow:ellipsis}
 #readout .tag{flex:none}
-#rec-error{color:#ff9d94;font-size:12px;line-height:15px;overflow:hidden;white-space:nowrap;
+#rec-error{color:#ff9d94;font-size:12px;line-height:15px;min-height:15px;overflow:hidden;white-space:nowrap;
 text-overflow:ellipsis}
 #readout #fader-error{color:#ff9d94;font-size:12px;line-height:15px;flex:0 0 auto;
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

@@ -309,7 +309,7 @@ the box's own words. Each text, and what to do about it, is in
 Reaper that is open with its audio device running. The normal pregame page reads
 `stopped`, tagged **confirmed**, because the box asks Reaper for its transport
 state when it first hears it (#172). `not yet reported` now means Reaper did not
-answer that question. The button is still live on a parked Reaper then, as #163
+answer that question. The button is still live on a parked Reaper then, after up to 5 seconds, as #163
 made it.
 
 *Why the box can tell parked from rolling.* What Reaper sends, and when, is
@@ -379,8 +379,9 @@ Reaper's feedback has to survive all of it.
   `/time` for longer than the 2 s timeout, which on its own would look like a
   parked transport. After the 5 s the box is back to #163's rules.
 - **It does not ask again while a refresh is unanswered.** Any `/record` report
-  answers it. Unanswered (an older Reaper, the action missing), the box behaves
-  exactly as #163 shipped it, until Reaper's next record start or stop.
+  answers it. Unanswered (an older Reaper, the action missing), after the 5 s
+  guard above the box behaves as #163 shipped it, until Reaper's next record
+  start or stop.
 - **Quit is silent.** The stream just stops. The box can tell "closed" from
   "parked" only because the meters stop, and only while an audio device runs.
 - **Launch and project load send a placeholder dump first:** generic

@@ -109,6 +109,14 @@ class TestPage(WebTestCase):
         self.assertIn('id="rec-error"', panel)
         self.assertIn("#rec-error{", body)
 
+    async def test_the_recorder_error_reserves_one_line(self):
+        # Empty or showing, the line is always 15px tall, so a fault appearing
+        # or clearing never moves MAIN's tabs (#172).
+        body = await (await self.client.get("/")).text()
+        rule = body.split("#rec-error{", 1)[1].split("}", 1)[0]
+        self.assertIn("line-height:15px", rule)
+        self.assertIn("min-height:15px", rule)
+
     async def test_the_record_reason_reserves_two_lines(self):
         # An empty, one-line or two-line reason must not move MAIN's tabs on the
         # iPad, so the slot is always two lines tall (#163).

@@ -1095,7 +1095,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
             clock[0] += 0.5
         await app.start_recording()
         self.assertNotIn("/record", self.record_packets())
-        self.assertIn("not said whether", app.snapshot()["refusal"])
+        self.assertEqual(app.snapshot()["refusal"], reaper.RECORD_REFUSED_MOVING)
 
     async def test_a_lost_recorder_is_refused(self):
         clock = [1000.0]

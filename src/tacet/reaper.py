@@ -391,7 +391,8 @@ def refresh_due(before: TransportState, after: TransportState, request: RecordRe
     a run of its own is still the answer to an outstanding refresh, so a dump
     can never draw another. There is no expiry: an unanswered refresh stops
     further ones until any `/record` report arrives, and meanwhile the box
-    behaves exactly as it did before it asked (#163).
+    a start is refused for up to `REFRESH_ANSWER_SECONDS`, and after that the box
+    behaves as #163 shipped it.
     """
     return (
         after.link_since is not None
