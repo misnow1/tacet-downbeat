@@ -186,7 +186,7 @@ class Provenance:
         return cls(source=Source.NOT_A_CHECKOUT)
 
     @classmethod
-    def unknown(cls, error: str, *, path: Path, worktree: bool) -> Provenance:
+    def unknown(cls, error: str, *, path: Path, worktree: bool | None) -> Provenance:
         return cls(source=Source.UNKNOWN, worktree=worktree, path=str(path), error=error)
 
     @classmethod
@@ -265,11 +265,13 @@ def probe(
     Any failure after that point is `unknown`, never `not a checkout`: the tree
     may be dirty, and saying otherwise would hide it.
     """
-    dot_git = root / GIT_DIR_NAME
-    if not dot_git.exists():
-        return Provenance.not_a_checkout()
-    worktree = dot_git.is_file()
+    # None until the filesystem has been read: even that can fail.
+    worktree: bool | None = None
     try:
+        dot_git = root / GIT_DIR_NAME
+        if not dot_git.exists():
+            return Provenance.not_a_checkout()
+        worktree = dot_git.is_file()
         git = SubprocessGit() if runner is None else runner
         output = git.run(status_args(root), timeout=timeout)
         if output.returncode != 0:

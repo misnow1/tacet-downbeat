@@ -765,8 +765,6 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #link{color:#fff;display:none}
 #link.connecting{display:block;background:var(--attention);color:var(--attention-text)}
 #link.stale,#link.lost{display:block;background:var(--warn)}
-/* Whether annotations are reaching the disk. Up for as long as it is true, and
-   not dismissable: a full disk leaves everything else on the page looking fine. */
 /* What code the box runs (#157): shown only while it runs uncommitted code or
    cannot tell. Static for the run, so nothing below it moves after the first
    paint; max-width keeps it on the strip's first line beside duty and target on
@@ -775,6 +773,8 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #strip > #provenance.warn{display:block;background:var(--attention);color:var(--attention-text)}
 #strip > #provenance.note{display:block;color:#ffca7a}
 #strip > #provenance[data-expanded="1"]{max-width:100%}
+/* Whether annotations are reaching the disk. Up for as long as it is true, and
+   not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
 #saving.fault{display:block;background:var(--warn);color:#fff}
 #saving.warn{display:block;background:var(--attention);color:var(--attention-text)}

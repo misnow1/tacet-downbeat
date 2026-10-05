@@ -17,6 +17,7 @@ import tempfile
 import unittest
 from collections.abc import Sequence
 from pathlib import Path
+from unittest import mock
 
 from tacet import provenance as prov
 
@@ -184,6 +185,15 @@ class TestProbe(_TreeCase):
     def test_any_other_exception_is_unknown_not_a_crash(self):
         result = self._unknown(FakeGit(raises=RuntimeError("boom")))
         self.assertEqual(result.error, prov.PROBE_FAILED.format(error="RuntimeError: boom"))
+
+    def test_a_dot_git_that_cannot_be_inspected_is_unknown_not_a_crash(self):
+        git = FakeGit()
+        with mock.patch.object(Path, "exists", side_effect=PermissionError("denied")):
+            result = prov.probe(self.root, runner=git)
+        self.assertEqual(result.source, prov.Source.UNKNOWN)
+        self.assertEqual(result.error, prov.PROBE_FAILED.format(error="PermissionError: denied"))
+        self.assertIsNone(result.worktree)
+        self.assertEqual(git.calls, [])
 
     def test_a_dirty_checkout_records_everything(self):
         (self.root / prov.GIT_DIR_NAME).mkdir()
