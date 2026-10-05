@@ -1052,6 +1052,7 @@ class App:
             self._recorder.state,
             now,
             request=self._recorder.record_request,
+            refresh=self._recorder.refresh_request,
             # A log that already held a recording when it was opened is the one
             # sign that this box may have been restarted mid-take, when Reaper
             # has not yet said whether it is recording (D4, #163).
@@ -1173,6 +1174,9 @@ class App:
                 # it does not churn the snapshot coalescing (#147).
                 "refusal": record_refused,
                 "healthy": self._recorder.healthy if self._recorder is not None else True,
+                # Why it is not, for the line under the panel (#172). A refresh
+                # that cannot be sent is otherwise visible nowhere.
+                "error": self._recorder.last_error if self._recorder is not None else None,
             },
             "buttons": [
                 {

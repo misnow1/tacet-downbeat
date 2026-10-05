@@ -238,6 +238,7 @@
   "recording": {
     "can_start": false,
     "confirmed": true,
+    "error": null,
     "healthy": true,
     "known": true,
     "liveness": "live",

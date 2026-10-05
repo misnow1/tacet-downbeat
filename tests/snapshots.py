@@ -136,13 +136,15 @@ async def open_recording(root: Path) -> dict[str, Any]:
 async def parked_unreported(root: Path) -> dict[str, Any]:
     """Reaper open and parked with its audio device running: meters stream and
     nothing is said about the transport, which Reaper announces only when it
-    changes. The normal pregame page after #163 - the button is live."""
+    changes. A Reaper that never answered the box's refresh (#172): the page
+    after #163 - the button is live once the refresh's cap has passed."""
     box = _build(root, console=_Sender(), machine=_known())
-    # Listened to for a full timeout: the box will not call a transport parked
-    # before that, so the button is live only now.
-    for _ in range(2):
+    # Listened to for a full timeout, and past the refresh's cap: the box will
+    # not call a transport parked before the first, nor start into the second.
+    steps = 5
+    for _ in range(steps):
         box.reaper_says(METER, 0.0)
-        box.clock[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT / 2
+        box.clock[0] += reaper.REFRESH_ANSWER_SECONDS / steps
     box.reaper_says(METER, 0.0)
     return box.app.snapshot()
 

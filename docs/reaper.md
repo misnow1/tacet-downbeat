@@ -374,6 +374,10 @@ Reaper's feedback has to survive all of it.
 - **The box sends the refresh exactly once at the start of each run of
   feedback:** its first contact, a Reaper relaunch, any gap over 2 s. It never
   sends it on a timer.
+- **A start is refused while a refresh is unanswered, for at most 5 seconds**
+  (`REFRESH_ANSWER_SECONDS`), as `Listening to Reaper`. A slow dump can stall
+  `/time` for longer than the 2 s timeout, which on its own would look like a
+  parked transport. After the 5 s the box is back to #163's rules.
 - **It does not ask again while a refresh is unanswered.** Any `/record` report
   answers it. Unanswered (an older Reaper, the action missing), the box behaves
   exactly as #163 shipped it, until Reaper's next record start or stop.

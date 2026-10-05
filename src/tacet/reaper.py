@@ -109,6 +109,13 @@ TIME_RATE_PER_SECOND = 12
 #: refresh's dump stalls `/time` for about 1.5 s, and a reading that old stamped
 #: onto an entry would put its marker confidently in the wrong place.
 POSITION_CURRENT_SECONDS = 6 / TIME_RATE_PER_SECOND
+#: How long an unanswered refresh keeps the record button refused. While Reaper
+#: has not said whether it is recording, a dump that stalls `/time` for longer
+#: than the feedback timeout, with its transport report last, would otherwise
+#: look like a parked transport and permit a `/record` that stops the take. The
+#: measured stall is 1.5 s; this is a margin over it, and a cap so that a Reaper
+#: that never answers costs the operator five seconds, not the button.
+REFRESH_ANSWER_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -122,7 +129,7 @@ class AddressMap:
     #: Never sent. Held here so the "no stop" rule can be asserted against it.
     stop: str = "/stop"
     #: Sent only as `REFRESH_ACTION`, with an int argument.
-    action: str = "/action"
+    action: str = _ACTION_PREFIX
     #: Feedback.
     playing: str = "/play"
     recording: str = "/record"
@@ -399,6 +406,7 @@ def record_refusal(
     *,
     timeout: float = DEFAULT_FEEDBACK_TIMEOUT,
     request: RecordRequest | None = None,
+    refresh: RecordRequest | None = None,
     prior_recording: bool = False,
 ) -> str | None:
     """Why the box will not send a record command, or None if it will.
@@ -420,6 +428,9 @@ def record_refusal(
     no clock reads LINK LOST (see `TransportState.liveness`), and a log that
     already holds a recording, with the record state unknown, is refused as
     well - the one case where the box may have been restarted mid-take.
+
+    While the refresh the box sent is unanswered, and for no more than
+    `REFRESH_ANSWER_SECONDS` after it, a start is refused as listening.
 
     The refresh the box sends at the start of a run of feedback usually makes
     the record state reported before any of this is consulted; the rules here
@@ -446,6 +457,12 @@ def record_refusal(
         return RECORD_REFUSED_SILENT
     if state.recording is True:
         return RECORD_REFUSED_ROLLING
+    if refresh is not None and not refresh.answered_by(state) and (now - refresh.sent_at) < REFRESH_ANSWER_SECONDS:
+        # The box has asked Reaper whether it is recording and is waiting for
+        # the answer. Whatever the clock looks like meanwhile is not evidence:
+        # the reply's dump stalls `/time`. Capped, so an unanswered refresh
+        # falls back to the rules below, exactly as #163 shipped them.
+        return RECORD_REFUSED_LISTENING
     if state.recording is None:
         if state.clock_running(now, timeout=timeout):
             return RECORD_REFUSED_MOVING

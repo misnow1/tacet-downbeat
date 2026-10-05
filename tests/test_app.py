@@ -194,6 +194,13 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         listened_parked(self.reaper, self._clock())
         app.handle_recorder_packet(meter_packet())
 
+    def reaper_answers_stopped(self, app):
+        """The box's first contact with Reaper, and Reaper's answer to its
+        refresh: not recording (#172)."""
+        app.handle_recorder_packet(meter_packet())
+        for packet in refresh_reply(recording=False, playing=False):
+            app.handle_recorder_packet(packet)
+
     def expect_push(self, app, condition):
         """A future for the first push to satisfy `condition`.
 
@@ -1073,15 +1080,19 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_a_reaper_that_reported_a_stop_can_be_started(self):
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.reaper_answers_stopped(app)
         await app.start_recording()
         self.assertIn("/record", self.record_packets())
 
     async def test_a_moving_transport_of_unknown_record_state_is_refused(self):
         """A box restarted mid-game hears /time and no transport change, so it
-        cannot tell a safe send from one that ends the recording."""
-        app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 12.0))
+        cannot tell a safe send from one that ends the recording. Reaper has not
+        answered the box's refresh, and its cap (#172) has passed."""
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        for _ in range(int(reaper.REFRESH_ANSWER_SECONDS / 0.5) + 1):
+            app.handle_recorder_packet(osc.encode_message("/time", 12.0))
+            clock[0] += 0.5
         await app.start_recording()
         self.assertNotIn("/record", self.record_packets())
         self.assertIn("not said whether", app.snapshot()["refusal"])
@@ -1139,7 +1150,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
         # The press-box rig: never silent, and after the workaround take it has
         # said it is not recording, which on its own permits a send.
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.reaper_answers_stopped(app)
         app.handle_recorder_packet(osc.encode_message("/time", 4.8))
         await app.start_recording()
         await app.start_recording()
@@ -1632,7 +1643,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         app = self.build()
         # Reaper says stopped, then streams a position: the record button is
         # allowed and there is a fresh playhead available to stamp.
-        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.reaper_answers_stopped(app)
         app.handle_recorder_packet(osc.encode_message("/time", 77.0))
         await app.start_recording()
         anchor = [e for e in self.entries() if e.event == ann.ANCHOR_EVENT][-1]
