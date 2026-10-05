@@ -2503,10 +2503,9 @@ for (const because of ["open", "ready", "releasing", "unchanged", "from-a-newer-
   check("target-stored: and wants attention", note.className, "attention");
   check("target-stored: the chip says it is for the next open", nodes.get("target-level").textContent, "target -3 dB (next open)");
 
-  // The box clears a note when the fader moves or the state changes; the page
-  // follows whatever the next snapshot says.
-  // The box's next snapshot (a later `at`, or the page ignores it as old) with
-  // the note cleared, as after a fader move or a state change.
+  // The box clears a note when the fader moves or the state changes, and the
+  // page follows its next snapshot (a later `at`, or the page ignores it as
+  // old) with the note cleared.
   const cleared = structuredClone(SNAPSHOTS["target-stored"]);
   cleared.at += 1;
   cleared.target.stored = null;

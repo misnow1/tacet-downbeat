@@ -401,8 +401,8 @@ what happened - `Stored: -3 dB on the next open. The fader did not move.` -
 and the chip adds `(next open)` for as long as it stands. The note goes when
 the fader next moves, the state changes or you tap another level. While the
 fader is closed there is no note: the solid segment and the chip are the
-answer. If the chip adds `(next open)`, a move in flight is heading somewhere other
-than the target: a ride that began before you changed it, or Ready's own
+answer. Otherwise, `(next open)` means a move in flight is heading somewhere
+other than the target: a ride that began before you changed it, or Ready's own
 ride to its hold level. The target applies to the next open.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
