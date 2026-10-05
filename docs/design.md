@@ -420,6 +420,11 @@ Minimum during-game requirements:
 - A fade or ride is described once and animated on the page; its in-flight
   state ends only on the box's word, never on the page's own timer (#154)
 - **Open** and **fade out** buttons
+- A target tap that stores without moving the fader, while the fader is up,
+  says so where the operator tapped, under the Target level segments. The box
+  owns the note and clears it on the next tap, fader move or state change; the
+  page has no timer for it. A tap while the fader is closed says nothing, since
+  storing is what the operator expects there (#153)
 - State colours (fault red, attention amber, healthy green, fading) are
   reserved and never mark a button category (#155)
 - Plain-language "why" line — what state the machine is in and what put it there
