@@ -35,16 +35,32 @@ class TestSnapshotFixtures(unittest.TestCase):
         # A fixture that changed on its own would fail CI at random.
         self.assertEqual(snapshots.generate(), self.generated)
 
+    def snapshots_only(self):
+        """The snapshots, not the move curves, which are not a snapshot."""
+        return {path: text for path, text in self.generated.items() if path.name.startswith(snapshots.PREFIX)}
+
+    def test_the_move_curves_fixture_is_generated(self):
+        self.assertIn(snapshots.CURVES_PATH, self.generated)
+
     def test_no_machine_path_leaks_into_a_fixture(self):
-        for path, text in self.generated.items():
+        for path, text in self.snapshots_only().items():
             with self.subTest(fixture=path.name):
                 self.assertEqual(json.loads(text)["log"]["path"], f"{snapshots.LOG_DIR}/game.jsonl")
 
     def test_each_state_is_the_state_it_is_named_for(self):
-        states = {path.name: json.loads(text) for path, text in self.generated.items()}
+        states = {path.name: json.loads(text) for path, text in self.snapshots_only().items()}
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")
         self.assertEqual(states["snapshot-open-recording.json"]["recording"]["liveness"], "live")
         self.assertEqual(states["snapshot-releasing.json"]["fader"]["target"], -32768)
+        releasing = states["snapshot-releasing.json"]["fader"]
+        self.assertEqual(releasing["move"]["by"], "out")
+        self.assertEqual(releasing["move"]["kind"], "fade")
+        self.assertTrue(releasing["moving"])
+        riding = states["snapshot-riding.json"]
+        self.assertEqual(riding["state"], "open")
+        self.assertEqual(riding["fader"]["move"]["kind"], "ride")
+        self.assertEqual(riding["fader"]["move"]["by"], "up-slow")
+        self.assertIsNotNone(riding["fader"]["move"]["knee"])
         prompt = states["snapshot-prompt.json"]
         self.assertEqual(prompt["state"], "open")
         self.assertEqual(prompt["prompt"], {"seq": 1, "kind": "stand-down", "source": "band-exits-stands"})
@@ -74,7 +90,7 @@ class TestSnapshotFixtures(unittest.TestCase):
         # #107: the boot fixture IS the cold-boot page and stays honest about
         # it; every state that got somewhere by arming was told the level -
         # unless, since #116, the delivery that would have told it failed.
-        states = {path.name: json.loads(text) for path, text in self.generated.items()}
+        states = {path.name: json.loads(text) for path, text in self.snapshots_only().items()}
         for name, snapshot in states.items():
             with self.subTest(fixture=name):
                 self.assertEqual(snapshot["fader"]["level_known"], name not in self.UNKNOWN_LEVEL)
@@ -84,7 +100,7 @@ class TestSnapshotFixtures(unittest.TestCase):
     def test_every_fixture_says_whether_it_is_asking_and_whether_it_is_on_duty(self):
         # #19: `prompt` is the question on the page, or null; `duty` is when the
         # box last armed or stood down on its own monotonic clock, or null.
-        for path, text in self.generated.items():
+        for path, text in self.snapshots_only().items():
             snapshot = json.loads(text)
             with self.subTest(fixture=path.name):
                 self.assertIn("prompt", snapshot)
@@ -92,6 +108,19 @@ class TestSnapshotFixtures(unittest.TestCase):
                 self.assertEqual(snapshot["duty"]["armed"], snapshot["state"] != "standing-down")
                 asking = path.name in {"snapshot-prompt.json", "snapshot-prompt-arm.json"}
                 self.assertEqual(snapshot["prompt"] is not None, asking)
+
+    #: The fixtures with a move in flight; every other one has nothing moving.
+    MOVING = frozenset({"snapshot-releasing.json", "snapshot-riding.json"})
+
+    def test_every_fixture_says_whether_a_move_is_in_flight(self):
+        # #154: `fader.move` is the description the page animates from, and
+        # `moving` is derived from it, so the two never disagree.
+        for path, text in self.snapshots_only().items():
+            fader = json.loads(text)["fader"]
+            with self.subTest(fixture=path.name):
+                self.assertIn("move", fader)
+                self.assertEqual(fader["move"] is not None, path.name in self.MOVING)
+                self.assertEqual(fader["moving"], fader["move"] is not None)
 
     def test_the_page_tests_load_the_fixtures_rather_than_a_copy(self):
         source = PAGE_TESTS.read_text(encoding="utf-8")

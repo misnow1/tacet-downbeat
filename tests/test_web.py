@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any, ClassVar
 from unittest import mock
 
 from aiohttp import WSMsgType
@@ -27,6 +28,11 @@ class FakeSender:
 
 
 class WebTestCase(AioHTTPTestCase):
+    #: The console's ramp rate and the app's fade length. Class attributes so a
+    #: subclass can run the same test at another step count (#154).
+    TICK_HZ = 200.0
+    FADE_SECONDS = 0.05
+
     async def get_application(self):
         return web.create_app(self.build_app())
 
@@ -39,10 +45,10 @@ class WebTestCase(AioHTTPTestCase):
         self.log.open()
         self.addCleanup(self.log.close)
         self.tacet = tacet_app.App(
-            console=dm7.Dm7Client("192.0.2.1", dca=3, sender=self.console_sender, tick_hz=200.0),
+            console=dm7.Dm7Client("192.0.2.1", dca=3, sender=self.console_sender, tick_hz=self.TICK_HZ),
             log=self.log,
             recorder=reaper.ReaperClient(sender=FakeSender(), monotonic=monotonic),
-            fade_seconds=0.05,
+            fade_seconds=self.FADE_SECONDS,
             monotonic=monotonic,
         )
         return self.tacet
@@ -936,6 +942,129 @@ class TestWebSocket(WebTestCase):
             self.assertEqual(payload["state"], "idle")
 
 
+#: Page messages a whole fade costs, whatever its step count (#154): the move
+#: described; the move landed (still releasing); FADE_COMPLETE (idle).
+FADE_PAGE_MESSAGES = 3
+
+#: The longest a test waits for the next frame before giving up on a fade.
+WAIT_FOR_A_FRAME = 5.0
+
+#: How many ramp packets each page message must be worth, at the fine rate.
+PACKETS_PER_MESSAGE_AT_LEAST = 10
+
+
+class TestAFadeIsDescribedOnce(WebTestCase):
+    FADE_SECONDS = 0.2
+
+    async def snapshots_until_quiet(self, socket):
+        """Snapshots on the socket, keepalives and pongs skipped: up to the one
+        that says idle, then whatever follows within two fade lengths, which
+        proves nothing does."""
+        seen: list[dict] = []
+        idle = False
+        while True:
+            timeout = 2 * self.FADE_SECONDS if idle else WAIT_FOR_A_FRAME
+            try:
+                message = await socket.receive(timeout=timeout)
+            except TimeoutError:
+                return seen
+            payload = json.loads(message.data)
+            if "keepalive" in payload or "pong" in payload:
+                continue
+            seen.append(payload)
+            idle = idle or payload["state"] == "idle"
+
+    async def run_a_fade(self):
+        """Run one full fade and return how many ramp packets it sent."""
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        await self.client.post("/api/trigger")
+        async with self.client.ws_connect("/ws?buttons=once") as socket:
+            await socket.receive()  # the opening keepalive
+            await socket.receive()  # the initial snapshot
+            before = len(self.console_sender.packets)
+            await self.client.post("/api/annotate", json={"key": "out"})
+            seen = await self.snapshots_until_quiet(socket)
+        packets = len(self.console_sender.packets) - before
+        self.assertEqual(len(seen), FADE_PAGE_MESSAGES, [(p["state"], p["fader"]["move"]) for p in seen])
+        described, landed, complete = seen
+        self.assertEqual(described["fader"]["move"]["by"], "out")
+        self.assertIsNone(landed["fader"]["move"])
+        self.assertEqual(landed["fader"]["commanded"], dm7.MINUS_INF)
+        self.assertEqual(landed["state"], "releasing")
+        self.assertEqual(complete["state"], "idle")
+        return packets
+
+    async def test_a_full_fade_sends_a_bounded_number_of_page_messages_whatever_its_step_count(self):
+        await self.run_a_fade()
+
+
+class TestAFadeIsDescribedOnceAtFiftyHertz(TestAFadeIsDescribedOnce):
+    TICK_HZ = 50.0
+
+
+class TestAFadeIsDescribedOnceAtAThousandHertz(TestAFadeIsDescribedOnce):
+    TICK_HZ = 1000.0
+
+    async def test_a_full_fade_sends_a_bounded_number_of_page_messages_whatever_its_step_count(self):
+        packets = await self.run_a_fade()
+        self.assertGreater(packets, FADE_PAGE_MESSAGES * PACKETS_PER_MESSAGE_AT_LEAST)
+
+
+class TestButtonsGoOncePerSocket(WebTestCase):
+    async def test_the_first_snapshot_on_a_socket_carries_the_buttons(self):
+        for query in ("/ws", "/ws?buttons=once"):
+            with self.subTest(query=query):
+                async with self.client.ws_connect(query) as socket:
+                    await socket.receive()  # the opening keepalive
+                    payload = json.loads((await socket.receive()).data)
+                    self.assertTrue(payload["buttons"])
+
+    async def test_a_push_to_a_socket_that_asked_does_not_resend_them(self):
+        await self.client.post("/api/close-now")
+        async with self.client.ws_connect("/ws?buttons=once") as socket:
+            await socket.receive()
+            await socket.receive()
+            await self.client.post("/api/arm")
+            payload = json.loads((await socket.receive()).data)
+            self.assertNotIn("buttons", payload)
+            self.assertEqual(payload["state"], "idle")
+
+    async def test_a_socket_that_did_not_ask_still_gets_them_every_time(self):
+        await self.client.post("/api/close-now")
+        async with self.client.ws_connect("/ws") as socket:
+            await socket.receive()
+            await socket.receive()
+            await self.client.post("/api/close-now")
+            await self.client.post("/api/arm")
+            payload = json.loads((await socket.receive()).data)
+            self.assertTrue(payload["buttons"])
+
+    async def test_the_state_route_and_post_responses_still_carry_them(self):
+        state_body = await (await self.client.get("/api/state")).json()
+        self.assertTrue(state_body["buttons"])
+        post_body = await (await self.client.post("/api/arm")).json()
+        self.assertTrue(post_body["buttons"])
+
+
+class TestPushBody(unittest.TestCase):
+    SNAPSHOT: ClassVar[dict[str, Any]] = {"state": "idle", "buttons": [{"key": "out"}]}
+
+    def test_buttons_already_sent_are_left_out(self):
+        self.assertEqual(web.push_body(self.SNAPSHOT, [{"key": "out"}]), {"state": "idle"})
+
+    def test_changed_buttons_are_sent(self):
+        self.assertIs(web.push_body(self.SNAPSHOT, [{"key": "other"}]), self.SNAPSHOT)
+
+    def test_nothing_sent_yet_sends_them(self):
+        self.assertIs(web.push_body(self.SNAPSHOT, None), self.SNAPSHOT)
+
+    def test_it_never_mutates_the_snapshot(self):
+        snapshot = {"state": "idle", "buttons": [{"key": "out"}]}
+        web.push_body(snapshot, [{"key": "out"}])
+        self.assertEqual(snapshot, self.SNAPSHOT)
+
+
 class TestKeepalive(WebTestCase):
     """An open socket proves nothing. Stadium wifi half-opens - delivery stops,
     `onclose` never fires, and the page goes on showing a snapshot from six
@@ -1455,8 +1584,21 @@ class TestCategoryTones(unittest.TestCase):
     def test_faded_out_no_longer_borrows_the_attention_colour(self):
         self.assertIn("var(--tone-out)", self.rule('button[data-action="release"]'))
 
-    def test_the_fading_colour_is_reserved(self):
+    def test_the_fading_colour_is_defined(self):
         self.assertIn("--state-fading", self.root())
+
+    def test_the_fading_rule_is_a_state_rule(self):
+        # The tag and the button that started a move (#154): a state, so no
+        # category selector may carry it and no category rule may borrow it.
+        for selector in ("#fader-column button.fading", ".tag.fading"):
+            with self.subTest(selector=selector):
+                self.assertIn("var(--state-fading)", self.rule(selector))
+                self.assertNotIn("data-tone", selector)
+                self.assertNotIn("data-action", selector)
+
+    def test_the_fading_colour_is_now_used(self):
+        used = [sel for sel, body in self.rules if sel != ":root" and "var(--state-fading)" in body]
+        self.assertTrue(used)
 
     def test_the_direction_arrow_rides_on_the_label(self):
         selectors = [sel for sel, _ in self.rules]
