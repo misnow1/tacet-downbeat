@@ -21,11 +21,11 @@ import contextlib
 import contextvars
 import math
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterator, Mapping
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, prompts, state, taps, targets
+from . import dm7, moves, prompts, state, taps, targets
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, record_refusal
 
@@ -39,14 +39,6 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
     # score-reversed reuses this: the same 2 s fade as "out", one tap (#6).
     ann.Action.RELEASE: state.Command.RELEASE,
 }
-
-#: How often the page is told where a fade has reached.
-#:
-#: The ramp ticks at 50 Hz, so pushing every step would be a hundred frames
-#: across a link that is stadium wifi. Ten a second reads as movement and is an
-#: order of magnitude less traffic; the exact number on the way down is not what
-#: anyone is reading, only that it is going.
-MOVE_PUSH_SECONDS = 0.1
 
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
@@ -203,7 +195,7 @@ class App:
         self._ready_ride_seconds = ready_ride_seconds
         self._targets = target_levels
         #: The standing target, in console units: where every open goes and what
-        #: READY's hold level is measured from (#9). Not `_move_target`, which is
+        #: READY's hold level is measured from (#9). Not `_move`, which is
         #: where a move already in flight is heading - the two differ for as long
         #: as a ride that started before a change is still running. Lives here
         #: rather than in `state.Machine`, which knows no console units. Starts
@@ -235,11 +227,14 @@ class App:
         self._duty_since: float | None = None
 
         self._move_task: asyncio.Task[None] | None = None
-        #: Where the move in flight is heading, or None when nothing is
-        #: moving. Set when the tap lands rather than read back from the
-        #: ramp, so the first frame the page gets already carries it.
-        self._move_target: int | None = None
-        self._move_push: asyncio.Task[None] | None = None
+        #: The move in flight, described once for the page to animate (#154),
+        #: or None when nothing is moving. Set when the tap lands rather than
+        #: read back from the ramp, so the first snapshot the page gets already
+        #: carries it.
+        self._move: moves.MoveDescription | None = None
+        #: The last seq a move took, so the page can tell a replacement from
+        #: the move it is already drawing.
+        self._move_seq = 0
         self._last_refusal: str | None = None
         #: Whether `_last_refusal` came from the record button. That refusal is
         #: derived from Reaper's state, so it has to clear itself when the
@@ -503,13 +498,13 @@ class App:
                     # would hold the annotation - and the playhead stamped on
                     # it - back by the whole length of the ramp, timestamping
                     # the tap where the ramp ended rather than where it began.
-                    self._start_ride_in(self._target, ride_seconds)
+                    self._start_ride_in(self._target, ride_seconds, by=detail)
             elif command is state.FaderCommand.READY:
                 # Always a ride - there is no fast form of READY (#6) - and
                 # never held back for the same reason as the ride-in above.
                 self._cancel_move()
                 seconds = ride_seconds if ride_seconds is not None else self._ready_ride_seconds
-                self._start_ride_in(self._hold_level(), seconds)
+                self._start_ride_in(self._hold_level(), seconds, by=detail)
             elif command is state.FaderCommand.REPORT_READY:
                 # Belief only - never a packet. The operator says the fader is
                 # already at the hold level, and READY has no fast form to
@@ -526,7 +521,7 @@ class App:
                 self._cancel_move()
                 self._console.send_level(dm7.MINUS_INF)
             else:
-                self._start_fade()
+                self._start_fade(by=detail)
         except TransportError:
             failed = True
         # A fade is asynchronous, so `level` is where the fader was when the
@@ -604,26 +599,72 @@ class App:
 
     # -- the fade ---------------------------------------------------------
 
-    def _start_fade(self) -> None:
-        self._cancel_move()
-        # After the cancel, which is what clears the last destination.
-        self._move_target = dm7.MINUS_INF
-        self._move_task = asyncio.ensure_future(self._run_fade())
-        self._move_push = asyncio.ensure_future(self._push_while_moving())
+    def _start_move(
+        self,
+        kind: moves.MoveKind,
+        end: int,
+        seconds: float,
+        *,
+        by: str,
+        taper: dm7.Taper | None,
+        run: Coroutine[Any, Any, None],
+    ) -> None:
+        """Describe the move and start it, after any cancel: the cancel is what
+        clears the last description.
 
-    def _start_ride_in(self, level: int, seconds: float) -> None:
+        One place both moves go through, so a new kind of move adds a call and
+        not a mechanism (#154). The page animates from the description and
+        nothing is pushed per ramp step.
+
+        `taper` and the floor must be the ones the console will use:
+        `Dm7Client.ride_in` ramps on `RIDE_IN_TAPER` and `fade_out` on none. If
+        either changes there, change it here, or the page draws a curve the
+        console does not follow.
+        """
+        self._move_seq += 1
+        self._move = moves.MoveDescription(
+            seq=self._move_seq,
+            kind=kind,
+            by=by or None,
+            start=self._console.commanded_level,
+            end=end,
+            seconds=seconds,
+            started_at=self._monotonic(),
+            floor=self._console.fade_floor,
+            taper=taper,
+        )
+        self._move_task = asyncio.ensure_future(run)
+
+    def _start_fade(self, *, by: str) -> None:
+        self._cancel_move()
+        self._start_move(
+            moves.MoveKind.FADE,
+            dm7.MINUS_INF,
+            self._fade_seconds,
+            by=by,
+            taper=None,
+            run=self._run_fade(),
+        )
+
+    def _start_ride_in(self, level: int, seconds: float, *, by: str) -> None:
         """Ride the fader up to `level` over `seconds` instead of snapping it.
 
         Shared by the ordinary open's ride-in (`up-slow`) and READY's ride to
         the hold level (#6) - both are the same gesture to a different place.
+        Callers cancel any move in flight first.
 
         Runs as a task for the same reason the fade does: the operator has
         already tapped, and everything after the tap - the log entry, its
         playhead, the page - must not wait for the ramp to finish.
         """
-        self._move_target = level
-        self._move_task = asyncio.ensure_future(self._run_ride_in(level, seconds))
-        self._move_push = asyncio.ensure_future(self._push_while_moving())
+        self._start_move(
+            moves.MoveKind.RIDE,
+            level,
+            seconds,
+            by=by,
+            taper=dm7.RIDE_IN_TAPER,
+            run=self._run_ride_in(level, seconds),
+        )
 
     async def _run_ride_in(self, level: int, seconds: float) -> None:
         this = asyncio.current_task()
@@ -646,48 +687,25 @@ class App:
             self._settle(this)
 
     def _settle(self, move: asyncio.Task[Any] | None) -> None:
-        """However a move ended, stop sweeping and push the settled value once -
+        """However a move ended, drop its description and tell the page once -
         if it is still the current move.
 
-        Cancelling a move only asks. The cancelled task wakes a loop iteration
-        later, after its replacement has started, and by then the push and the
-        target belong to the replacement: clearing them stopped a ride-in's
-        updates and blanked a close's destination (#34).
+        That snapshot, without `fader.move` and with the live console values,
+        is the page's "move landed" message (#154). Cancelling a move only
+        asks. The cancelled task wakes a loop iteration later, after its
+        replacement has started, and by then the description belongs to the
+        replacement: clearing it blanked a close's destination (#34).
         """
         if self._move_task is not move:
             return
-        self._stop_move_push()
-        self._move_target = None
+        self._move = None
         self._notify()
 
     def _cancel_move(self) -> None:
         if self._move_task is not None and not self._move_task.done():
             self._move_task.cancel()
         self._move_task = None
-        self._move_target = None
-        self._stop_move_push()
-
-    def _stop_move_push(self) -> None:
-        if self._move_push is not None and not self._move_push.done():
-            self._move_push.cancel()
-        self._move_push = None
-
-    async def _push_while_moving(self) -> None:
-        """Send the sweeping level to the page while the close runs.
-
-        The console client already moves `commanded_level` as it sends each ramp
-        step, but nothing was telling the page, so it held the pre-fade number
-        for the whole two seconds and then jumped to -inf. That number is the
-        one the operator reads against the console, and a close is exactly when
-        they are looking at it.
-
-        Never the only thing that stops: the move's own task cancels this as it
-        settles and `_cancel_move` cancels it when a newer move takes over, so it
-        cannot outlive the move it is describing.
-        """
-        while True:
-            await asyncio.sleep(MOVE_PUSH_SECONDS)
-            self._notify()
+        self._move = None
 
     async def _run_fade(self) -> None:
         this = asyncio.current_task()
@@ -1044,10 +1062,7 @@ class App:
         refusal = self._last_refusal
         if self._refused_recording and self.record_refusal is None:
             refusal = None
-        # Straight from the console client, so a ride-in points at where it is
-        # going exactly as a close does. A settled fader has nothing to point
-        # at: the commanded level already *is* the expectation.
-        target = self._move_target
+        move = self._move
         return {
             # When this was taken, on the box's clock. The page keeps the newest
             # it has seen: a POST response held up on the wifi used to paint an
@@ -1085,8 +1100,13 @@ class App:
                 "presets_db": list(self._targets.db_values()),
             },
             "fader": {
-                "commanded": self._console.commanded_level,
-                "db": _finite(self._console.commanded_db),
+                # Held still for the life of a move: where it started, not the
+                # last ramp step, so the snapshot cannot change with every step
+                # (#154; the same reasoning as #147). `move` says the rest, and
+                # the snapshot that ends it restores the live console values -
+                # that one is the page's "move landed" message.
+                "commanded": move.start if move else self._console.commanded_level,
+                "db": _finite(dm7.to_db(move.start)) if move else _finite(self._console.commanded_db),
                 # Always false. The protocol is write-only; see the module docstring.
                 "confirmed": False,
                 # False at cold boot and after a hand-off (#107, #12):
@@ -1103,16 +1123,23 @@ class App:
                 # differs in every one taken, which defeated the playhead
                 # coalescing and sent ~11 full snapshots a second (#147). The
                 # page counts the age itself.
-                "sent_at": self._console.last_sent_at,
+                "sent_at": move.started_at if move else self._console.last_sent_at,
                 "healthy": self._console.healthy,
                 "error": self._console.last_error,
                 # Where a move in flight is heading, or None when nothing is
                 # moving. Still expectation, not confirmation: it is where the
                 # box intends to put the fader, which is the most the write-only
-                # protocol can ever support.
-                "target": target,
-                "target_db": None if target is None else _finite(dm7.to_db(target)),
-                "moving": self._console.is_ramping,
+                # protocol can ever support. Not the standing target (#135).
+                "target": None if move is None else move.end,
+                "target_db": None if move is None else _finite(dm7.to_db(move.end)),
+                # From the description, not `console.is_ramping`: that reads
+                # false in the first snapshot of a move and would flip once the
+                # ramp task started, churning the snapshot.
+                "moving": move is not None,
+                # The move in flight, described once for the page to animate
+                # (#154), or None. The page ends its in-flight state only when
+                # a snapshot arrives without it, never on its own timer.
+                "move": None if move is None else move.as_data(),
             },
             "recording": {
                 "known": believed and transport is not None and transport.recording is not None,

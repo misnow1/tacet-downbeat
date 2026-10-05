@@ -243,17 +243,25 @@ inventing a time - the boot time, say - would be exactly the confident-but-
 wrong number CLAUDE.md's fail-visible principle forbids.
 
 **The fader line is what the box expects, never what the console reports.** It
-is tagged **commanded** for that reason and the tag never changes: the DM7's OSC
-is write-only, so nothing here is ever a readback, and an iPad move made in
-StageMix will not appear. During a close the line reads
+is tagged **commanded** for that reason: the DM7's OSC is write-only, so
+nothing here is ever a readback, and an iPad move made in StageMix will not
+appear. During a close the line reads
 
 ```
 -3.00 dB → -∞ dB
 ```
 
 — the left figure sweeping as the ramp goes out, the right one where it is
-headed. `Up slow` does the same thing upward, `-∞ dB → 0.00 dB`. When the fader
-is settled there is no arrow, because there is nowhere else to be. To check the
+headed. The box describes the move once (`fader.move` in the snapshot: from, to,
+duration, when it started, and the curve) and the page animates it, so a fade
+costs the page three messages however many steps the ramp takes. While a move is
+in flight the tag is **fading** (**riding** for `Up slow` and Ready), not
+**commanded**, and the button that started it is painted magenta. That clears
+when the box says the move has landed, never on the page's own timer: a page
+that has not heard reads `→ -∞ dB - 3s late` and stays magenta. `Up slow` does
+the same thing upward, `-∞ dB → 0.00 dB`. When the fader is settled there is no
+arrow, because there is nowhere else to be. A page left open across a box
+upgrade should be reloaded. To check the
 expectation against reality, look at the DCA in StageMix; that comparison is the
 only thing that can catch a wrong DCA number or a console that is not listening.
 

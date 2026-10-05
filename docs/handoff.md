@@ -271,6 +271,9 @@ Worth checking:
   unknown to confirmed. That also double-checks the address map from step 1.
 - Span buttons (timeouts, halftime exodus) should highlight while open and
   clear when tapped again.
+- **A fade (#154).** On the iPad, tap Faded out: the level sweeps smoothly, the
+  tag reads `fading` and the button turns magenta, then both clear when the
+  fade lands.
 - **MAIN's colours and icons (#155).** On the press-box iPad, in sun and at
   night, check that the hues and icons are legible, that Faded out reads blue
   rather than amber, that the column labels sit on one line at 723px, and
