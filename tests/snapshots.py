@@ -19,6 +19,7 @@ in real time, and the temporary log directory is written as `LOG_DIR`.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import sys
 from collections.abc import Awaitable, Callable
@@ -28,7 +29,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tacet import annotations as ann
-from tacet import dm7, moves, osc, reaper
+from tacet import dm7, moves, osc, provenance, reaper
 from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
@@ -56,6 +57,23 @@ POSITION = 754.5
 SILENCE = reaper.DEFAULT_FEEDBACK_TIMEOUT * 30
 
 
+#: What every fixture box says it runs (#157): a clean checkout. Fixed, so a
+#: fixture never depends on the checkout that generated it.
+CLEAN = provenance.Provenance(
+    source=provenance.Source.CHECKOUT,
+    commit="0123456789abcdef0123456789abcdef01234567",
+    branch="main",
+    detached=False,
+    dirty=False,
+    untracked=0,
+    worktree=False,
+    path="/checkout",
+    error=None,
+)
+#: The faults page also runs a fix on the day: uncommitted changes, from a worktree.
+DIRTY = dataclasses.replace(CLEAN, branch="157-fix", dirty=True, worktree=True)
+
+
 class _Sender:
     def send(self, packet: bytes) -> None:
         pass
@@ -77,7 +95,13 @@ class Box:
         self.app.handle_recorder_packet(osc.encode_message(address, value))
 
 
-def _build(root: Path, *, console: _Sender | _Unreachable, machine: Machine | None = None) -> Box:
+def _build(
+    root: Path,
+    *,
+    console: _Sender | _Unreachable,
+    machine: Machine | None = None,
+    code: provenance.Provenance = CLEAN,
+) -> Box:
     clock = [CLOCK_START]
 
     async def tick(seconds: float) -> None:
@@ -96,6 +120,7 @@ def _build(root: Path, *, console: _Sender | _Unreachable, machine: Machine | No
         recorder=reaper.ReaperClient(sender=_Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],
         machine=machine,
+        provenance=code,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
@@ -193,7 +218,7 @@ async def faults(root: Path) -> dict[str, Any]:
     The snap open's send never left the box, and it was absolute, so the
     level goes back to unknown (#116): this fixture's fader reads unknown too,
     for real, not just at cold boot."""
-    box = _build(root, console=_Unreachable(), machine=_known())
+    box = _build(root, console=_Unreachable(), machine=_known(), code=DIRTY)
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE
