@@ -137,12 +137,37 @@ def should_broadcast(
     return elapsed >= interval
 
 
+#: The snapshot key that carries the button vocabulary (#51). About 3 KB of a
+#: ~3.9 KB snapshot, and static for the life of a box, so a page that asks for
+#: it once is not sent it again.
+BUTTONS_KEY = "buttons"
+
+#: The query a page adds to `/ws` to say it keeps the buttons it was given and
+#: wants pushes without them. A page that does not ask, such as an old one held
+#: open across a box upgrade, keeps getting full snapshots.
+BUTTONS_ONCE_PARAM = "buttons"
+BUTTONS_ONCE_VALUE = "once"
+
+
+def push_body(snapshot: Mapping[str, Any], sent_buttons: Any) -> Mapping[str, Any]:
+    """The snapshot without its `buttons` when the socket already has them.
+
+    Pure, and never mutates `snapshot`: the same one is also kept as the last
+    sent and compared against the next.
+    """
+    if sent_buttons is not None and snapshot.get(BUTTONS_KEY) == sent_buttons:
+        return {key: value for key, value in snapshot.items() if key != BUTTONS_KEY}
+    return snapshot
+
+
 class _Hub:
     """Holds the app and the connected browsers, and pushes snapshots at them."""
 
     def __init__(self, app: App, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self.app = app
         self.sockets: list[web.WebSocketResponse] = []
+        #: For each socket that asked for lean pushes, the buttons it last got.
+        self.lean: dict[web.WebSocketResponse, Any] = {}
         self._pending: set[asyncio.Task[None]] = set()
         self._monotonic = monotonic
         self._last: dict[str, Any] | None = None
@@ -161,10 +186,20 @@ class _Hub:
             return
         self._last = snapshot
         self._last_sent = now
-        payload = json.dumps(snapshot)
+        full = json.dumps(snapshot)
+        lean: dict[str, str] = {}
         for socket in list(self.sockets):
             if socket.closed:
                 continue
+            payload = full
+            if socket in self.lean:
+                body = push_body(snapshot, self.lean[socket])
+                if body is not snapshot:
+                    payload = lean.setdefault("body", json.dumps(body))
+                else:
+                    # Recorded when the body is chosen, not when the send
+                    # completes: sends to one socket stay in order.
+                    self.lean[socket] = snapshot.get(BUTTONS_KEY)
             task = loop.create_task(_send(socket, payload))
             self._pending.add(task)
             task.add_done_callback(self._pending.discard)
@@ -395,13 +430,19 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
     await socket.prepare(request)
     hub = request.app[_HUB]
     hub.sockets.append(socket)
+    initial = hub.app.snapshot()
     # The keepalive goes first, so the page learns how long to wait before
     # distrusting a silence on the same round trip as its first snapshot. Until
     # it has been told, it reports itself as connecting rather than connected.
     keeper = asyncio.ensure_future(_keepalive(socket, interval=request.app[_KEEPALIVE]))
     try:
         await socket.send_str(KEEPALIVE_FRAME)
-        await socket.send_str(json.dumps(hub.app.snapshot()))
+        await socket.send_str(json.dumps(initial))
+        if request.query.get(BUTTONS_ONCE_PARAM) == BUTTONS_ONCE_VALUE:
+            # Only once the full snapshot is sent: a push that overtook it
+            # without the buttons would leave the page with none. Pushes before
+            # this go out full, which is harmless.
+            hub.lean[socket] = initial.get(BUTTONS_KEY)
         async for message in socket:
             if message.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                 break
@@ -415,6 +456,7 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
         keeper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await keeper
+        hub.lean.pop(socket, None)
         if socket in hub.sockets:
             hub.sockets.remove(socket)
     return socket
@@ -520,8 +562,8 @@ PAGE = """<!doctype html>
    arrows below). */
 /* STATE colours (--warn, --attention*, --ok, --state-fading and the tints
    #ffb4a9 #ff9d94 #ffca7a #9fd8a2) are reserved and never mark a button
-   category (#155). --state-fading is #154's, reserved here and unused until
-   then. */
+   category (#155). --state-fading is used now, by #154, for a move in
+   flight: the tag and the button that started it. */
 :root{--bg:#14161a;--panel:#1e2128;--line:#2c313b;--text:#e8eaed;--dim:#9aa3b0;
 --open:#4caf50;--attention:#ffb300;--attention-text:#1a1400;--warn:#c62828;--ok:#2e7d32;
 --tone-out:#4c9aff;--tone-score:#7c5cff;--tone-score-text:#ffffff;--tone-timeout:#7d93ad;--tone-timeout-bg:rgba(125,147,173,.14);--state-fading:#e040a0}
@@ -650,6 +692,7 @@ border:1px solid var(--line);color:var(--dim);margin-left:6px;vertical-align:mid
 .tag.commanded{border-color:var(--attention);color:#ffca7a}
 .tag.confirmed{border-color:var(--ok);color:#9fd8a2}
 .tag.unknown{border-color:var(--warn);color:#ff9d94}
+.tag.fading{background:var(--state-fading);border-color:var(--state-fading);color:#fff}
 h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;
 margin:4px 0 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
@@ -764,6 +807,10 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="up-ready"]{height:80px}
 #fader-column button[data-key="score-reversed"]{height:72px}
 #fader-column button[data-key="out"]{height:136px}
+/* A move in flight (#154): the button that started it, until the box says the
+   move has landed. An id selector so it outranks button[data-action=...] and
+   stays out of the category rules. White on #e040a0 is about 4.8:1. */
+#fader-column button.fading{background:var(--state-fading);border-color:var(--state-fading);color:#fff}
 /* The readout gap: exactly 96px of room, never more asked for. The column is 592
    of buttons + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
    iPad (#107 put the belief row in here without changing that). Since #140 a
@@ -802,7 +849,8 @@ border-left:1px solid var(--line);background:var(--bg)}
    inside the ellipsis: during a close it reads "-3.00 dB -> -inf dB", which at
    22px is ~181px against ~183px available and would start clipping the
    destination during the two seconds it exists for. At 18px there is ~35px of
-   headroom. Do not raise it back without redoing that sum. */
+   headroom. The longest text since #154, "-> -inf dB - 12s late", is no wider
+   than that fade line. Do not raise it back without redoing that sum. */
 #readout{flex:1 1 96px;min-height:96px;display:flex;flex-direction:column;
 justify-content:flex-start;overflow:hidden}
 #readout .value{display:flex;align-items:baseline;flex:none;font-size:18px;line-height:1.2}

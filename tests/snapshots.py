@@ -28,7 +28,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tacet import annotations as ann
-from tacet import dm7, osc, reaper
+from tacet import dm7, moves, osc, reaper
 from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
@@ -38,11 +38,17 @@ from tests.reaper_stream import METER
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PREFIX = "snapshot-"
 SUFFIX = ".json"
+#: The move curves the page's `moveDbAt` is held to (#154): a description, and
+#: the steps `dm7.ramp_steps` takes for it, so a drift on either side fails.
+CURVES_PATH = FIXTURES / "move-curves.json"
 #: Stands in for the temporary directory the log was written to, so a fixture
 #: does not change with the machine that generated it.
 LOG_DIR = "/games"
 #: Where the injected clock starts. Arbitrary; far from zero like a real one.
 CLOCK_START = 5000.0
+#: How long READY's ride takes in the curves fixture. Arbitrary, but not the
+#: slow open's length, so a mix-up between the two shows.
+READY_SECONDS = 4.0
 #: A playhead that renders as a recognisable timecode, 0:12:34.500, and that
 #: float32 - which OSC carries - holds exactly.
 POSITION = 754.5
@@ -136,11 +142,22 @@ async def parked_unreported(root: Path) -> dict[str, Any]:
 
 
 async def releasing(root: Path) -> dict[str, Any]:
-    """The push that follows FADE OUT, before the ramp has taken a step."""
+    """The push that follows FADE OUT, before the ramp has taken a step. Tapped
+    as `out`, so the move says which button started it (#154)."""
     box = _build(root, console=_Sender(), machine=_known())
     await box.app.arm()
     await box.app.trigger()
-    await box.app.release()
+    await box.app.annotate("out")
+    snapshot = box.app.snapshot()
+    box.app._cancel_move()
+    return snapshot
+
+
+async def riding(root: Path) -> dict[str, Any]:
+    """The push that follows Up slow, before the ride has taken a step (#154)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-slow")
     snapshot = box.app.snapshot()
     box.app._cancel_move()
     return snapshot
@@ -194,6 +211,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "open-recording": open_recording,
     "parked-unreported": parked_unreported,
     "releasing": releasing,
+    "riding": riding,
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,
     "faults": faults,
@@ -218,18 +236,72 @@ async def _generate() -> dict[Path, str]:
     return generated
 
 
+def _curve(
+    name: str, kind: moves.MoveKind, start: int, end: int, seconds: float, taper: dm7.Taper | None
+) -> dict[str, Any]:
+    """One named move and the steps the console would take for it."""
+    description = moves.MoveDescription(
+        seq=1,
+        kind=kind,
+        by=None,
+        start=start,
+        end=end,
+        seconds=seconds,
+        started_at=0.0,
+        floor=dm7.DEFAULT_FADE_FLOOR,
+        taper=taper,
+    )
+    steps = dm7.ramp_steps(start, end, seconds, fade_floor=dm7.DEFAULT_FADE_FLOOR, taper=taper)
+    return {
+        "name": name,
+        "move": description.as_data(),
+        "steps": [[offset, None if level == dm7.MINUS_INF else dm7.to_db(level)] for offset, level in steps],
+    }
+
+
+def _units(db: float) -> int:
+    return round(db * dm7.UNITS_PER_DB)
+
+
+def curves() -> list[dict[str, Any]]:
+    """The cases `moveDbAt` must reproduce: every shape and every edge."""
+    fade, ride = moves.MoveKind.FADE, moves.MoveKind.RIDE
+    taper = dm7.RIDE_IN_TAPER
+    return [
+        _curve("fade from unity", fade, dm7.UNITY, dm7.MINUS_INF, dm7.DEFAULT_FADE_SECONDS, None),
+        _curve("fade from -3 dB", fade, _units(-3.0), dm7.MINUS_INF, dm7.DEFAULT_FADE_SECONDS, None),
+        _curve("fade from below the floor", fade, _units(-70.0), dm7.MINUS_INF, dm7.DEFAULT_FADE_SECONDS, None),
+        _curve("up slow from -inf", ride, dm7.MINUS_INF, dm7.UNITY, dm7.DEFAULT_SLOW_OPEN_SECONDS, taper),
+        _curve("ready from -inf to -15 dB", ride, dm7.MINUS_INF, _units(-15.0), READY_SECONDS, taper),
+        _curve("ride from -10 dB to unity", ride, _units(-10.0), dm7.UNITY, dm7.DEFAULT_SLOW_OPEN_SECONDS, taper),
+        _curve("ready down from unity to -15 dB", ride, dm7.UNITY, _units(-15.0), READY_SECONDS, taper),
+        _curve("ride from -inf to below the floor", ride, dm7.MINUS_INF, _units(-70.0), READY_SECONDS, taper),
+    ]
+
+
+def _curves_text() -> str:
+    return json.dumps(curves(), indent=2, sort_keys=True) + "\n"
+
+
 def generate() -> dict[Path, str]:
     """Every fixture, as `App` would write it now."""
-    return asyncio.run(_generate())
+    generated = asyncio.run(_generate())
+    generated[CURVES_PATH] = _curves_text()
+    return generated
 
 
 def existing() -> set[Path]:
-    return set(FIXTURES.glob(f"{PREFIX}*{SUFFIX}"))
+    found = set(FIXTURES.glob(f"{PREFIX}*{SUFFIX}"))
+    if CURVES_PATH.exists():
+        found.add(CURVES_PATH)
+    return found
 
 
 def main() -> int:
     generated = generate()
     for path in existing() - set(generated):
+        if not path.name.startswith(PREFIX):
+            continue
         path.unlink()
         print(f"removed {path.name}")
     for path, text in generated.items():

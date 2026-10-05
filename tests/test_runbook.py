@@ -198,6 +198,24 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
                 self.assertIn(sentence, runbook)
         self.assertIn("Not yet", runbook)
 
+    def test_the_runbook_quotes_the_move_words(self) -> None:
+        # #154: the tags and the lateness word the page shows while a move is in
+        # flight, read out of app.js rather than typed twice.
+        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+        tags = re.search(r'const MOVE_TAGS = \{fade: "([^"]+)", ride: "([^"]+)"\};', script)
+        late = re.search(r'const MOVE_LATE_WORD = "([^"]+)";', script)
+        self.assertIsNotNone(tags, "app.js no longer defines MOVE_TAGS this way")
+        self.assertIsNotNone(late, "app.js no longer defines MOVE_LATE_WORD")
+        assert tags is not None and late is not None
+        runbook = (DOCS / "gameday.md").read_text(encoding="utf-8")
+        for word in (tags[1], tags[2]):
+            with self.subTest(word=word):
+                self.assertIn(f"`{word}`", runbook.replace("**", "`"))
+        # The lateness is quoted in the readout's own words: "... - 3s late".
+        phrase = f"s {late[1]}`"
+        self.assertIn(phrase, runbook)
+        self.assertIn(phrase, (DOCS / "troubleshooting.md").read_text(encoding="utf-8"))
+
     def test_the_runbook_and_troubleshooting_use_the_duty_chip_words(self) -> None:
         # #19: ARMED / STOOD DOWN, read out of dutyChip in app.js rather than
         # typed twice.

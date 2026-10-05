@@ -380,6 +380,14 @@ button to end it.
 with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
 answer, and a move made in StageMix will not appear on it.
 
+**During a fade the line sweeps** (`-30.00 dB → -∞ dB`), the tag reads
+**fading** (**riding** for Up slow and Ready) in magenta, and the button you
+tapped turns magenta until the box says the move has landed. The page draws the
+sweep itself from a description the box sent once. If the button stays magenta
+and the line reads `→ -∞ dB - 3s late`, the page has not heard from the box
+since: look at the link banner and at StageMix. The box finishes a fade without
+the page.
+
 **The target** is the level every open goes to. The chip in the strip always
 reads it (`target 0 dB`) and goes amber when it is not the default -
 `fader.default_target_db`, or the first preset when the site does not set

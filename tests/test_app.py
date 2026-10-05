@@ -112,6 +112,14 @@ SUPERSEDED_WAKES = 0.03
 #: finishes - and settles - at once.
 UNDER_WAY = 0.1
 
+#: Notifies a whole fade may cost the page (#154): the command, the
+#: annotation's own, the move landing and FADE_COMPLETE. Never one per step.
+FADE_NOTIFIES_MAX = 4
+
+#: Two ramp rates for the same fade: the page must not be able to tell.
+FADE_TICK_HZ_LOW = 50.0
+FADE_TICK_HZ_HIGH = 1000.0
+
 #: How long a test waits for the log's writer thread to report through a push.
 #: A healthy thread takes milliseconds; this only bounds a test that is broken.
 WRITER_REPORTS = 5.0
@@ -139,6 +147,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         stale_tap_seconds=taps.DEFAULT_STALE_TAP_SECONDS,
         steady=False,
         level_known=True,
+        tick_hz=200.0,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -162,7 +171,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             "192.0.2.1",
             dca=3,
             sender=console_sender or self.console_sender,
-            tick_hz=200.0,
+            tick_hz=tick_hz,
             **timing,
         )
         clock = monotonic if monotonic is not None else time.monotonic
@@ -1676,29 +1685,37 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
         self.assertFalse(app.snapshot()["fader"]["confirmed"])
         await app.wait_for_fade()
 
-    async def test_the_page_is_pushed_to_while_the_fade_runs(self):
-        # Without this the number holds its pre-fade value for the whole close
-        # and then jumps, which reads as a fader that never moved.
-        pushes = []
-        app = self.build(fade=0.4)
-        app.on_change(lambda: pushes.append(app.snapshot()["fader"]["db"]))
-        await app.arm()
-        await app.annotate("up-drums")
-        before = len(pushes)
-        await app.annotate("out")
-        await app.wait_for_fade()
-        self.assertGreater(len(pushes) - before, 2)
+    async def test_a_fade_notifies_a_bounded_number_of_times_whatever_its_step_count(self):
+        # #154: the page is told about a fade by description, not per ramp
+        # step, so a finer ramp costs the page nothing.
+        counts = {}
+        packets = {}
+        for tick_hz in (FADE_TICK_HZ_LOW, FADE_TICK_HZ_HIGH):
+            sender = FakeSender()
+            app = self.build(fade=0.2, tick_hz=tick_hz, console_sender=sender)
+            notifies: list[int] = []
+            await app.arm()
+            await app.annotate("up-drums")
+            app.on_change(lambda notifies=notifies: notifies.append(1))
+            sender_before = len(sender.packets)
+            await app.annotate("out")
+            await app.wait_for_fade()
+            counts[tick_hz] = len(notifies)
+            packets[tick_hz] = len(sender.packets) - sender_before
+        self.assertEqual(counts[FADE_TICK_HZ_LOW], counts[FADE_TICK_HZ_HIGH])
+        self.assertLessEqual(counts[FADE_TICK_HZ_HIGH], FADE_NOTIFIES_MAX)
+        self.assertGreater(packets[FADE_TICK_HZ_HIGH], 10 * counts[FADE_TICK_HZ_HIGH])
 
-    async def test_no_pusher_survives_a_finished_fade(self):
+    async def test_no_description_survives_a_finished_fade(self):
         app = self.build(fade=0.05)
         await app.arm()
         await app.annotate("up-drums")
         await app.annotate("out")
         await app.wait_for_fade()
         await asyncio.sleep(0)
-        self.assertIsNone(app._move_push)
+        self.assertIsNone(app._move)
 
-    async def test_snapping_back_to_open_stops_the_pusher(self):
+    async def test_snapping_back_to_open_clears_the_description(self):
         # A trigger during the close cancels the fade; nothing should still be
         # describing a move that is no longer happening.
         app = self.build(fade=5.0)
@@ -1706,7 +1723,7 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
         await app.annotate("up-drums")
         await app.annotate("out")
         await app.annotate("up-whistle")
-        self.assertIsNone(app._move_push)
+        self.assertIsNone(app._move)
         self.assertIsNone(app.snapshot()["fader"]["target"])
 
 
@@ -1727,7 +1744,7 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.arm()
         await app.annotate("up-drums")
         self.assertEqual(app._console.commanded_level, dm7.UNITY)
-        self.assertIsNone(app._move_target)
+        self.assertIsNone(app._move)
 
     async def test_up_slow_does_not_arrive_immediately(self):
         app = self.build()
@@ -1774,15 +1791,15 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.wait_for_fade()
         self.assertIsNone(app.snapshot()["fader"]["target"])
 
-    async def test_the_page_is_pushed_to_during_the_ride_in(self):
-        pushes = []
+    async def test_a_ride_in_notifies_a_bounded_number_of_times(self):
+        notifies = []
         app = self.build()
         app._slow_open_seconds = 0.4
         await app.arm()
-        app.on_change(lambda: pushes.append(app.snapshot()["fader"]["db"]))
+        app.on_change(lambda: notifies.append(1))
         await app.annotate("up-slow")
         await app.wait_for_fade()
-        self.assertGreater(len(pushes), 2)
+        self.assertLessEqual(len(notifies), FADE_NOTIFIES_MAX)
 
     async def test_the_annotation_is_not_held_back_by_the_ramp(self):
         # The whole reason the ride-in runs as a task. `annotate` moves the
@@ -2768,6 +2785,160 @@ class SwallowingConsole(dm7.Dm7Client):
             await super().fade_out(seconds)
 
 
+class TestAMoveIsDescribedOnce(AppTestCase):
+    """#154: a fade or ride is described in `fader.move` when it starts and the
+    fader block holds still until it ends, so nothing is pushed per ramp step."""
+
+    async def test_a_fade_is_described_from_where_it_starts(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.annotate("up-drums")
+        started = app._monotonic()
+        await app.annotate("out")
+        fader = app.snapshot()["fader"]
+        move = fader["move"]
+        self.assertEqual(move["from_db"], 0.0)
+        self.assertIsNone(move["to_db"])
+        self.assertEqual(move["seconds"], 5.0)
+        self.assertGreaterEqual(move["started_at"], started)
+        self.assertEqual(move["by"], "out")
+        self.assertEqual(move["kind"], "fade")
+        self.assertEqual(move["seq"], 1)
+        self.assertTrue(fader["moving"])
+        self.assertEqual(fader["target"], dm7.MINUS_INF)
+        app._cancel_move()
+
+    async def test_up_slow_and_ready_are_described_as_rides_on_the_taper(self):
+        app = self.build()
+        app._slow_open_seconds = 1.5
+        app._ready_ride_seconds = 4.0
+        await app.arm()
+        await app.annotate("up-slow")
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "ride")
+        self.assertEqual(move["knee"], {"db": -20.0, "fraction": 0.15})
+        self.assertEqual(move["to_db"], 0.0)
+        self.assertEqual(move["seconds"], 1.5)
+        self.assertEqual(move["by"], "up-slow")
+        app._cancel_move()
+
+        app = self.build()
+        app._ready_ride_seconds = 4.0
+        await app.arm()
+        await app.annotate("up-ready")
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "ride")
+        self.assertIsNotNone(move["knee"])
+        self.assertEqual(move["to_db"], dm7.to_db(app._hold_level()))
+        self.assertEqual(move["seconds"], 4.0)
+        app._cancel_move()
+
+    async def test_a_snap_open_and_close_now_are_not_described(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-drums")
+        self.assertIsNone(app.snapshot()["fader"]["move"])
+        await app.close_now()
+        self.assertIsNone(app.snapshot()["fader"]["move"])
+
+    async def test_the_description_goes_when_the_move_lands(self):
+        app = self.build(fade=0.05)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        await app.wait_for_fade()
+        fader = app.snapshot()["fader"]
+        self.assertIsNone(fader["move"])
+        self.assertFalse(fader["moving"])
+        self.assertEqual(fader["commanded"], dm7.MINUS_INF)
+        self.assertEqual(fader["sent_at"], self.console.last_sent_at)
+
+    async def test_a_snap_back_mid_fade_clears_the_description(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        await app.annotate("up-whistle")
+        fader = app.snapshot()["fader"]
+        self.assertIsNone(fader["move"])
+        self.assertEqual(fader["commanded"], dm7.UNITY)
+
+    async def test_each_move_gets_a_new_seq(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        first = app.snapshot()["fader"]["move"]["seq"]
+        await app.annotate("up-whistle")
+        await app.annotate("out")
+        second = app.snapshot()["fader"]["move"]["seq"]
+        self.assertEqual((first, second), (1, 2))
+        app._cancel_move()
+
+    async def test_a_bare_release_names_no_button(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "fade")
+        self.assertIsNone(move["by"])
+        app._cancel_move()
+
+    async def test_a_failed_move_clears_the_description_and_shows_the_fault(self):
+        sender = FlakySender()
+        app = self.build(console_sender=sender, steady=True)
+        await app.arm()
+        await app.annotate("up-drums")
+        sender.fail_after = len(sender.packets) + 2
+        await app.annotate("out")
+        await app.wait_for_fade()
+        fader = app.snapshot()["fader"]
+        self.assertIsNone(fader["move"])
+        self.assertFalse(fader["healthy"])
+
+    async def test_the_snapshot_does_not_change_while_a_move_runs(self):
+        # The console and the app share one clock that is never late, so every
+        # ramp step is sent however slowly the runner goes.
+        clock = LoopClock()
+        self.log = ann.AnnotationLog(self.root / "game.jsonl")
+        self.log.open()
+        self.addCleanup(self.log.close)
+        console = dm7.Dm7Client(
+            "192.0.2.1", dca=3, sender=self.console_sender, monotonic=clock.monotonic, sleep=clock.sleep
+        )
+        app = tacet_app.App(
+            console=console,
+            log=self.log,
+            recorder=None,
+            fade_seconds=1.0,
+            monotonic=clock.monotonic,
+            machine=state.Machine(level_known=True),
+        )
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        sent_before = len(self.console_sender.packets)
+        seen = []
+        while app.snapshot()["fader"]["move"] is not None:
+            snapshot = app.snapshot()
+            del snapshot["at"]
+            seen.append(snapshot)
+            await asyncio.sleep(0)
+        self.assertGreater(len(seen), 1)
+        self.assertTrue(all(snapshot == seen[0] for snapshot in seen))
+        self.assertGreater(len(self.console_sender.packets) - sent_before, 10)
+
+    async def test_moving_is_true_from_the_first_snapshot_of_a_move(self):
+        app = self.build(fade=5.0)
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        # Straight after the tap, before the ramp task has had a turn.
+        self.assertTrue(app.snapshot()["fader"]["moving"])
+        app._cancel_move()
+
+
 class TestASupersededMove(AppTestCase):
     """A move replaced by a newer one must leave the newer one alone.
 
@@ -2779,12 +2950,7 @@ class TestASupersededMove(AppTestCase):
     running (#34).
     """
 
-    def watch(self, app):
-        pushed = []
-        app.on_change(lambda: pushed.append(app.snapshot()["fader"]))
-        return pushed
-
-    async def test_a_superseded_fade_does_not_stop_the_ride_in_push(self):
+    async def test_a_superseded_fade_does_not_clear_the_ride_in_description(self):
         app = self.build(fade=5.0)
         app._slow_open_seconds = 5.0
         await app.arm()
@@ -2792,25 +2958,26 @@ class TestASupersededMove(AppTestCase):
         await app.annotate("out")
         await asyncio.sleep(UNDER_WAY)
         await app.annotate("up-slow")
-        pushed = self.watch(app)
-        await asyncio.sleep(SUPERSEDED_WAKES + 3 * tacet_app.MOVE_PUSH_SECONDS)
-        self.assertEqual(app.snapshot()["fader"]["target"], dm7.UNITY)
-        self.assertGreaterEqual(len(pushed), 2)
-        self.assertEqual(pushed[-1]["target"], dm7.UNITY)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        fader = app.snapshot()["fader"]
+        self.assertEqual(fader["target"], dm7.UNITY)
+        self.assertEqual(fader["move"]["kind"], "ride")
+        self.assertEqual(fader["move"]["to_db"], 0.0)
+        self.assertEqual(fader["move"]["seq"], 2)
         app._cancel_move()
 
-    async def test_a_superseded_ride_in_does_not_stop_the_fade_push(self):
+    async def test_a_superseded_ride_in_does_not_clear_the_fade_description(self):
         app = self.build(fade=5.0)
         app._slow_open_seconds = 5.0
         await app.arm()
         await app.annotate("up-slow")
         await asyncio.sleep(UNDER_WAY)
         await app.annotate("out")
-        pushed = self.watch(app)
-        await asyncio.sleep(SUPERSEDED_WAKES + 3 * tacet_app.MOVE_PUSH_SECONDS)
-        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
-        self.assertGreaterEqual(len(pushed), 2)
-        self.assertEqual(pushed[-1]["target"], dm7.MINUS_INF)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        fader = app.snapshot()["fader"]
+        self.assertEqual(fader["target"], dm7.MINUS_INF)
+        self.assertEqual(fader["move"]["kind"], "fade")
+        self.assertEqual(fader["move"]["seq"], 2)
         app._cancel_move()
 
     async def test_a_stale_fade_task_cannot_complete_a_newer_fade(self):
