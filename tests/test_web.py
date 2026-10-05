@@ -1406,10 +1406,6 @@ class TestCategoryTones(unittest.TestCase):
     ACTION_BORDER = 2
     # A grid button's 1px border, either side.
     GRID_BORDER = 2
-    # The icon's own margin under it, in the column and in the scoring row.
-    ICON_GAP = 2
-    COLUMN_FONT = 16
-    SCORING_FONT = 13
     SCORING_LINE_HEIGHT = 1.4
     SHRINK_FLOOR = 64
     # The most a stacked scoring row may cost over a plain grid row.
@@ -1472,7 +1468,9 @@ class TestCategoryTones(unittest.TestCase):
         icon = self.number(r"height:(\d+)px", self.rule("#fader-column .ico"))
         padding = self.number(r"padding:(\d+)px", self.rule("#fader-top button,#fader-bottom button"))
         line_height = self.number(r"line-height:([\d.]+)", self.rule("#fader-column .lbl"))
-        used = 2 * self.ACTION_BORDER + 2 * padding + icon + self.ICON_GAP + self.COLUMN_FONT * line_height
+        gap = self.number(r"margin:0 auto (\d+)px", self.rule("#fader-column .ico"))
+        font = self.number(r"font-size:(\d+)px", self.rule("#fader-column button"))
+        used = 2 * self.ACTION_BORDER + 2 * padding + icon + gap + font * line_height
         self.assertLessEqual(used, self.SHRINK_FLOOR)
 
     def test_five_scoring_buttons_fit_one_row_on_the_ipad(self):
@@ -1483,10 +1481,12 @@ class TestCategoryTones(unittest.TestCase):
 
         padding = self.number(r"padding:(\d+)px", self.rule('.grid[data-tone="score"] button'))
         icon = self.number(r"height:(\d+)px", self.rule('.grid[data-tone="score"] .ico'))
+        gap = self.number(r"margin:0 auto (\d+)px", self.rule('.grid[data-tone="score"] .ico'))
+        font = self.number(r"font-size:(\d+)px", self.rule('.grid[data-tone="score"] button'))
         plain = self.rule(".grid button")
         plain_padding = self.number(r"padding:(\d+)px", plain)
         plain_font = self.number(r"font-size:(\d+)px", plain)
-        stacked = self.GRID_BORDER + 2 * padding + icon + self.ICON_GAP + self.SCORING_FONT * self.SCORING_LINE_HEIGHT
+        stacked = self.GRID_BORDER + 2 * padding + icon + gap + font * self.SCORING_LINE_HEIGHT
         flat = self.GRID_BORDER + 2 * plain_padding + plain_font * self.SCORING_LINE_HEIGHT
         self.assertLessEqual(stacked, flat + self.ROW_BUDGET)
 

@@ -331,8 +331,9 @@ only.
 **Everything else lives in MAIN and MORE**, beside the fader column, and
 records only, moving nothing. MAIN holds Scoring first (**Touchdown**,
 **Field goal**, **Safety**, **First down**, **Defensive stop**), then the
-timeouts, then **Halftime exodus** and **Last two minutes**, with no
-scrolling. **Official timeout** is the timeout to tap whenever you cannot
+timeouts, then **Halftime exodus** and **Last two minutes**, on one
+screen, though **Halftime exodus** and **Last two minutes** may sit just below
+the fold on the press-box iPad. **Official timeout** is the timeout to tap whenever you cannot
 tell which kind; the typed ones are for when it is obvious. Quarters and
 halftime are no longer tapped: they are recovered afterwards from the
 announcer and HokieVision recordings. Colour and icon say what a button is:
@@ -345,7 +346,7 @@ Note, and Arm / Stand down / Start recording / StageMix has it. A tap in MORE
 leaves you on MORE; tap **Main** when you want it back. Buttons marked
 `(start)` are spans: tap once to open the region, again to close it. They read
 `(end)` while open. A span left open by an earlier run whose button has since
-gone (a retired Q1-Q4 or Halftime, say) appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
+gone (a retired Q1-Q4, Halftime or Timeout: officials, say) appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
 button to end it.
 
 **The fader line is what the box commanded, never what the console reports**,
