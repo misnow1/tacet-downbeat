@@ -33,6 +33,7 @@ from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
 from tests.disk import Disk
+from tests.reaper_stream import METER
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PREFIX = "snapshot-"
@@ -126,6 +127,20 @@ async def open_recording(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+async def parked_unreported(root: Path) -> dict[str, Any]:
+    """Reaper open and parked with its audio device running: meters stream and
+    nothing is said about the transport, which Reaper announces only when it
+    changes. The normal pregame page after #163 - the button is live."""
+    box = _build(root, console=_Sender(), machine=_known())
+    # Listened to for a full timeout: the box will not call a transport parked
+    # before that, so the button is live only now.
+    for _ in range(2):
+        box.reaper_says(METER, 0.0)
+        box.clock[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT / 2
+    box.reaper_says(METER, 0.0)
+    return box.app.snapshot()
+
+
 async def releasing(root: Path) -> dict[str, Any]:
     """The push that follows FADE OUT, before the ramp has taken a step. Tapped
     as `out`, so the move says which button started it (#154)."""
@@ -194,6 +209,7 @@ async def faults(root: Path) -> dict[str, Any]:
 STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
+    "parked-unreported": parked_unreported,
     "releasing": releasing,
     "riding": riding,
     "prompt": prompt_open,

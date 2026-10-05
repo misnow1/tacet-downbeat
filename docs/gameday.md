@@ -213,7 +213,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 |---|---|
 | State | `STANDING DOWN` |
 | Fader | `unknown`, tagged **unknown**. The box does not know where the fader is at any boot, and says so rather than showing a number it cannot vouch for |
-| Recording | `unknown`, tagged **no feedback** (correct until something is recorded) |
+| Recording | `unknown`, tagged **not yet reported**, with Start recording live within a couple of seconds (Reaper open, its audio device running). **no feedback** with the button grey means Reaper is not open, or its OSC device is not sending to the box: the line under the panel says so |
 | Top of the screen | Nothing. No banner is the healthy state |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
@@ -223,12 +223,11 @@ Then, in order, **before the band enters the stadium** - as soon as the above
 reads right. Starting early costs nothing; see
 [reaper.md](reaper.md#when-to-start-the-recording).
 
-0. **If Start recording is greyed out**, roll a short recording in Reaper and
-   stop it. Expected on this rig every session, not a fault
-   ([why](reaper.md#the-record-button-is-greyed-out-before-you-touch-anything)).
-   **Then go back to the page for the real one.** At game 3 this step was
-   missed, the real take was started in Reaper, and the log has no anchor
-   (#163 is the fix that removes the step).
+0. **If Start recording is greyed out, read the line under the Recording
+   panel and do what it says**
+   ([what each one means](troubleshooting.md)). Never start the game take in
+   Reaper while the page's button is live: only the page writes the anchor
+   (until #158 lands).
 1. **Tap Start recording on the page, not in Reaper.** The recording line goes
    to `ROLLING`, tagged **confirmed**, with a playhead counting up. Only this
    button writes the anchor the whole log is measured from.

@@ -470,9 +470,10 @@ function timecode(seconds) {
 // because the link was up read as a contradiction, and painted a reassuring
 // colour over something unknown.
 //
-// Reaper is also silent whenever it is parked, so silence alone is not a fault:
-// "quiet" is a believed reading from a stopped Reaper, while "lost" is silence
-// where the /time stream should have been, and only that one is.
+// Reaper streams meters whenever its audio device runs, parked or rolling, and
+// /time only while the transport moves, so a parked Reaper is not a fault:
+// "quiet" is a believed reading from a stopped Reaper, while "lost" is no /time
+// where the stream should have been, and only that one is (#163).
 // A fader level for the screen. Null is -inf - a closed fader, not a missing
 // reading - because JSON cannot carry -inf and a blank there would read as a
 // link problem rather than a closed DCA.
@@ -648,6 +649,19 @@ function scheduleMoveFrame() {
   });
 }
 
+// Said when the box sends no reason for a grey record button, as one that
+// predates the field would not (#163). Still a reason: never a bare grey button.
+const RECORD_REASON_MISSING = "The box did not say why. "
+  + "Check Reaper, and start the recording there if it is not rolling.";
+
+// Why the record button is grey, in the box's own words (#163). A grey button
+// with no reason was games 2 and 3: the operator could not tell a refusal they
+// should act on from one they should leave alone.
+function recordReason(rec) {
+  if (rec.can_start) return "";
+  return typeof rec.refusal === "string" && rec.refusal ? rec.refusal : RECORD_REASON_MISSING;
+}
+
 function recordingTag(liveness, known) {
   if (liveness === "lost") return ["unknown", "LINK LOST"];
   if (liveness === "unknown") return ["unknown", "no feedback"];
@@ -795,6 +809,7 @@ function render(received) {
   const record = $("btn-record");
   setDisabled(record, !rec.can_start);
   setText(record, rec.known && rec.recording ? "Recording" : "Start recording");
+  setText($("rec-why"), recordReason(rec));
 
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";

@@ -234,13 +234,14 @@
     "source": "band-enters-stands"
   },
   "recording": {
-    "can_start": true,
+    "can_start": false,
     "confirmed": false,
     "healthy": true,
     "known": false,
     "liveness": "unknown",
     "position": null,
-    "recording": false
+    "recording": false,
+    "refusal": "Reaper is not answering. Open it, with its audio device running, or start the recording in Reaper."
   },
   "refusal": "the box does not know where the fader is, so arming would claim a closed DCA it cannot vouch for; close it now, or open, to say where it is",
   "stale_tap": null,

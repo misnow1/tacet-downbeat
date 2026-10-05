@@ -9,6 +9,7 @@ import json
 import unittest
 from pathlib import Path
 
+from tacet import reaper
 from tests import snapshots
 
 PAGE_TESTS = Path(__file__).resolve().parent / "test_app_js.mjs"
@@ -52,6 +53,13 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")
         self.assertEqual(states["snapshot-open-recording.json"]["recording"]["liveness"], "live")
         self.assertEqual(states["snapshot-releasing.json"]["fader"]["target"], -32768)
+        # Reaper never heard from: the page with Reaper closed (#163).
+        self.assertEqual(states["snapshot-standing-down.json"]["recording"]["refusal"], reaper.RECORD_REFUSED_SILENT)
+        parked = states["snapshot-parked-unreported.json"]["recording"]
+        self.assertEqual(parked["liveness"], "live")
+        self.assertFalse(parked["known"])
+        self.assertTrue(parked["can_start"])
+        self.assertIsNone(parked["refusal"])
         releasing = states["snapshot-releasing.json"]["fader"]
         self.assertEqual(releasing["move"]["by"], "out")
         self.assertEqual(releasing["move"]["kind"], "fade")
@@ -75,6 +83,7 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertFalse(faults["fader"]["healthy"])
         self.assertFalse(faults["log"]["healthy"])
         self.assertEqual(faults["recording"]["liveness"], "lost")
+        self.assertIn("stopped answering", faults["recording"]["refusal"])
         self.assertIsNotNone(faults["refusal"])
         # The console is unreachable and the snap open delivered nothing, so
         # the page must not also show a confident number (#116).

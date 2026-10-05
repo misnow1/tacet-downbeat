@@ -374,6 +374,54 @@ check(
   true,
 );
 
+// A grey record button always says why (#163). Games 2 and 3 had a grey button
+// and no reason, and the operator could not tell a refusal to act on from one to
+// leave alone. The wording is the box's: these are the texts it sends.
+const RECORD_REASONS = [
+  "Reaper has stopped answering: it says it is recording but its playhead is not moving. "
+    + "Check Reaper, and start the recording there if it is not rolling.",
+  "Reaper has not confirmed the start the box sent, so another tap could stop it. "
+    + "Check Reaper, and start it there if it is not recording.",
+  "Reaper is not answering. Open it, with its audio device running, or start the recording in Reaper.",
+  "Reaper is already recording.",
+  "Reaper's transport is moving but it has not said whether it is recording. "
+    + "Check Reaper, and start the recording there if it is not.",
+  "This log already holds a recording, and Reaper has not said whether it is still rolling. "
+    + "Check Reaper, and start it there if it is not.",
+  "Listening to Reaper: not heard long enough yet to tell a parked transport from a moving one. "
+    + "This clears in a couple of seconds.",
+];
+
+for (const refusal of RECORD_REASONS) {
+  const nodes = rendered({ can_start: false, refusal });
+  check("a grey record button shows a reason: disabled", nodes.get("btn-record").disabled, true);
+  check("the reason is the box's own words", nodes.get("rec-why").textContent, refusal);
+}
+
+check(
+  "a live record button shows no reason",
+  rendered({ can_start: true, refusal: null }).get("rec-why").textContent,
+  "",
+);
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot({ can_start: false });
+  delete snap.recording.refusal;
+  context.render(snap);
+  const missing = runInContext("RECORD_REASON_MISSING", context);
+  check("a box that sends no reason still gets one", nodes.get("rec-why").textContent, missing);
+  check("and that fallback is not empty", missing !== "", true);
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(snapshot({ can_start: false, refusal: RECORD_REASONS[3] }));
+  check("grey: the reason is up", nodes.get("rec-why").textContent, RECORD_REASONS[3]);
+  context.render(snapshot({ can_start: true, refusal: null }));
+  check("the reason clears when the button comes back", nodes.get("rec-why").textContent, "");
+}
+
 // -- the fader --------------------------------------------------------------
 
 // A closed fader is -inf, which JSON cannot carry, so it arrives as null. This
@@ -957,7 +1005,7 @@ for (const known of [false, true]) {
 check(
   "the box wrote the snapshots these tests read",
   Object.keys(SNAPSHOTS).sort(),
-  ["faults", "open-recording", "prompt", "prompt-arm", "releasing", "riding", "standing-down"],
+  ["faults", "open-recording", "parked-unreported", "prompt", "prompt-arm", "releasing", "riding", "standing-down"],
 );
 
 function renderedFixture(name) {
@@ -2857,6 +2905,21 @@ const fadingNodes = (created) =>
   wall += 50;
   intervals[0]();
   check("a monotonic clock that paused does not hide a silence", nodes.get("link").className, "stale");
+}
+
+// Every state the box can produce: a grey record button always has a reason (#163).
+for (const name of Object.keys(SNAPSHOTS)) {
+  const { nodes } = renderedFixture(name);
+  if (nodes.get("btn-record").disabled) {
+    check(`${name}: a grey record button shows a reason`, nodes.get("rec-why").textContent !== "", true);
+  }
+}
+
+{
+  const { nodes } = renderedFixture("parked-unreported");
+  check("parked and unreported: the button is live", nodes.get("btn-record").disabled, false);
+  check("parked and unreported: not yet reported", nodes.get("rec-tag").textContent, "not yet reported");
+  check("parked and unreported: no reason", nodes.get("rec-why").textContent, "");
 }
 
 // -- report -----------------------------------------------------------------
