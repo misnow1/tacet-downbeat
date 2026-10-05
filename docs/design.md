@@ -155,6 +155,16 @@ the band DCA.
 conductor whistles the rest of the band in a few measures later. This is common,
 not exceptional.
 
+The operator can tell which is coming, sometimes. The conductor **points at the
+drums** for a drum entry and **whistles the tempo** for a full-band entry
+(learned at game 3). It is not reliable at the speed it is needed: game 3's
+log has 20 whistle/drums tap swaps within 5 s, spread across the whole game
+rather than tailing off as the cue was learned. In each pair the second tap is
+the correction - the trigger that actually came - and the first marks when an
+entry was expected, which is how the labels read them (§9). Like the arms
+coming down, the cue is visual and unavailable to the detector; it is context
+for labelling, never an input.
+
 **The touchdown sequence.** Band plays full out after a touchdown, drops to
 quiet under the PAT, then comes back up loudly if it's good. The band does not
 stop — it gets quiet. Any level-based measure reads the quiet section as a stop
