@@ -11,7 +11,11 @@ version, in the order it happens on the day, is in [gameday.md](gameday.md).
 1. DVS as the audio device, at 48 kHz, with every track in the patch list below
    mapped.
 2. Preferences > Control/OSC/web > add an OSC device. **Listen port 8000**,
-   **device port 9000**, feedback enabled. These are the defaults the box
+   **device port 9000**, **device IP 127.0.0.1**, feedback enabled. The device
+   IP is where Reaper sends its feedback; a control-VLAN address works only
+   while that cable is in, the same reason `reaper.host` is always
+   `127.0.0.1` (gameday.md, Network). Both were found on a VLAN address after
+   game 3. These are the defaults the box
    assumes; anything else needs `--reaper-port` / `--reaper-feedback-port`, or
    `reaper.send_port` / `reaper.receive_port` in `tacet.toml` so it survives
    into next game.
