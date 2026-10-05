@@ -960,7 +960,7 @@ class TestAFadeIsDescribedOnce(WebTestCase):
         """Snapshots on the socket, keepalives and pongs skipped: up to the one
         that says idle, then whatever follows within two fade lengths, which
         proves nothing does."""
-        seen: list[dict] = []
+        seen: list[dict[str, Any]] = []
         idle = False
         while True:
             timeout = 2 * self.FADE_SECONDS if idle else WAIT_FOR_A_FRAME
