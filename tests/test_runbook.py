@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, app, config, disk, serve, state, web
+from tacet import annotations, app, config, disk, reaper, serve, state, web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -223,6 +223,19 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             for bolded in re.findall(r"\*\*(It's at[^*]*)\*\*", text):
                 with self.subTest(doc=doc, bolded=bolded):
                     self.assertEqual(bolded, found[1])
+
+    def test_the_runbook_quotes_every_record_refusal(self) -> None:
+        # #163: the line under the Recording panel says why the record button is
+        # grey, in these words, and the operator reads it in a press box.
+        for name in dir(reaper):
+            if not name.startswith("RECORD_REFUSED_"):
+                continue
+            with self.subTest(name):
+                self.assertIn(getattr(reaper, name), self.troubleshooting)
+
+    def test_every_record_refusal_is_one_this_test_knows_about(self) -> None:
+        names = {name for name in dir(reaper) if name.startswith("RECORD_REFUSED_")}
+        self.assertEqual(len(names), 6)
 
     def test_the_runbook_quotes_the_stopped_writer(self) -> None:
         # Quoted up to the semicolon; the page puts "Log not saving: " before it.
