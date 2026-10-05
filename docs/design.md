@@ -353,8 +353,8 @@ What the flag gates is absolute against relative:
   belief it briefly held, immediately followed by `move-failed`: read that
   pair together, since the `took-back` alone did not survive its own packet.
 - A **relative** command ramps from the believed level: the 2 s fade, READY's
-  ride to the hold level, the slow open, and the retarget ride (#128). Each is refused while the level is
-  unknown, with the reason on the page. Refused, not queued - a tap held back
+  ride to the hold level, the slow open, and the retarget ride (#128). Each is
+  refused while the level is unknown, with the reason on the page. Refused, not queued - a tap held back
   and run later runs on a belief nobody has looked at since. The page also
   greys the four column buttons that make these moves, in place, so the refusal
   is rarely reached.

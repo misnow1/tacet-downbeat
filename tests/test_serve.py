@@ -883,3 +883,14 @@ class TestBuildWritesBoxStartedFirst(unittest.TestCase):
             log.close()
         events = [e.event for e in annotations.read_entries(self.log)]
         self.assertEqual(events, [annotations.BOX_STARTED, annotations.BOX_STARTED])
+
+
+class TestBuildPassesTheFlagsThrough(unittest.TestCase):
+    def test_the_retarget_ride_flag_reaches_the_app(self):
+        # #128: a flag that build() dropped would leave the default in force,
+        # silently.
+        with TemporaryDirectory() as tmp:
+            argv = ["--console-host", "10.0.0.5", "--log", str(Path(tmp) / "game.jsonl"), "--retarget-ride", "0.25"]
+            app, log, _ = serve.build(serve.parser().parse_args(argv), CLEAN_CODE)
+            log.close()
+        self.assertEqual(app._retarget_ride_seconds, 0.25)

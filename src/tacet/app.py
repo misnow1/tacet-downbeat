@@ -438,8 +438,7 @@ class App:
                 self._last_refusal = None
             because = stored_only_because(before, outcome, unchanged=unchanged)
             # A tap while the fader is closed is logged but not shown (#153).
-            shown = because is not None and stored_note_shown(before)
-            self._stored = (level, because) if because is not None and shown else None
+            self._stored = (level, because) if because is not None and stored_note_shown(before) else None
             self._record(
                 TARGET_SET,
                 data={

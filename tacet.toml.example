@@ -77,7 +77,7 @@ ready_ride_seconds = 4.0    # --ready-ride
 
 # Changing the target in MORE while the fader is up rides it to the new level
 # (or the READY hold to the new hold) over this long, on the ride-in taper (#128).
-retarget_ride_seconds = 1.0 # --retarget-ride
+retarget_ride_seconds = 1.0  # --retarget-ride
 
 # A fader tap that reaches the box later than this is logged and not executed:
 # a late open brings the PA up after the music stopped, a late fade cuts a
