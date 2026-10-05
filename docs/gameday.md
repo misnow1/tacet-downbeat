@@ -162,11 +162,15 @@ until someone listens back.
 ### 2. Load and run the ReaScript
 
 Actions > Show action list > New action > Load ReaScript > `tacet_mirror.lua`,
-then **run it**. The Reaper console should say:
+then **run it**. It is a toggle - running it while it already runs stops it -
+so check the **last line** of the Reaper console says:
 
 ```
 [tacet] mirroring <path> from byte N
 ```
+
+If the last line is `mirror stopped`, run it once more
+([why](reaper.md#the-mirror-script)).
 
 Use the same queue path every game and leave the queue file alone. Anything
 else in the console: [troubleshooting.md](troubleshooting.md#the-mirror-console).
@@ -461,7 +465,8 @@ recording nor the log depends on the page or the markers working.
 
 ## After the game
 
-1. **Stop the recording in Reaper**, deliberately.
+1. **Stop the recording in Reaper**, deliberately, and **keep the files** at
+   the prompt ([why](reaper.md#one-recording-one-log-started-early)).
 2. Save the project.
 3. Stop `tacet-serve` with **Ctrl-C twice**. It never fades on the way out, and
    stopping the box does not stop the recording.
