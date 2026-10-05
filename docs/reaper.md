@@ -306,8 +306,11 @@ There is no stop button, so starting early costs nothing that has to be undone.
 Whenever the button is grey, the line under the **Recording** panel says why, in
 the box's own words. Each text, and what to do about it, is in
 [troubleshooting.md](troubleshooting.md). The button is **live** on a parked
-Reaper that is open with its audio device running, even though the page reads
-`unknown` / **not yet reported**: that is the normal pregame page.
+Reaper that is open with its audio device running. The normal pregame page reads
+`stopped`, tagged **confirmed**, because the box asks Reaper for its transport
+state when it first hears it (#172). `not yet reported` now means Reaper did not
+answer that question. The button is still live on a parked Reaper then, as #163
+made it.
 
 *Why the box can tell parked from rolling.* What Reaper sends, and when, is
 in [Reaper's OSC feedback, as observed](#reapers-osc-feedback-as-observed).
@@ -350,8 +353,30 @@ Reaper's feedback has to survive all of it.
   exactly `/record 1, /stop 0, /play 1` (or without `/record` for Play), and a
   stop is the mirror.
 - **Transport state is sent only when it changes.** `/record`, `/play` and
-  `/stop` are not in any dump, so after a launch, a relaunch or a box restart
-  the record state is unknown until the transport next changes.
+  `/stop` are not in the *launch or project-load* dump, so after a launch, a
+  relaunch or a box restart the record state is unknown until the transport next
+  changes - unless the box asks, below.
+- **Refresh all surfaces (action 41743)**, sent as OSC `/action` with int
+  `41743`, draws the current transport state within 10-40 ms, in three forms.
+  Unlike the launch dump, this one does carry `/record`:
+
+  | Reaper is | Reply |
+  |---|---|
+  | recording | `/record 1, /stop 0, /pause 0, /play 1` |
+  | playing | `/record 0, /stop 0, /pause 0, /play 1` |
+  | stopped | `/record 0, /stop 1, /pause 0, /play 0` |
+
+- **The reply is large.** About 3,300-3,600 other messages on the 30-track
+  template, and `/time` stalls about 1.5 s while they go out, then resumes in a
+  burst. The box tolerates that: the stall is inside its 2 s timeout, and
+  entries made during it go unstamped (the arithmetic places them) rather than
+  stamped with a position older than 0.5 s.
+- **The box sends the refresh exactly once at the start of each run of
+  feedback:** its first contact, a Reaper relaunch, any gap over 2 s. It never
+  sends it on a timer.
+- **It does not ask again while a refresh is unanswered.** Any `/record` report
+  answers it. Unanswered (an older Reaper, the action missing), the box behaves
+  exactly as #163 shipped it, until Reaper's next record start or stop.
 - **Quit is silent.** The stream just stops. The box can tell "closed" from
   "parked" only because the meters stop, and only while an audio device runs.
 - **Launch and project load send a placeholder dump first:** generic

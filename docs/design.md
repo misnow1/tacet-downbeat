@@ -648,7 +648,10 @@ blur it: recording is *confirmed*, fader position is only *commanded* (§5.3).
 The record button is a toggle at Reaper's end, so the box sends it only on
 positive evidence that it can only start: Reaper present (any feedback), the
 transport parked (no `/time`), Reaper not reported recording, and the box's own
-last start answered. Otherwise it greys the button and says why. An unknown
+last start answered. The box asks Reaper for its transport state when it first
+hears it and after any gap, so the record state is reported, not inferred; the
+listening rules remain as the fallback when Reaper does not answer (#172).
+Otherwise it greys the button and says why. An unknown
 record state with a moving transport, or with a log that already holds a
 recording, is refused: a start done by hand is recoverable; a stop is not.
 
