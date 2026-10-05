@@ -306,12 +306,17 @@ function renderButtons(buttons, orphans) {
 // Two things in a snapshot are called a target, and they are not the same.
 // `snapshot.target` is the STANDING setting: the level the next open goes to and
 // the READY hold is measured from. It is what this section shows (the chip in
-// the strip) and changes (the segments in MORE > Target level). Changing it
-// stores a value and moves nothing; while the fader is up the box says it
-// stored and why (`snapshot.target.stored`), the page words that under the
-// segments, and the box clears it (a later tap, a fader move, a state change).
-// While the fader is closed the box sends null: storing is what the operator
-// expects there, so there is no note (#153). `snapshot.fader.target` is where a move
+// the strip) and changes (the segments in MORE > Target level). A tap stores
+// the value always, and rides the fader there while it is up (#128). When it
+// only stored while the fader is up the box says so and why
+// (`snapshot.target.stored`), the page words that under the segments, and the
+// box clears it (a later tap, a fader move, a state change). While the fader is
+// closed the box sends null: storing is what the operator expects there, so
+// there is no note (#153). The segments are greyed in place while the level is
+// unknown and the fader is up, because a ride from an unknown level would be a
+// guess (#107), and the selected one wears the fading colour until the box says
+// the ride landed (#154's landed-only rule; `fadingKey` ends only on a snapshot
+// without `fader.move`). `snapshot.fader.target` is where a move
 // already in flight is heading, null when nothing is moving; the fader readout
 // below draws that as the arrow in "-10.00 dB -> 0.00 dB" (from `fader.move`
 // since #154, which carries the same destination). A move in flight can
@@ -337,9 +342,22 @@ const STORED_COPY = {
   open: NOT_MOVED,
   ready: NOT_MOVED,
   releasing: "The fade carries on to -inf.",
+  unknown: "The fader did not move: the box does not know where it is.",
 };
 // Reasons whose note wants attention, and whose chip says (next open).
-const STORED_ATTENTION = new Set(["open", "ready", "releasing"]);
+const STORED_ATTENTION = new Set(["open", "ready", "releasing", "unknown"]);
+
+// The `by` the box gives a move a target tap started (the log's `target-set`).
+const TARGET_SET_KEY = "target-set";
+// The states where a target tap rides, so an unknown level blocks it.
+const RETARGET_RIDES = new Set(["open", "ready"]);
+const TARGET_BLOCKED = "Greyed: a new target would ride from an unknown level. Close it now, or open, first.";
+
+// Pure: whether the segments are greyed. Storing is always allowed, so only the
+// states where a tap would ride, with the level not known.
+function targetBlocked(stateName, fader) {
+  return !fader.level_known && RETARGET_RIDES.has(stateName);
+}
 
 // Pure: the note under the segments, `{text, attention}`. A reason this page
 // does not know (a newer box) reads as not-moved, which is true of every
@@ -378,7 +396,7 @@ function buildPresetNode(db) {
   return node;
 }
 
-function renderTargetControl(target) {
+function renderTargetControl(target, fader, stateName) {
   const signature = JSON.stringify(target.presets_db);
   if (signature !== renderedPresets) {
     const host = $("target-control");
@@ -387,12 +405,19 @@ function renderTargetControl(target) {
     for (const node of presetNodes) host.appendChild(node);
     renderedPresets = signature;
   }
+  // Painted here, never in the rebuild signature, so greying in place never
+  // tears the segments down under a thumb (the rule #107's column follows).
+  const blocked = targetBlocked(stateName, fader);
+  const riding = fadingKey(fader) === TARGET_SET_KEY;
   for (const node of presetNodes) {
-    node.classList.toggle("selected", Number(node.dataset.preset) === target.db);
+    const selected = Number(node.dataset.preset) === target.db;
+    node.classList.toggle("selected", selected);
+    node.classList.toggle("fading", selected && riding);
+    setDisabled(node, blocked);
   }
 }
 
-function paintTarget(target, fader) {
+function paintTarget(target, fader, stateName) {
   // A ride to somewhere other than the standing target, and not a fade.
   const ridingElsewhere = fader.target !== null && fader.target_db !== null && fader.target !== target.level;
   const stored = target.stored || null;
@@ -400,11 +425,12 @@ function paintTarget(target, fader) {
   const chip = $("target-level");
   chip.textContent = targetChipText(target.db, nextOpenOnly);
   chip.classList.toggle("off-default", target.db !== target.default_db);
-  renderTargetControl(target);
+  renderTargetControl(target, fader, stateName);
   const note = storedNote(stored);
+  const blocked = targetBlocked(stateName, fader);
   const noteNode = $("target-note");
-  setText(noteNode, note.text);
-  noteNode.className = note.attention ? "attention" : "";
+  setText(noteNode, [note.text, blocked ? TARGET_BLOCKED : ""].filter(Boolean).join(" "));
+  noteNode.className = note.attention || blocked ? "attention" : "";
 }
 
 // -- MAIN / MORE ---------------------------------------------------------
@@ -804,7 +830,7 @@ function render(received) {
   if (next.duty) $("duty").textContent = dutyChip(next.duty, boxOffset(next));
   // #9: guarded the same way. A box that predates the standing target sends no
   // `target`, and that must not throw and stop the rest of the render.
-  if (next.target) paintTarget(next.target, next.fader);
+  if (next.target) paintTarget(next.target, next.fader, next.state);
   // A fader tap that arrived too late was not done. Nothing moved, so nothing
   // else on the page changes to say so, and the operator has to decide again
   // (#16).

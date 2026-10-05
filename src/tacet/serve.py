@@ -134,6 +134,7 @@ def build(
         slow_open_seconds=args.slow_open,
         hold_below_db=args.hold_below_db,
         ready_ride_seconds=args.ready_ride,
+        retarget_ride_seconds=args.retarget_ride,
         stale_tap_seconds=args.stale_tap,
         target_levels=levels,
         provenance=code,
@@ -517,6 +518,7 @@ CONFIG_MAPPING = {
     "slow_open": "fader.slow_open_seconds",
     "hold_below_db": "fader.hold_below_db",
     "ready_ride": "fader.ready_ride_seconds",
+    "retarget_ride": "fader.retarget_ride_seconds",
     "stale_tap": "fader.stale_tap_seconds",
     "presets": "fader.presets",
     "default_target": "fader.default_target_db",
@@ -590,6 +592,13 @@ def parser() -> argparse.ArgumentParser:
         default=dm7.DEFAULT_READY_RIDE_SECONDS,
         metavar="SECONDS",
         help="ride from idle to the READY hold level",
+    )
+    p.add_argument(
+        "--retarget-ride",
+        type=float,
+        default=dm7.DEFAULT_RETARGET_RIDE_SECONDS,
+        metavar="SECONDS",
+        help="ride to a new target while the fader is up (#128)",
     )
     p.add_argument(
         "--stale-tap",

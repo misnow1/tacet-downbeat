@@ -69,6 +69,10 @@ DEFAULT_HOLD_BELOW_DB = 15.0
 #: game shows what each should be. Retunable per site as
 #: `fader.ready_ride_seconds`.
 DEFAULT_READY_RIDE_SECONDS = 4.0
+#: The ride between targets while the fader is up (#128): about a second, on
+#: the ride-in taper. No ramp code of its own, it is `ride_in(level, seconds)`.
+#: Retunable per site as `fader.retarget_ride_seconds`.
+DEFAULT_RETARGET_RIDE_SECONDS = 1.0
 DEFAULT_TICK_HZ = 50.0
 #: A ramp always emits at least one step, however short its duration.
 MIN_RAMP_TICKS = 1
