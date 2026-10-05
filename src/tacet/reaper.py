@@ -13,6 +13,13 @@ There is no stop. Each home game is a single irreplaceable sample, and a stop
 button does not belong on a screen being tapped by someone watching a field.
 Stopping is done deliberately, in Reaper.
 
+Reaper announces transport state only when it changes, so a box that starts
+after Reaper, or hears it again after a gap, would not know whether it is
+recording. The box therefore asks, once, at the start of each run of feedback:
+the "refresh all surfaces" action answers within tens of milliseconds with the
+current transport state (#172). It is never sent on a timer, and never while an
+earlier one is unanswered, so its own reply cannot draw another.
+
 The addresses below are the stock `Default.ReaperOSC` pattern names, verified
 on 2026-09-08 against Reaper on the development Mac: `/play`, `/record` and
 `/stop` all arrive carrying 1.0 or 0.0, and `/time` carries seconds as a float.
@@ -22,6 +29,7 @@ user-editable; verify them against the installed one before a game.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from collections.abc import Callable
@@ -88,6 +96,20 @@ RECORD_REFUSED_PRIOR = (
 
 _ACTION_PREFIX = "/action"
 
+#: Control surface: refresh all surfaces. Sent as OSC `/action` with this int,
+#: Reaper answers with the current transport state (verified on the bench,
+#: 2026-10-04, #172). The reply also carries a few thousand other messages, and
+#: `/time` stalls for about 1.5 s while they go out.
+REFRESH_ACTION = 41743
+
+#: How often Reaper streams `/time` while the transport moves (bench, #163).
+TIME_RATE_PER_SECOND = 12
+#: How old a `/time` reading may be and still be called where the playhead is:
+#: six `/time` intervals. Shorter than the feedback timeout on purpose. The
+#: refresh's dump stalls `/time` for about 1.5 s, and a reading that old stamped
+#: onto an entry would put its marker confidently in the wrong place.
+POSITION_CURRENT_SECONDS = 6 / TIME_RATE_PER_SECOND
+
 
 @dataclass(frozen=True)
 class AddressMap:
@@ -99,6 +121,8 @@ class AddressMap:
     record: str = "/record"
     #: Never sent. Held here so the "no stop" rule can be asserted against it.
     stop: str = "/stop"
+    #: Sent only as `REFRESH_ACTION`, with an int argument.
+    action: str = "/action"
     #: Feedback.
     playing: str = "/play"
     recording: str = "/record"
@@ -208,14 +232,22 @@ class TransportState:
         """Where the playhead is now, or None if that is not known.
 
         Reaper streams `/time` while the transport moves and stops when it
-        parks, so a position that arrived within the timeout is current and one
-        older than that is only where the transport was last seen. Judged on
+        parks, so a position that arrived within `POSITION_CURRENT_SECONDS` is
+        current and one older than that is only where the transport was last
+        seen. That window is shorter than the timeout that says the clock is
+        running: the refresh's dump stalls `/time` for about 1.5 s while the
+        transport still moves, and entries made then go unstamped (falling back
+        to the arithmetic) rather than stamped with a stale position. Judged on
         `/time` alone rather than on liveness: this rig streams meter data
         continuously while parked, which kept a link reading live and a
         position from a finished take looking current for as long as it sat
         there (#35).
         """
-        if self.position is None or not self.clock_running(now, timeout=timeout):
+        if self.position is None or self.position_at is None:
+            return None
+        if not self.clock_running(now, timeout=timeout):
+            return None
+        if (now - self.position_at) > min(timeout, POSITION_CURRENT_SECONDS):
             return None
         return self.position
 
@@ -334,7 +366,8 @@ class RecordRequest:
     """A `/record` the box sent, and what Reaper had reported before it.
 
     Any `/record` report after the send answers it, whichever way it went: an
-    explicit answer means the record state is known again.
+    explicit answer means the record state is known again. It serves both the
+    `/record` latch (#28) and the refresh (#172), whose reply carries `/record`.
     """
 
     sent_at: float
@@ -342,6 +375,22 @@ class RecordRequest:
 
     def answered_by(self, state: TransportState) -> bool:
         return state.record_reports > self.reports_before
+
+
+def refresh_due(before: TransportState, after: TransportState, request: RecordRequest | None) -> bool:
+    """True when this packet began a new run of feedback and no refresh is outstanding.
+
+    `before` is read for the request, not `after`: a reply slow enough to start
+    a run of its own is still the answer to an outstanding refresh, so a dump
+    can never draw another. There is no expiry: an unanswered refresh stops
+    further ones until any `/record` report arrives, and meanwhile the box
+    behaves exactly as it did before it asked (#163).
+    """
+    return (
+        after.link_since is not None
+        and after.link_since != before.link_since
+        and (request is None or request.answered_by(before))
+    )
 
 
 def record_refusal(
@@ -371,6 +420,10 @@ def record_refusal(
     no clock reads LINK LOST (see `TransportState.liveness`), and a log that
     already holds a recording, with the record state unknown, is refused as
     well - the one case where the box may have been restarted mid-take.
+
+    The refresh the box sends at the start of a run of feedback usually makes
+    the record state reported before any of this is consulted; the rules here
+    are the second line of defence, for a Reaper that does not answer.
 
     Absence of `/time` counts as evidence only after a full timeout of unbroken
     listening, because the first packet of a rolling Reaper is often a meter
@@ -426,6 +479,8 @@ class ReaperClient:
         #: The last start sent. Never cleared: whether it has been answered is
         #: read from `state`, so there is no second copy of the truth to drift.
         self.record_request: RecordRequest | None = None
+        #: The last refresh sent (#172), kept for the same reason.
+        self.refresh_request: RecordRequest | None = None
 
     @property
     def healthy(self) -> bool:
@@ -449,14 +504,25 @@ class ReaperClient:
     def pause(self) -> None:
         self._send(self.addresses.pause)
 
+    def refresh(self) -> None:
+        """Ask Reaper for its transport state (#172). Sent once per run of
+        feedback by `handle_packet`; the request is remembered only once the
+        send succeeded, so a failed one is tried again at the next run."""
+        reports_before = self.state.record_reports
+        self._send_packet(osc.encode_message(self.addresses.action, REFRESH_ACTION, tags="i"))
+        self.refresh_request = RecordRequest(sent_at=self._monotonic(), reports_before=reports_before)
+
     def run_action(self, command_id: int) -> None:
         """Trigger a Reaper action by command id - the generic escape hatch for
         anything the pattern file does not name."""
         self._send(f"{_ACTION_PREFIX}/{command_id}")
 
     def _send(self, address: str) -> None:
+        self._send_packet(osc.encode_message(address))
+
+    def _send_packet(self, packet: bytes) -> None:
         try:
-            self._sender.send(osc.encode_message(address))
+            self._sender.send(packet)
         except TransportError as exc:
             self.last_error = str(exc)
             raise
@@ -465,5 +531,11 @@ class ReaperClient:
     # -- feedback ---------------------------------------------------------
 
     def handle_packet(self, packet: bytes) -> TransportState:
-        self.state = apply_feedback(packet, self.state, now=self._monotonic(), addresses=self.addresses)
+        before = self.state
+        self.state = apply_feedback(packet, before, now=self._monotonic(), addresses=self.addresses)
+        if refresh_due(before, self.state, self.refresh_request):
+            # A datagram callback: nothing may escape it. A failed send shows
+            # on `healthy` and leaves no request, so the next run tries again.
+            with contextlib.suppress(TransportError):
+                self.refresh()
         return self.state

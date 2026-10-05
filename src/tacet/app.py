@@ -979,9 +979,12 @@ class App:
 
         Freshness is the whole test. Reaper streams `/time` while the transport
         moves and stops when it parks, so a reading that arrived within the
-        timeout is current by construction; one older than that is wherever the
-        transport was last seen, and stamping it would place a marker at a
-        confidently wrong point. Unstamped falls back to the arithmetic, which
+        current window (`reaper.POSITION_CURRENT_SECONDS`, six `/time`
+        intervals) is current by construction; one older than that is wherever
+        the transport was last seen, and stamping it would place a marker at a
+        confidently wrong point. The window is short of the timeout so that the
+        1.5 s `/time` stall while Reaper answers the box's refresh (#172) goes
+        unstamped rather than stale-stamped. Unstamped falls back to the arithmetic, which
         is what happened before this existed. The freshness is of `/time`
         itself, not of the link: see `TransportState.current_position`.
 

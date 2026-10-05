@@ -67,7 +67,7 @@ def timed_client(**kwargs):
 
 
 def actions(sender) -> int:
-    return sender.addresses().count(reaper.DEFAULT_ADDRESSES.action)
+    return int(sender.addresses().count(reaper.DEFAULT_ADDRESSES.action))
 
 
 def fold(packets):
