@@ -88,7 +88,7 @@ come first; the layout change lands early so the pre-game runthrough (about
 |---|---|---|
 | 1 | [#149](https://github.com/misnow1/tacet-downbeat/issues/149) Commit the metering research note | Housekeeping, already written; untracked since soundcheck |
 | 2 | [#155](https://github.com/misnow1/tacet-downbeat/issues/155) MAIN: scoring first, quarters off, timeout wording, colour and icons | The sea of grey cost cue time; muscle memory needs the runthrough |
-| 3 | [#154](https://github.com/misnow1/tacet-downbeat/issues/154) Describe a fade once, animate it, fading colour | Readout stutter and airtime during fades. Absorbs #51 |
+| ~~3~~ | ~~[#154](https://github.com/misnow1/tacet-downbeat/issues/154) Describe a fade once, animate it, fading colour~~ | Done, absorbing #51. `fader.move` describes a fade or ride once and the page animates it, so a fade costs three page messages; the button that started it wears the fading colour until the box says it landed; the button list is sent once per socket |
 | 4 | [#153](https://github.com/misnow1/tacet-downbeat/issues/153) Target set while open: stored, not moved | Small, and it was a real moment of confusion at Game 3 |
 | 5 | [#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride | What the operator reached for at Game 3; a real fader tap, so after the cheap message |
 | 6 | [#163](https://github.com/misnow1/tacet-downbeat/issues/163), [#158](https://github.com/misnow1/tacet-downbeat/issues/158) Say why the record button is grey; write the anchor when Reaper starts recording | The button greyed out silently at games 2 and 3, so neither has a page-started take; Game 3 has no anchor and its markers cannot regenerate |
@@ -104,7 +104,7 @@ Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159
 may only remove trust; needs a design.md amendment) and RTD (#95), unless the
 booth sniff happens the Friday before Game 4.
 
-The Game 4 milestone also holds: #17, #21, #42, #43, #46, #47, #48, #49, #51,
+The Game 4 milestone also holds: #17, #21, #42, #43, #46, #47, #48, #49,
 #66, #133, #135. Whatever does not land moves to Game 5.
 
 ## Keeping this current

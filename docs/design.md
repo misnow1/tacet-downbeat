@@ -407,6 +407,8 @@ Minimum during-game requirements:
 - Current DCA level as **last commanded by the box**, labelled as commanded
   rather than confirmed. There is no readback, and an iPad move will not
   appear here (§5.3)
+- A fade or ride is described once and animated on the page; its in-flight
+  state ends only on the box's word, never on the page's own timer (#154)
 - **Open** and **fade out** buttons
 - State colours (fault red, attention amber, healthy green, fading) are
   reserved and never mark a button category (#155)
