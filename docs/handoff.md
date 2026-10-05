@@ -357,6 +357,11 @@ than a bench probe.
 
 ## Open: the press box Reaper is never silent
 
+**Resolved by #163.** It named the chatter (meters, from the audio device) and kept
+any packet as presence while judging motion on `/time` alone, rather than counting
+only `/play`, `/record` and `/time` as this section proposed - which would have made
+a parked Reaper read as absent. What follows is the history; do not act on it.
+
 Found 2026-09-12, worked around, not fixed. The record button is greyed out from
 the moment the box starts, and stays that way until a recording is rolled in
 Reaper and stopped. `docs/reaper.md` carries the workaround; this is the part

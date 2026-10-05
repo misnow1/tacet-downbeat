@@ -233,7 +233,10 @@ will not re-stamp the test's markers.
 **Start it from the page, not in Reaper.** `recording-started` is written only
 by the page's Start recording button, and it is the anchor the whole log is
 measured from. Start the recording in Reaper instead and the log has no anchor,
-so markers cannot be derived from it afterwards at all.
+so markers cannot be derived from it afterwards at all. The box refuses a page
+start when the log already holds a recording and Reaper has not said whether it
+is rolling, so a reused log after a box restart shows that reason rather than a
+live button.
 
 **Record before annotating.** Reaper has no negative timeline, so anything
 logged before recording starts has nowhere to go on it. Those entries are kept
@@ -280,34 +283,42 @@ There is no stop button, so starting early costs nothing that has to be undone.
 
 ---
 
-## The record button is greyed out before you touch anything
+## When the record button is greyed out
 
-Observed in the press box, 2026-09-12, with Reaper open and stopped and the box
-freshly started.
+Whenever the button is grey, the line under the **Recording** panel says why, in
+the box's own words. Each text, and what to do about it, is in
+[troubleshooting.md](troubleshooting.md). The button is **live** on a parked
+Reaper that is open with its audio device running, even though the page reads
+`unknown` / **not yet reported**: that is the normal pregame page.
 
-*Do this:* start a recording in Reaper and stop it again. The button enables and
-stays enabled for the session. Then tap **Start recording** in the UI for the
-real one. Roughly a five second detour, and worth doing during setup rather than
-discovering it at kickoff. The throwaway take at the top of the project can be
-deleted later.
+*Why the box can tell parked from rolling.* These are the facts the rule rests
+on, measured on the press box rig on 2026-10-04 (#163):
 
-*Why:* the box will not send `/record` unless it knows the transport is stopped,
-because `/record` is a toggle and sending it blind could stop a recording rather
-than start one. It infers "stopped" from silence, since Reaper is normally
-silent when parked and streams `/time` only while the transport moves.
+- Reaper streams **meters**, about 11 packets a second, whenever its audio
+  device runs - parked or rolling.
+- `/time` arrives, about 12 a second, **only while the transport moves**.
+- `/record`, `/play` and `/stop` arrive **only when they change**, never in a
+  launch or project-load dump.
+- Quitting Reaper is **silent**.
 
-On this rig Reaper is **never silent.** Something in its OSC device transmits
-continuously while parked, so the link always reads live, and the box has been
-told nothing about the record state - so it refuses. `/api/state` shows the
-signature: `liveness: "live"` with `position: null` and `known: false`. Waiting
-does not help, and neither does Play/Stop: the missing message is `/record`, and
-Reaper sends transport state only when it *changes*. Rolling a recording is what
-makes it say the word.
+So any packet means Reaper is there, `/time` means it is moving, and a parked
+Reaper with its device running can only be started by `/record`. `/record` is a
+toggle, so the box sends it only on that positive evidence: an open Reaper, a
+quiet clock, not reported recording, its own last start answered. Anything else
+greys the button and says why. A start done by hand in Reaper is recoverable; a
+stop of the game's take is not.
 
-*Suspected cause, untested:* an **armed** track. An armed track meters its input
-whether or not the transport is moving, and Reaper's OSC feedback carries meter
-data. That would produce exactly this - a steady stream that never mentions the
-transport. Disarming to test would also disable the recording, so it needs a
-quiet afternoon rather than a game day. Do not skip arming to avoid the detour:
-an unarmed track records nothing, which is the one failure with no recovery at
-all.
+*What the box needs from this Reaper.* `/time` in its OSC pattern, which the
+stock `Default.ReaperOSC` has. Prove it once per machine:
+
+```
+python -m tacet.verify_reaper --listen 20
+```
+
+It should print `FOUND position /time`. If `/time` is missing from the pattern,
+the first recording reads `LINK LOST` within a few seconds of rolling: fix the
+pattern, do not carry on.
+
+After launching Reaper, wait for the real project to load - up to about 7
+seconds after the placeholder `Track 1..8` dump - before tapping **Start
+recording**.
