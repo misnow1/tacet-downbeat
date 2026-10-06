@@ -38,10 +38,13 @@ silent. A ping every few minutes keeps the entry warm. Linux uses a stale entry
 at once, so there the check is the only point.
 
 Standard library only, unprivileged (it runs the system `ping`, and on macOS
-`arp -n`, as child processes), and outside the control path. It imports neither
-`socket` nor `tacet.osc`, `tacet.net` or `tacet.dm7`, so it cannot put a UDP
-packet, let alone an OSC message, on the wire. `tests/test_dependency_policy.py`
-reads the imports and fails if that changes.
+`arp -n`, as child processes), and outside the control path. It imports nothing
+that can send to the console: not `socket`, not `tacet.osc`, `tacet.net` or
+`tacet.dm7`, and no `importlib` or datagram/connection call to go round them.
+`tests/test_dependency_policy.py` reads the source and fails if that changes.
+
+While the last result is nothing-there or could-not-check the watch looks again
+every `RECHECK_BAD_SECONDS`, so a fixed cable clears the warning promptly.
 """
 
 from __future__ import annotations
@@ -110,6 +113,15 @@ MACOS_ARP_MAX_AGE_SECONDS = 1200
 #: it, which resets max_age.
 KEEPALIVES_PER_ARP_LIFETIME = 5
 KEEPALIVE_SECONDS = MACOS_ARP_MAX_AGE_SECONDS // KEEPALIVES_PER_ARP_LIFETIME
+#: While the last result is nothing-there or could-not-check, look again this
+#: soon instead of waiting a whole keepalive. Those are the results that mean
+#: "fix it": a cable put back or an address corrected should clear the red chip
+#: within a moment of the fix, not four minutes later, and a quiet 30 s ping is
+#: harmless. No-answer is not bad - the DM7 may simply ignore ping - so it
+#: keeps the long interval. Always longer than one check can take.
+RECHECK_BAD_SECONDS = 30
+#: The results that earn the short interval.
+BAD_RESULTS = frozenset({Reach.NOTHING_THERE, Reach.COULD_NOT_CHECK})
 #: A check that came due while the fader was moving is retried this soon, not a
 #: whole interval later: the arm check after an up-slow from STANDING DOWN (#89)
 #: must not wait four minutes.
@@ -613,5 +625,6 @@ class Watch:
         finally:
             self._running = False
         self._pending = Trigger.KEEPALIVE
-        self._due_at = self._monotonic() + self._interval
+        wait = RECHECK_BAD_SECONDS if result.reach in BAD_RESULTS else self._interval
+        self._due_at = self._monotonic() + wait
         self._deliver(result)

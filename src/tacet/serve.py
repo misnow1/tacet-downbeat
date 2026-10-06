@@ -151,10 +151,10 @@ def build(
         stale_tap_seconds=args.stale_tap,
         target_levels=levels,
         provenance=code,
-        console_check=console_check,
     )
     # The run's first entry, before anything is served (#157), and straight
-    # after it what the startup ping found (#73).
+    # after it what the startup ping found (#73). `console_checked` stores it
+    # too, so the startup entry has no previous result - nothing came before.
     app.log_box_started()
     if console_check is not None:
         app.console_checked(console_check)
@@ -190,6 +190,23 @@ async def _run(
         )
         print(f"listening for Reaper feedback on {args.listen}:{args.reaper_feedback_port}")
 
+    # The ping that keeps the console's ARP entry warm, and checks at every arm
+    # (#73). Built, and told about arms, before the page goes up: an arm in the
+    # first milliseconds still gets its check, which the watch holds until its
+    # task starts. For the life of the box, armed or not: an operator open from
+    # STANDING DOWN (#89) must not meet a cold entry after halftime. The first
+    # keepalive is one interval after the startup check, which already warmed
+    # it. It holds no sender and writes no OSC; it waits for any fader move.
+    watch = reach.Watch(
+        args.console_host,
+        tools if tools is not None else reach.find_tools(reach.platform_of(sys.platform)),
+        runner=reach.AsyncioRunner(),
+        busy=lambda: app.fader_moving,
+        on_result=app.console_checked,
+        first_due=time.monotonic() + reach.KEEPALIVE_SECONDS,
+    )
+    app.on_armed(lambda: watch.request(reach.Trigger.ARM))
+
     runner = aiohttp_web.AppRunner(server)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, args.listen, args.http_port)
@@ -220,20 +237,6 @@ async def _run(
 
     loop.add_signal_handler(signal.SIGINT, on_interrupt)
 
-    # The ping that keeps the console's ARP entry warm, and checks at every arm
-    # (#73). For the life of the box, armed or not: an operator open from
-    # STANDING DOWN (#89) must not meet a cold entry after halftime. Started
-    # one interval after the startup check, which already warmed it. It holds
-    # no sender and writes no OSC; it waits for any fader move to end.
-    watch = reach.Watch(
-        args.console_host,
-        tools if tools is not None else reach.find_tools(reach.platform_of(sys.platform)),
-        runner=reach.AsyncioRunner(),
-        busy=lambda: app.fader_moving,
-        on_result=app.console_checked,
-        first_due=time.monotonic() + reach.KEEPALIVE_SECONDS,
-    )
-    app.on_armed(lambda: watch.request(reach.Trigger.ARM))
     watch_task: asyncio.Future[None] = asyncio.ensure_future(watch.run())
     watch_task.add_done_callback(lambda task: _watch_stopped(app, args.console_host, task))
 
@@ -457,7 +460,7 @@ def _ping_warning_lines(check: reach.Check | None) -> list[str]:
         _row("WARNING", NOTHING_THERE_WARNING),
         _note(f"at {check.host}: wrong address, wrong adapter,"),
         _note("cable out, or console off"),
-        _note("the box starts anyway; fader moves sent now go nowhere"),
+        _note("the box starts anyway; fader moves may be going nowhere"),
         _note("fix it, or carry on if the console is coming up later"),
     ]
 

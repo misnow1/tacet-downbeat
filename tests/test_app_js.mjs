@@ -3254,7 +3254,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
     chip(found("nothing-there")),
     [
       "fault",
-      "Nothing at the console address (no ARP reply). Fader moves are not reaching anything. "
+      "Nothing answered at the console address at the last check (no ARP reply). Fader moves may not be reaching anything. "
         + "Check the cable and the console IP; the operator has the fader.",
     ],
   );
@@ -3292,7 +3292,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("nothing there shows the red chip", nodes.get("console-reach").className, "fault");
   check(
     "and says so first",
-    nodes.get("console-reach").textContent.startsWith("Nothing at the console address"),
+    nodes.get("console-reach").textContent.startsWith("Nothing answered at the console address"),
     true,
   );
   nodes.get("console-reach").onclick();

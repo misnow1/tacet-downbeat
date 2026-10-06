@@ -171,7 +171,7 @@ DM7, the port or a delivered fader move:
 
 The ping is `ping -c 1` from the system, with no privilege and no OSC, and a
 read of the neighbour (ARP) table when it gets no reply. The box repeats it at
-every arm and every 4 minutes for as long as it runs, which also keeps the
+every arm and every 4 minutes for as long as it runs (every 30 seconds while the last result was `nothing at this address` or `could not check`), which also keeps the
 laptop's ARP entry for the console warm; see design.md 5.7.
 
 The `code` row is the one thing the box *did* check: it asked git, once, before
@@ -266,13 +266,13 @@ is write-only, and a packet sent into a black hole succeeds (design.md 5.3).
 
 **The console chip, in the strip** says what the last ping at the console's
 address found (#73), and shows only when something is wrong; no chip is the
-healthy state. A red `Nothing at the console address` means nothing answered
-ARP either: the fader moves are not reaching anything, so check the cable and
+healthy state. A red `Nothing answered at the console address at the last check` means nothing answered
+ARP either: fader moves may not be reaching anything, so check the cable and
 the console IP. The operator has the fader. A dim `Console did not answer ping`
 means no reply but the address may still be the console, which may ignore ping;
 fader moves are still sent, unconfirmed. `Could not check the console` carries
 its reason. A tap reads the whole sentence, and the chip clears itself on the
-next answer.
+next answer, so a fixed cable clears it within 30 seconds.
 
 **An amber `Unreviewed code running` chip in the strip** means the box is running
 uncommitted changes, so the log's commit does not describe what ran (#157). It

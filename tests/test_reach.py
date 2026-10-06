@@ -514,6 +514,12 @@ class TestTheWatch(WatchCase):
         self.assertEqual(gated.started, 1)
         self.assertEqual(len(self.results), 1)
         self.assertFalse(watch.running)
+        # The request that arrived mid-check did not queue a second one: the
+        # next check is the keepalive, a whole interval after the first.
+        await self.clock.advance(reach.KEEPALIVE_SECONDS - 1)
+        self.assertEqual(gated.started, 1)
+        await self.clock.advance(1)
+        self.assertEqual(gated.started, 2)
 
     async def test_cancelling_the_watch_cancels_the_check_in_flight(self):
         cancelled = []
@@ -540,7 +546,7 @@ class TestTheWatch(WatchCase):
         watch = self.watch(runner=FakeRunner(ping=RuntimeError("boom")), first_due=0.0)
         task = await self.started(watch)
         self.assertEqual(self.results[0].reach, reach.Reach.COULD_NOT_CHECK)
-        await self.clock.advance(reach.KEEPALIVE_SECONDS)
+        await self.clock.advance(reach.RECHECK_BAD_SECONDS)
         self.assertEqual(len(self.results), 2)
         self.assertFalse(task.done())
 
@@ -556,6 +562,58 @@ class TestTheWatch(WatchCase):
         await self.clock.advance(reach.KEEPALIVE_SECONDS)
         self.assertEqual(len(seen), 2)
         self.assertFalse(task.done())
+
+    async def test_a_bad_result_is_rechecked_soon_and_a_good_one_a_whole_interval_later(self):
+        # Nothing there, or could not check, may be a cable that was just
+        # fixed: look again in RECHECK_BAD_SECONDS. No answer may only be a
+        # console that ignores ping, so it is not bad.
+        cases = {
+            "nothing there": (reach.ProcessOutput(68, b"", b"Host is down"), reach.RECHECK_BAD_SECONDS),
+            "could not check": (reach.ProcessOutput(64, b"", b"bad"), reach.RECHECK_BAD_SECONDS),
+            "no answer": (reach.ProcessOutput(2, b"", b""), reach.KEEPALIVE_SECONDS),
+            "answered": (reach.ProcessOutput(0, b"time=1 ms", b""), reach.KEEPALIVE_SECONDS),
+        }
+        for name, (ping, delay) in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                self.runner = FakeRunner(ping=ping, arp=out(BSD_RESOLVED))
+                watch = self.watch(first_due=0.0)
+                task = await self.started(watch)
+                self.assertEqual(len(self.pings()), 1)
+                await self.clock.advance(delay - 1)
+                self.assertEqual(len(self.pings()), 1)
+                await self.clock.advance(1)
+                self.assertEqual(len(self.pings()), 2)
+                await self.stop(task)
+
+    async def test_bad_then_good_returns_to_the_keepalive_interval(self):
+        self.runner = FakeRunner(ping=reach.ProcessOutput(68, b"", b"Host is down"))
+        watch = self.watch(first_due=0.0)
+        await self.started(watch)
+        self.runner.ping = ANSWERED
+        await self.clock.advance(reach.RECHECK_BAD_SECONDS)
+        self.assertEqual(len(self.pings()), 2)
+        self.assertEqual(self.results[-1].reach, reach.Reach.ANSWERED)
+        await self.clock.advance(reach.KEEPALIVE_SECONDS - 1)
+        self.assertEqual(len(self.pings()), 2)
+        await self.clock.advance(1)
+        self.assertEqual(len(self.pings()), 3)
+
+    async def test_a_bad_result_is_still_never_checked_during_a_move(self):
+        self.runner = FakeRunner(ping=reach.ProcessOutput(68, b"", b"Host is down"))
+        watch = self.watch(first_due=0.0)
+        await self.started(watch)
+        self.moving = True
+        await self.clock.advance(reach.RECHECK_BAD_SECONDS * 3)
+        self.assertEqual(len(self.pings()), 1)
+        self.moving = False
+        await self.clock.advance(reach.BUSY_RETRY_SECONDS)
+        self.assertEqual(len(self.pings()), 2)
+
+    def test_the_bad_recheck_is_shorter_than_the_keepalive_and_longer_than_a_check(self):
+        self.assertLess(reach.RECHECK_BAD_SECONDS, reach.KEEPALIVE_SECONDS)
+        self.assertEqual(reach.RECHECK_BAD_SECONDS, 30)
+        self.assertGreater(reach.RECHECK_BAD_SECONDS, reach.PING_TIMEOUT_SECONDS + reach.ARP_TIMEOUT_SECONDS)
 
     async def test_an_arm_request_before_the_loop_has_started_is_not_lost(self):
         watch = self.watch(first_due=reach.KEEPALIVE_SECONDS)

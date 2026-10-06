@@ -752,7 +752,7 @@ function provenanceChip(p) {
 }
 
 // #73: the console chip's head words. Quoted in the docs; tests hold them together.
-const CONSOLE_NOTHING_THERE = "Nothing at the console address";
+const CONSOLE_NOTHING_THERE = "Nothing answered at the console address at the last check";
 const CONSOLE_NO_ANSWER = "Console did not answer ping";
 const CONSOLE_NOT_CHECKED = "Could not check the console";
 
@@ -763,7 +763,7 @@ const CONSOLE_NOT_CHECKED = "Could not check the console";
 function consoleChip(c) {
   if (!c) return null;
   if (c.reach === "nothing-there") {
-    return ["fault", CONSOLE_NOTHING_THERE + " (no ARP reply). Fader moves are not reaching anything. "
+    return ["fault", CONSOLE_NOTHING_THERE + " (no ARP reply). Fader moves may not be reaching anything. "
       + "Check the cable and the console IP; the operator has the fader."];
   }
   if (c.reach === "no-answer") {

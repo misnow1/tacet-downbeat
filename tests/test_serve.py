@@ -1038,6 +1038,16 @@ class TestBuildLogsTheConsoleCheck(unittest.TestCase):
             events = [e.event for e in annotations.read_entries(log_path)]
         self.assertEqual(events, [annotations.BOX_STARTED, annotations.CONSOLE_CHECKED])
 
+    def test_the_startup_entry_names_no_previous_result(self):
+        # Nothing was checked before it, so it must not claim something was.
+        with TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "game.jsonl"
+            args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+            _, log, _ = serve.build(args, CLEAN_CODE, console_check=ANSWERED_CHECK)
+            log.close()
+            entry = next(e for e in annotations.read_entries(log_path) if e.event == annotations.CONSOLE_CHECKED)
+        self.assertIsNone(entry.data["previous"])
+
     def test_a_box_built_without_one_logs_none(self):
         with TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "game.jsonl"
@@ -1046,6 +1056,38 @@ class TestBuildLogsTheConsoleCheck(unittest.TestCase):
             log.close()
             events = [e.event for e in annotations.read_entries(log_path)]
         self.assertEqual(events, [annotations.BOX_STARTED])
+
+
+class TestADeadWatchIsSaidOutLoud(unittest.IsolatedAsyncioTestCase):
+    """#41's rule: a background task that dies is a fault of its own."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        log_path = Path(self._tmp.name) / "game.jsonl"
+        args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+        self.app, self.log, _ = serve.build(args, CLEAN_CODE, console_check=ANSWERED_CHECK)
+        self.addCleanup(self.log.close)
+
+    async def test_a_task_that_died_reports_could_not_check_with_the_reason(self):
+        died = asyncio.get_running_loop().create_future()
+        died.set_exception(RuntimeError("boom"))
+        serve._watch_stopped(self.app, CONSOLE, died)
+        block = self.app.snapshot()["console"]
+        self.assertEqual(block["reach"], "could-not-check")
+        self.assertEqual(block["detail"], reach.CHECK_STOPPED.format(error="RuntimeError: boom"))
+
+    async def test_a_cancelled_task_changes_nothing(self):
+        cancelled = asyncio.get_running_loop().create_future()
+        cancelled.cancel()
+        serve._watch_stopped(self.app, CONSOLE, cancelled)
+        self.assertEqual(self.app.snapshot()["console"]["reach"], "answered")
+
+    async def test_a_task_that_finished_cleanly_changes_nothing(self):
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(None)
+        serve._watch_stopped(self.app, CONSOLE, done)
+        self.assertEqual(self.app.snapshot()["console"]["reach"], "answered")
 
 
 class TestBuildPassesTheFlagsThrough(unittest.TestCase):

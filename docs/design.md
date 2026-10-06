@@ -564,7 +564,7 @@ exchange, retrying only when it has a new packet to send. A snap open is one
 packet, so a lost exchange would leave it sitting in the hold queue with
 `commanded` reading open. A ping every 4 minutes, for the box's whole life and
 not only while armed (an operator open from STANDING DOWN, #89, must not meet a
-cold entry after halftime), keeps the entry warm. Linux uses a stale entry
+cold entry after halftime), keeps the entry warm. While the last result is nothing-there or could-not-check it looks again every 30 s so a fixed cable clears the warning promptly; no-answer is not bad, because the DM7 may simply ignore ping. Linux uses a stale entry
 immediately, so the check matters there and the keepalive does not. The
 keepalive is never a fader write: re-sending the commanded level would yank the
 fader back after a StageMix move (#12). It runs the system `ping` as a child

@@ -193,6 +193,78 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             console_check=console_check,
         )
 
+    #: The operator's whole cycle, from a cold boot (#107): every move the page asks for.
+    OPERATOR_CYCLE = ("close_now", "arm", "trigger", "release", "handoff", "report_ready", "trigger", "close_now")
+
+    #: What a ping can find, one after another: answered, no reply, nothing there, could not check.
+    PING_OUTCOMES = (
+        reach.ProcessOutput(0, b"time=1.0 ms", b""),
+        reach.ProcessOutput(2, b"", b""),
+        reach.ProcessOutput(68, b"", b"Host is down"),
+        reach.ProcessOutput(64, b"", b"bad"),
+    )
+
+    async def run_operator_cycle(self, *, watched):
+        """The cycle on its own console, with or without a console watch beside it.
+
+        Returns `(sender, pings)`. After every operator step - once its fade has
+        landed - a watched run lets the watch run a check and asserts the check
+        put NOTHING on the wire, so a check that re-sent the commanded level
+        (the keepalive hazard, #12) fails here and not only at the end. The
+        console is on a steady clock so both runs send the same steps.
+        """
+        sender = FakeSender()
+        saved_root = self.root
+        self.root = saved_root / ("watched" if watched else "plain")
+        self.root.mkdir()
+        try:
+            app = self.build(level_known=False, steady=True, console_sender=sender)
+        finally:
+            self.root = saved_root
+        if not watched:
+            for name in self.OPERATOR_CYCLE:
+                await getattr(app, name)()
+                await app.wait_for_fade()
+            return sender, []
+        clock = ManualClock()
+        runner = FakeRunner()
+        watch = reach.Watch(
+            HOST,
+            reach.Tools(platform=reach.Platform.MACOS, ping="/sbin/ping", arp="/usr/sbin/arp"),
+            runner=runner,
+            busy=lambda: app.fader_moving,
+            on_result=app.console_checked,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            first_due=0.0,
+        )
+        app.on_armed(lambda: watch.request(reach.Trigger.ARM))
+        task = asyncio.ensure_future(watch.run())
+        await clock.settle()
+        for number, name in enumerate(self.OPERATOR_CYCLE):
+            runner.ping = self.PING_OUTCOMES[number % len(self.PING_OUTCOMES)]
+            await getattr(app, name)()
+            await app.wait_for_fade()
+            before = len(sender.packets)
+            checked = len(runner.calls)
+            await clock.advance(reach.KEEPALIVE_SECONDS)
+            self.assertGreater(len(runner.calls), checked, f"no check ran after {name}")
+            self.assertEqual(len(sender.packets), before, f"a console check wrote to the console after {name}")
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return sender, [c for c in runner.calls if c[0] == "/sbin/ping"]
+
+    async def assert_checks_add_nothing_to_the_cycle(self):
+        plain, _ = await self.run_operator_cycle(watched=False)
+        watched, pings = await self.run_operator_cycle(watched=True)
+        self.assertGreaterEqual(len(plain.packets), 5)
+        self.assertGreaterEqual(len(pings), len(self.OPERATOR_CYCLE))
+        # The same levels, in the same order, as the cycle with no watch at all.
+        self.assertEqual(watched.levels(), plain.levels())
+        for address in watched.addresses():
+            self.assertEqual(address, dm7.fader_address(3))
+
     def reaper_parked(self, app):
         """Reaper open with its audio device running, transport parked, and
         listened to for a full timeout: the box will not call a transport
@@ -843,37 +915,7 @@ class TestFader(AppTestCase):
             self.assertEqual(address, dm7.fader_address(3))
 
     async def test_every_console_packet_is_a_fader_level_write_with_a_console_watch_attached(self):
-        app = self.build(level_known=False)
-        clock = ManualClock()
-        watch = reach.Watch(
-            HOST,
-            reach.Tools(platform=reach.Platform.MACOS, ping="/sbin/ping", arp="/usr/sbin/arp"),
-            runner=FakeRunner(),
-            busy=lambda: app.fader_moving,
-            on_result=app.console_checked,
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
-            first_due=0.0,
-        )
-        app.on_armed(lambda: watch.request(reach.Trigger.ARM))
-        task = asyncio.ensure_future(watch.run())
-        await clock.settle()
-        await app.close_now()
-        await app.arm()
-        await app.trigger()
-        await app.release()
-        await app.wait_for_fade()
-        await clock.advance(reach.KEEPALIVE_SECONDS)
-        await app.handoff()
-        await app.report_ready()
-        await app.trigger()
-        await app.close_now()
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        self.assertGreaterEqual(len(self.console_sender.packets), 5)
-        for address in self.console_sender.addresses():
-            self.assertEqual(address, dm7.fader_address(3))
+        await self.assert_checks_add_nothing_to_the_cycle()
 
 
 class TestDetectorGate(AppTestCase):
@@ -4838,38 +4880,9 @@ class TestTheConsoleCheck(AppTestCase):
 
     async def test_the_console_check_and_its_keepalive_never_send_a_packet_to_the_console(self):
         # The faders-only assertion for this feature: whatever the check
-        # finds, the only thing on the wire is the operator's own fader write.
-        app = self.build(level_known=False)
-        kinds = [
-            reach.Reach.ANSWERED,
-            reach.Reach.NO_ANSWER,
-            reach.Reach.NOTHING_THERE,
-            reach.Reach.COULD_NOT_CHECK,
-        ]
-        outputs = [
-            reach.ProcessOutput(0, b"time=1.0 ms", b""),
-            reach.ProcessOutput(2, b"", b""),
-            reach.ProcessOutput(68, b"", b"Host is down"),
-            reach.ProcessOutput(64, b"", b"bad"),
-        ]
-        runner = FakeRunner()
-        watch = self.watch_for(app, runner=runner)
-        app.on_armed(lambda: watch.request(reach.Trigger.ARM))
-        task = asyncio.ensure_future(watch.run())
-        await self.clock.settle()
-        steps = [app.close_now, app.arm, app.trigger, app.release, app.wait_for_fade, app.handoff]
-        steps += [app.report_ready, app.trigger, app.close_now]
-        for step, output in zip(steps, outputs * 3, strict=False):
-            runner.ping = output
-            await step()
-            await self.clock.advance(reach.KEEPALIVE_SECONDS)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        self.assertGreaterEqual(len([c for c in runner.calls if c[0] == "/sbin/ping"]), len(kinds))
-        self.assertGreaterEqual(len(self.console_sender.packets), 5)
-        for address in self.console_sender.addresses():
-            self.assertEqual(address, dm7.fader_address(3))
+        # finds, the only thing on the wire is the operator's own fader write,
+        # and no check adds one of its own - not even a repeat of the last.
+        await self.assert_checks_add_nothing_to_the_cycle()
         self.assertEqual(self.reaper_sender.packets, [])
 
     async def test_arming_requests_a_console_check(self):

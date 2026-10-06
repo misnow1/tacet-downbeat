@@ -67,7 +67,7 @@ unreliable - it was at game 2. With both adapters wired, game 3's link held all
 game: median 23 ms from tap to box.
 
 **The box pings the console's address** once at startup, at every arm, and
-every 4 minutes for as long as it runs, armed or not (#73). That keeps the
+every 4 minutes for as long as it runs, armed or not (#73), or every 30 seconds while the last check found nothing there or could not run, so a cable put back clears the warning quickly. That keeps the
 laptop's ARP entry for the console from going cold across a long halftime
 (macOS forgets an idle one after 20 minutes, and the first fader move after it
 then waits on a fresh ARP exchange). It is a ping, never an OSC message, and it
@@ -231,7 +231,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 | Recording | `stopped`, tagged **confirmed**, with Start recording live (Reaper open, its audio device running): the box asks Reaper for its state when it first hears it. `unknown` tagged **not yet reported** means Reaper did not answer; Start recording is still live within five seconds. **no feedback** with the button grey means Reaper is not open, or its OSC device is not sending to the box: the line under the panel says so |
 | Top of the screen | Nothing. No banner is the healthy state |
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
-| Console chip, in the strip | Nothing. `Nothing at the console address` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
+| Console chip, in the strip | Nothing. `Nothing answered at the console address at the last check` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |

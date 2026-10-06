@@ -10,6 +10,7 @@ reads the imports and fails.
 """
 
 import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -90,9 +91,14 @@ class TestOnlyServeAsksGit(unittest.TestCase):
 
     def test_only_serve_asks_git(self):
         for path in sorted(PACKAGE_ROOT.glob("*.py")):
-            # reach asks the network, not git, and does it through asyncio's
-            # subprocess support rather than the `subprocess` module (#73).
-            if path.name in ("provenance.py", "serve.py", "reach.py"):
+            if path.name == "reach.py":
+                # reach defines its own `probe(`, and asks the network, not git.
+                # It runs children through asyncio's subprocess support, so it
+                # still imports no `subprocess` and never mentions git (#73).
+                self.assertNotIn("subprocess", _imported_top_level_modules(path))
+                self.assertNotIn("git", re.findall(r"\w+", path.read_text(encoding="utf-8").lower()))
+                continue
+            if path.name in ("provenance.py", "serve.py"):
                 continue
             self.assertNotIn("subprocess", _imported_top_level_modules(path), path.name)
             self.assertNotIn("probe(", path.read_text(encoding="utf-8"), path.name)
@@ -124,9 +130,11 @@ def _imported_tacet_modules(source: Path) -> set[str]:
 class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
     """#73: a ping and a read of the neighbour table, never a packet of ours.
 
-    `reach` is outside the control path and moves nothing. It cannot import the
-    code that could put a UDP datagram on the wire, so it structurally cannot
-    send the console an OSC message, let alone a get that might recall a scene.
+    `reach` is outside the control path and moves nothing. It imports nothing
+    that can send to the console - no `socket`, no `osc`, `net` or `dm7` - and
+    these tests read its source for the ways round that. They are a tripwire on
+    what the module says, not a sandbox: what it proves is that no line of it
+    opens a socket or an OSC encoder.
     """
 
     def test_reach_imports_only_the_standard_library(self):
@@ -139,6 +147,24 @@ class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
         tacet_modules = _imported_tacet_modules(PACKAGE_ROOT / "reach.py")
         for forbidden in ("osc", "net", "dm7"):
             self.assertNotIn(forbidden, tacet_modules)
+
+    #: Ways to reach a socket without importing one, or to import by string.
+    FORBIDDEN_NAMES = frozenset({"importlib", "__import__"})
+    FORBIDDEN_ATTRIBUTES = frozenset(
+        {"create_datagram_endpoint", "create_connection", "open_connection", "sock_sendto", "sock_connect"}
+    )
+
+    def test_reach_has_no_way_round_the_import_check(self):
+        tree = ast.parse((PACKAGE_ROOT / "reach.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, self.FORBIDDEN_NAMES)
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, self.FORBIDDEN_ATTRIBUTES)
+            if isinstance(node, ast.alias | ast.ImportFrom):
+                names = [node.name] if isinstance(node, ast.alias) else [node.module or ""]
+                for name in names:
+                    self.assertNotEqual(name.split(".")[0], "importlib")
 
     def test_the_helper_sees_every_spelling_of_an_import(self):
         # Proves the check above could fail.
