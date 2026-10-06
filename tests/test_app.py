@@ -4859,7 +4859,11 @@ class TestStoppingTheBox(AppTestCase):
         after = levels[before:]
         planned = [level for _, level in dm7.ramp_steps(start, dm7.MINUS_INF, 1.0, tick_hz=200.0)]
         self.assertTrue(after)
-        self.assertEqual(planned[-len(after) :], after)
+        # An in-order subsequence of the plan, not a literal tail: the drive
+        # sends only the newest of the steps sharing an instant, so a close's
+        # floor is passed over in favour of its -inf.
+        remaining = iter(planned)
+        self.assertTrue(all(level in remaining for level in after), after)
         self.assertEqual(after[-1], dm7.MINUS_INF)
 
     async def test_every_packet_sent_while_stopping_is_a_fader_level_write(self):

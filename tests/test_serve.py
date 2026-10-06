@@ -137,16 +137,16 @@ class TestStopLines(unittest.TestCase):
         ride = tacet_app.Stopped(
             kind=moves.MoveKind.RIDE,
             end=dm7.UNITY,
-            level=-150,
+            level=-1500,
             abandoned=tacet_app.AbandonedBecause.RIDE,
         )
         late = tacet_app.Stopped(
             kind=moves.MoveKind.FADE,
             end=dm7.MINUS_INF,
-            level=-150,
+            level=-1500,
             abandoned=tacet_app.AbandonedBecause.LATE,
         )
-        failed = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=-150, abandoned=None)
+        failed = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=-1500, abandoned=None)
         nothing = tacet_app.Stopped(kind=None, end=None, level=dm7.UNITY, abandoned=None)
         return [
             serve.stopping_line(self.move(), now=10.5, margin=self.MARGIN),
@@ -175,7 +175,7 @@ class TestStopLines(unittest.TestCase):
 
     def test_an_abandoned_ride_says_where_it_stopped_and_where_it_was_going(self):
         stopped = tacet_app.Stopped(
-            kind=moves.MoveKind.RIDE, end=dm7.UNITY, level=-150, abandoned=tacet_app.AbandonedBecause.RIDE
+            kind=moves.MoveKind.RIDE, end=dm7.UNITY, level=-1500, abandoned=tacet_app.AbandonedBecause.RIDE
         )
         line = serve.stopped_line(stopped)
         self.assertIn("the ride was stopped where it was, at -15.0 dB, short of 0.0 dB", line)
@@ -185,14 +185,14 @@ class TestStopLines(unittest.TestCase):
         stopped = tacet_app.Stopped(
             kind=moves.MoveKind.FADE,
             end=dm7.MINUS_INF,
-            level=-150,
+            level=-1500,
             abandoned=tacet_app.AbandonedBecause.LATE,
         )
         line = serve.stopped_line(stopped)
         self.assertIn("the fade was stopped where it was, at -15.0 dB, short of -inf", line)
 
     def test_a_failed_fade_points_at_the_log(self):
-        stopped = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=-150, abandoned=None)
+        stopped = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=-1500, abandoned=None)
         line = serve.stopped_line(stopped)
         self.assertIn("the fade did not land", line)
         self.assertIn("move-failed", line)
@@ -275,7 +275,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.assertIn(tacet_app.MOVE_LANDED, events)
         self.assertNotIn(tacet_app.MOVE_ABANDONED, events)
         self.assertTrue(self.sender.closed)
-        self.assertFalse(log.is_open)
+        self.assertFalse(log._file.is_open)
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
     async def test_two_ctrl_c_mid_ride_leave_the_ride_where_it_was(self):
@@ -294,7 +294,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.assertIn(tacet_app.MOVE_ABANDONED, events)
         self.assertNotIn(tacet_app.MOVE_LANDED, events)
         self.assertTrue(self.sender.closed)
-        self.assertFalse(log.is_open)
+        self.assertFalse(log._file.is_open)
 
 
 FULL = [

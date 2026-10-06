@@ -39,6 +39,11 @@ class MoveDescription:
     floor: int  # the console's fade floor; -inf is entered and left here
     taper: dm7.Taper | None
 
+    @property
+    def ends_at(self) -> float:
+        """When the move is due to send its last step, on the box's monotonic clock."""
+        return self.started_at + self.seconds
+
     def as_data(self) -> dict[str, Any]:
         """The nine keys the page reads, in dB, with -inf as None (JSON has no -inf)."""
         return {
