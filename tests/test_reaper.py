@@ -1100,6 +1100,17 @@ class TestTakeReport(unittest.TestCase):
             reaper.TakeReport.FOUND,
         )
 
+    def test_a_record_report_exactly_at_the_refresh_cap_is_started(self):
+        # The cap is exclusive, like the start guard's: at the cap the refresh
+        # is already abandoned.
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        request = _request(before)
+        before = _step(before, meter_packet(), 104.0)
+        self.assertIs(
+            self.classify(before, _record(), refresh=request, at=100.0 + reaper.REFRESH_ANSWER_SECONDS),
+            reaper.TakeReport.STARTED,
+        )
+
     def test_a_record_report_after_a_lost_take_is_started(self):
         # A take restarted in a relaunched Reaper that never said `/record 0`.
         before = _step(reaper.TransportState(), _record(), 100.0)

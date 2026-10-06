@@ -126,9 +126,10 @@ on the script at all.
 **A restarted box mid-game needs nothing from you.** It asks Reaper for its
 transport state (#172), sees the take already rolling and logs
 `recording-found` with Reaper's position, which markers can anchor to. It never
-writes a second anchor for that take. If Reaper does not answer, the box refuses to start
-one rather than risk stopping the live take, and says so; start or stop in
-Reaper directly and the box picks the state up from that change.
+writes a second anchor for that take. If Reaper does not answer, the box
+refuses to start a recording rather than risk stopping the live take, and says
+so; start or stop in Reaper directly and the box picks the state up from that
+change.
 
 **If the mirror script dies**, the markers stop and the data does not. The
 annotation log is the source of truth and every marker is derivable from it
