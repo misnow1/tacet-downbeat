@@ -326,9 +326,24 @@ does and does not do and waits five seconds; the second one does it. Wait longer
 than that and the next press warns again rather than stopping, so a stray Ctrl-C
 early in a game cannot pair up with an unrelated one later.
 
-It never fades on the way out - the operator is left in control, and the console
-keeps whatever level it was last commanded. **Stopping the box does not stop the
-recording**; Reaper is still rolling and is stopped in Reaper.
+It starts no fader move on the way out (#44), and the operator is left in
+control. A fade already under way is let land, for no longer than the fade itself
+plus half a second; a ride up (up-slow, READY, a target change) is stopped where
+it is and logged `move-abandoned`. After that the console keeps whatever level it
+was last commanded. The terminal says which, in its last `fader:` line, since
+the page is gone by then.
+
+- A Ctrl-C while a fade is landing leaves it where it is, also logged
+  `move-abandoned`.
+- SIGTERM (`kill`, a logout, a service manager) stops at once, the same way, with
+  no confirmation.
+- The next start always reads the level `unknown` (#107), so **Close now** or an
+  open is the first fader tap after any restart.
+- A crash or `kill -9` still parks a move part-way. The damage is contained to
+  the band PA, and the next start reads the level unknown.
+
+**Stopping the box does not stop the recording**; Reaper is still rolling and is
+stopped in Reaper.
 
 ---
 

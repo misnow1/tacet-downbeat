@@ -256,7 +256,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
                     return task
                 await asyncio.sleep(0.01)
         task.cancel()
-        self.fail("the signal handler was never installed; nothing was sent")
+        raise AssertionError("the signal handler was never installed; nothing was sent")
 
     def events(self):
         return [e.event for e in annotations.read_entries(self.root / "game.jsonl")]

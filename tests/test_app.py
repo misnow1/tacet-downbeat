@@ -4887,7 +4887,7 @@ class TestStoppingTheBox(AppTestCase):
                 await app.finish_stop(abandon=asyncio.Event())
                 for packet in sender.packets[before:]:
                     message = osc.decode_packet(packet)
-                    self.assertIsInstance(message, osc.Message)
+                    assert isinstance(message, osc.Message)
                     self.assertEqual(message.address, address)
                     self.assertEqual(len(message.args), 1)
                     self.assertIsInstance(message.args[0], int)
