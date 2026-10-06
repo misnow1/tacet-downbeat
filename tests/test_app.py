@@ -12,7 +12,9 @@ from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
 from tacet import provenance as prov
+from tacet import reach
 from tests.disk import Disk
+from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
 from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply, rolling_with_refresh
 from tests.test_annotations import Gate, Killed
 
@@ -150,6 +152,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         level_known=True,
         tick_hz=200.0,
         provenance=None,
+        console_check=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -188,6 +191,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             stale_tap_seconds=stale_tap_seconds,
             machine=state.Machine(level_known=level_known),
             provenance=provenance,
+            console_check=console_check,
         )
 
     def reaper_parked(self, app):
@@ -835,6 +839,39 @@ class TestFader(AppTestCase):
         await app.report_ready()
         await app.trigger()
         await app.close_now()
+        self.assertGreaterEqual(len(self.console_sender.packets), 5)
+        for address in self.console_sender.addresses():
+            self.assertEqual(address, dm7.fader_address(3))
+
+    async def test_every_console_packet_is_a_fader_level_write_with_a_console_watch_attached(self):
+        app = self.build(level_known=False)
+        clock = ManualClock()
+        watch = reach.Watch(
+            HOST,
+            reach.Tools(platform=reach.Platform.MACOS, ping="/sbin/ping", arp="/usr/sbin/arp"),
+            runner=FakeRunner(),
+            busy=lambda: app.fader_moving,
+            on_result=app.console_checked,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            first_due=0.0,
+        )
+        app.on_armed(lambda: watch.request(reach.Trigger.ARM))
+        task = asyncio.ensure_future(watch.run())
+        await clock.settle()
+        await app.close_now()
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await app.wait_for_fade()
+        await clock.advance(reach.KEEPALIVE_SECONDS)
+        await app.handoff()
+        await app.report_ready()
+        await app.trigger()
+        await app.close_now()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
         self.assertGreaterEqual(len(self.console_sender.packets), 5)
         for address in self.console_sender.addresses():
             self.assertEqual(address, dm7.fader_address(3))
@@ -4773,6 +4810,214 @@ class TestTheBoxSaysWhatCodeItRuns(AppTestCase):
         app.log_box_started()
         self.log.flush()
         self.assertFalse(app.snapshot()["log"]["healthy"])
+
+
+def result(kind, trigger=reach.Trigger.KEEPALIVE, *, at=1.0, detail=None):
+    return reach.Check(kind, trigger, HOST, at, detail=detail)
+
+
+class TestTheConsoleCheck(AppTestCase):
+    """#73: whether something answers at the console's address. Warned about,
+    never gated on, and never a packet to the console."""
+
+    def watch_for(self, app, *, runner=None, clock=None):
+        clock = clock or ManualClock()
+        self.clock = clock
+        return reach.Watch(
+            HOST,
+            reach.Tools(platform=reach.Platform.MACOS, ping="/sbin/ping", arp="/usr/sbin/arp"),
+            runner=runner or FakeRunner(),
+            busy=lambda: app.fader_moving,
+            on_result=app.console_checked,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            first_due=reach.KEEPALIVE_SECONDS,
+        )
+
+    def logged(self):
+        return [e for e in self.entries() if e.event == ann.CONSOLE_CHECKED]
+
+    async def test_the_console_check_and_its_keepalive_never_send_a_packet_to_the_console(self):
+        # The faders-only assertion for this feature: whatever the check
+        # finds, the only thing on the wire is the operator's own fader write.
+        app = self.build(level_known=False)
+        kinds = [
+            reach.Reach.ANSWERED,
+            reach.Reach.NO_ANSWER,
+            reach.Reach.NOTHING_THERE,
+            reach.Reach.COULD_NOT_CHECK,
+        ]
+        outputs = [
+            reach.ProcessOutput(0, b"time=1.0 ms", b""),
+            reach.ProcessOutput(2, b"", b""),
+            reach.ProcessOutput(68, b"", b"Host is down"),
+            reach.ProcessOutput(64, b"", b"bad"),
+        ]
+        runner = FakeRunner()
+        watch = self.watch_for(app, runner=runner)
+        app.on_armed(lambda: watch.request(reach.Trigger.ARM))
+        task = asyncio.ensure_future(watch.run())
+        await self.clock.settle()
+        steps = [app.close_now, app.arm, app.trigger, app.release, app.wait_for_fade, app.handoff]
+        steps += [app.report_ready, app.trigger, app.close_now]
+        for step, output in zip(steps, outputs * 3, strict=False):
+            runner.ping = output
+            await step()
+            await self.clock.advance(reach.KEEPALIVE_SECONDS)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        self.assertGreaterEqual(len([c for c in runner.calls if c[0] == "/sbin/ping"]), len(kinds))
+        self.assertGreaterEqual(len(self.console_sender.packets), 5)
+        for address in self.console_sender.addresses():
+            self.assertEqual(address, dm7.fader_address(3))
+        self.assertEqual(self.reaper_sender.packets, [])
+
+    async def test_arming_requests_a_console_check(self):
+        app = self.build()
+        asked = []
+        app.on_armed(lambda: asked.append(True))
+        await app.arm()
+        self.assertEqual(asked, [True])
+
+    async def test_an_open_from_standing_down_requests_a_check_after_its_packet(self):
+        app = self.build()
+        seen = []
+        app.on_armed(lambda: seen.append(len(self.console_sender.packets)))
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(seen, [1])
+
+    async def test_accepting_the_arm_prompt_requests_a_check(self):
+        app = self.build()
+        asked = []
+        app.on_armed(lambda: asked.append(True))
+        await app.annotate(ann.BAND_ENTERS_STANDS)
+        await app.accept_prompt(app.snapshot()["prompt"]["seq"])
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertEqual(asked, [True])
+
+    async def test_standing_down_does_not_request_a_check(self):
+        app = self.build()
+        await app.arm()
+        asked = []
+        app.on_armed(lambda: asked.append(True))
+        await app.stand_down()
+        self.assertEqual(asked, [])
+
+    async def test_a_listener_that_raises_cannot_break_an_arm(self):
+        app = self.build()
+
+        def broken():
+            raise RuntimeError("check is broken")
+
+        app.on_armed(broken)
+        outcome = await app.arm()
+        self.assertIsNone(outcome.refusal)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertIn("armed", self.keys())
+
+    async def test_a_failing_check_never_delays_or_refuses_the_arm(self):
+        gated = GatedRunner()
+        app = self.build()
+        watch = self.watch_for(app, runner=gated)
+        app.on_armed(lambda: watch.request(reach.Trigger.ARM))
+        task = asyncio.ensure_future(watch.run())
+        await self.clock.settle()
+        outcome = await asyncio.wait_for(app.arm(), 1.0)
+        self.assertIsNone(outcome.refusal)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        await self.clock.settle()
+        self.assertTrue(watch.running)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def test_the_fader_is_moving_while_a_fade_runs_and_not_after(self):
+        app = self.build(fade=0.2)
+        self.assertFalse(app.fader_moving)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        self.assertTrue(app.fader_moving)
+        await app.wait_for_fade()
+        self.assertFalse(app.fader_moving)
+
+    async def test_the_startup_check_is_logged_right_after_box_started(self):
+        startup = result(reach.Reach.ANSWERED, reach.Trigger.STARTUP)
+        app = self.build(provenance=CODE, console_check=startup)
+        app.log_box_started()
+        app.console_checked(startup)
+        keys = self.keys()
+        self.assertEqual(keys[-2:], [ann.BOX_STARTED, ann.CONSOLE_CHECKED])
+        entry = self.logged()[0]
+        self.assertEqual(entry.data["reach"], "answered")
+        self.assertEqual(entry.data["trigger"], "startup")
+        self.assertEqual(entry.data["host"], HOST)
+
+    async def test_an_arm_check_is_always_logged(self):
+        app = self.build()
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.STARTUP))
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.ARM))
+        self.assertEqual([e.data["trigger"] for e in self.logged()], ["startup", "arm"])
+
+    async def test_an_unchanged_keepalive_result_is_not_logged(self):
+        app = self.build()
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.STARTUP))
+        app.console_checked(result(reach.Reach.ANSWERED))
+        app.console_checked(result(reach.Reach.ANSWERED))
+        self.assertEqual(len(self.logged()), 1)
+
+    async def test_a_changed_keepalive_result_is_logged_with_the_previous_one(self):
+        app = self.build()
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.STARTUP))
+        app.console_checked(result(reach.Reach.NO_ANSWER))
+        entry = self.logged()[-1]
+        self.assertEqual(entry.data["reach"], "no-answer")
+        self.assertEqual(entry.data["previous"], "answered")
+
+    async def test_a_change_notifies_the_page_and_an_unchanged_result_does_not(self):
+        app = self.build()
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.STARTUP))
+        pushes = []
+        app.on_change(lambda: pushes.append(True))
+        app.console_checked(result(reach.Reach.ANSWERED, at=2.0))
+        self.assertEqual(pushes, [])
+        app.console_checked(result(reach.Reach.NOTHING_THERE, at=3.0))
+        self.assertEqual(pushes, [True])
+        app.console_checked(result(reach.Reach.NOTHING_THERE, at=4.0))
+        self.assertEqual(pushes, [True])
+        app.console_checked(result(reach.Reach.COULD_NOT_CHECK, detail="x", at=5.0))
+        self.assertEqual(pushes, [True, True])
+
+    async def test_the_snapshot_carries_the_console_block(self):
+        app = self.build()
+        self.assertEqual(app.snapshot()["console"]["reach"], "not-checked")
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.STARTUP, at=9.0))
+        block = app.snapshot()["console"]
+        self.assertEqual(block, {"reach": "answered", "detail": None, "checked_at": 9.0, "trigger": "startup"})
+        # Presence at an address is not confirmation of a fader move.
+        self.assertFalse(app.snapshot()["fader"]["confirmed"])
+
+    async def test_a_box_built_with_a_startup_check_says_so_in_its_first_snapshot(self):
+        app = self.build(console_check=result(reach.Reach.NOTHING_THERE, reach.Trigger.STARTUP))
+        self.assertEqual(app.snapshot()["console"]["reach"], "nothing-there")
+
+    async def test_a_check_that_cannot_be_saved_is_counted_not_raised(self):
+        disk = Disk()
+        disk.full = True
+        app = self.build(opener=disk.open)
+        app.console_checked(result(reach.Reach.ANSWERED, reach.Trigger.STARTUP))
+        self.log.flush()
+        self.assertFalse(app.snapshot()["log"]["healthy"])
+
+    async def test_a_nothing_there_does_not_stop_the_fader(self):
+        app = self.build()
+        app.console_checked(result(reach.Reach.NOTHING_THERE, reach.Trigger.ARM))
+        await app.arm()
+        await app.trigger()
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertEqual(self.console_sender.levels()[-1], dm7.UNITY)
 
 
 if __name__ == "__main__":

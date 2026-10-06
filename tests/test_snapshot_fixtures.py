@@ -56,6 +56,15 @@ class TestSnapshotFixtures(unittest.TestCase):
                 # Only the fix on the day is dirty; no machine path is in any of them.
                 self.assertEqual(code["dirty"], path.name == "snapshot-faults.json")
 
+    def test_every_fixture_says_what_the_console_check_found(self):
+        for path, text in self.snapshots_only().items():
+            with self.subTest(fixture=path.name):
+                found = json.loads(text)["console"]
+                self.assertEqual(set(found), {"reach", "detail", "checked_at", "trigger"})
+                # Only the faults page found nothing at the console's address.
+                expected = "nothing-there" if path.name == "snapshot-faults.json" else "answered"
+                self.assertEqual(found["reach"], expected)
+
     def test_each_state_is_the_state_it_is_named_for(self):
         states = {path.name: json.loads(text) for path, text in self.snapshots_only().items()}
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")

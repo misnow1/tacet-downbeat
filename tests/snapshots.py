@@ -29,7 +29,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tacet import annotations as ann
-from tacet import dm7, moves, osc, provenance, reaper
+from tacet import dm7, moves, osc, provenance, reach, reaper
 from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
@@ -76,6 +76,16 @@ CLEAN = provenance.Provenance(
 DIRTY = dataclasses.replace(CLEAN, branch="157-fix", dirty=True, worktree=True)
 
 
+def _pinged(kind: reach.Reach) -> reach.Check:
+    """What the startup ping found (#73). Fixed, so a fixture never depends on
+    the network that generated it."""
+    return reach.Check(kind, reach.Trigger.STARTUP, "192.0.2.1", CLOCK_START, rtt_ms=0.4)
+
+
+#: Every fixture box answered its ping, except the faults page.
+ANSWERED = _pinged(reach.Reach.ANSWERED)
+
+
 class _Sender:
     def send(self, packet: bytes) -> None:
         pass
@@ -104,6 +114,7 @@ def _build(
     recorder: _Sender | _Unreachable | None = None,
     machine: Machine | None = None,
     code: provenance.Provenance = CLEAN,
+    console_check: reach.Check = ANSWERED,
 ) -> Box:
     clock = [CLOCK_START]
 
@@ -124,6 +135,7 @@ def _build(
         monotonic=lambda: clock[0],
         machine=machine,
         provenance=code,
+        console_check=console_check,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
@@ -248,7 +260,8 @@ async def faults(root: Path) -> dict[str, Any]:
     The snap open's send never left the box, and it was absolute, so the
     level goes back to unknown (#116): this fixture's fader reads unknown too,
     for real, not just at cold boot."""
-    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known(), code=DIRTY)
+    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known(), code=DIRTY,
+        console_check=_pinged(reach.Reach.NOTHING_THERE))
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE

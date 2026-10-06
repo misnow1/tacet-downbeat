@@ -3241,6 +3241,67 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("and a second tap collapses it", nodes.get("provenance").dataset.expanded, "");
 }
 
+// -- the console's address (#73) --------------------------------------------------
+
+{
+  const chip = browser().context.consoleChip;
+  const found = (reach, detail = null) => ({ reach, detail, checked_at: 1, trigger: "arm" });
+  check("no console block says nothing", [chip(undefined), chip(null)], [null, null]);
+  check("an answer is the healthy state and has no chip", chip(found("answered")), null);
+  check("not checked says nothing", chip(found("not-checked")), null);
+  check(
+    "nothing there is a fault that says the operator has the fader",
+    chip(found("nothing-there")),
+    [
+      "fault",
+      "Nothing at the console address (no ARP reply). Fader moves are not reaching anything. "
+        + "Check the cable and the console IP; the operator has the fader.",
+    ],
+  );
+  check(
+    "no answer is a quiet note",
+    chip(found("no-answer")),
+    ["note", "Console did not answer ping. It may ignore ping. Fader moves are still sent, unconfirmed."],
+  );
+  check(
+    "could not check carries its reason",
+    chip(found("could-not-check", "ping is not installed or not on PATH")),
+    ["note", "Could not check the console: ping is not installed or not on PATH."],
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  delete snap.console;
+  let error = null;
+  try {
+    context.render(snap);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no console block does not throw", error, null);
+  check("and shows no chip", nodes.get("console-reach").className, "");
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  snap.console = { reach: "nothing-there", detail: null, checked_at: 1, trigger: "startup" };
+  context.render(snap);
+  check("nothing there shows the red chip", nodes.get("console-reach").className, "fault");
+  check(
+    "and says so first",
+    nodes.get("console-reach").textContent.startsWith("Nothing at the console address"),
+    true,
+  );
+  nodes.get("console-reach").onclick();
+  check("a tap expands the chip", nodes.get("console-reach").dataset.expanded, "1");
+  snap.console = { reach: "answered", detail: null, checked_at: 2, trigger: "keepalive" };
+  context.render(snap);
+  check("an answer afterwards clears it", [nodes.get("console-reach").className, nodes.get("console-reach").textContent], ["", ""]);
+}
+
 // -- report -----------------------------------------------------------------
 
 console.log(`${checks} checks, ${failures} failures`);
