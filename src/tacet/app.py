@@ -99,6 +99,9 @@ class StoredOnly(enum.StrEnum):
     RELEASING = "releasing"
     #: The tap named the target already set.
     UNCHANGED = "unchanged"
+    #: The fader is up but the box does not know where it is, so the ride was
+    #: refused (#128).
+    UNKNOWN = "unknown"
 
 
 _STORED_ONLY_BY_STATE: dict[state.State, StoredOnly] = {
@@ -114,12 +117,21 @@ _STORED_ONLY_BY_STATE: dict[state.State, StoredOnly] = {
 _FADER_CLOSED = frozenset({state.State.IDLE, state.State.STANDING_DOWN})
 
 
-def stored_only_because(machine: state.Machine, *, unchanged: bool) -> StoredOnly:
-    """Why a target tap made in `machine` only stored (#153). This is what the
-    log records as `stored_because`, including `closed`, which the page never
-    shows (see `stored_note_shown`)."""
+def stored_only_because(machine: state.Machine, outcome: state.Outcome | None, *, unchanged: bool) -> StoredOnly | None:
+    """Why a target tap made in `machine` only stored, or None when it rode
+    (#153, #128). `outcome` is what the machine made of the retarget, None for
+    a tap that never stepped it. This is what the log records as
+    `stored_because`, including `closed`, which the page never shows (see
+    `stored_note_shown`)."""
     if unchanged:
         return StoredOnly.UNCHANGED
+    if outcome is not None:
+        if outcome.fader is not None:
+            return None
+        if outcome.refusal is not None:
+            # The only refusal a retarget has from an operator: the level is
+            # unknown and there was a fader up to ride.
+            return StoredOnly.UNKNOWN
     return _STORED_ONLY_BY_STATE[machine.state]
 
 
@@ -235,6 +247,7 @@ class App:
         slow_open_seconds: float = dm7.DEFAULT_SLOW_OPEN_SECONDS,
         hold_below_db: float = dm7.DEFAULT_HOLD_BELOW_DB,
         ready_ride_seconds: float = dm7.DEFAULT_READY_RIDE_SECONDS,
+        retarget_ride_seconds: float = dm7.DEFAULT_RETARGET_RIDE_SECONDS,
         target_levels: targets.Targets = targets.DEFAULT_TARGETS,
         monotonic: Callable[[], float] = time.monotonic,
         stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
@@ -252,6 +265,7 @@ class App:
         self._slow_open_seconds = slow_open_seconds
         self._hold_below_db = hold_below_db
         self._ready_ride_seconds = ready_ride_seconds
+        self._retarget_ride_seconds = retarget_ride_seconds
         self._targets = target_levels
         #: The standing target, in console units: where every open goes and what
         #: READY's hold level is measured from (#9). Not `_move`, which is
@@ -387,35 +401,52 @@ class App:
             self._notify()
 
     async def set_target(self, db: float, *, tap: taps.TapTiming | None = None) -> None:
-        """Change the standing target: the level the next open goes to (#9).
+        """Change the standing target: the level the next open goes to (#9),
+        and, while the fader is up, ride it there (#128).
 
-        Stores the value and nothing else, in every state - no packet, no
-        machine step - so it is never refused by state, never held back while
-        the level is unknown, and deliberately not stale-checked: there is no
-        late move to guard, and a silently refused tap on a control that does
-        nothing yet is a dead end. A ride already under way keeps its original
-        destination and a fade still ends at -inf; READY's hold level and every
-        later open read the new value. It also says so on the page while the
-        fader is up (#153): the note is the box's, and the log's `stored_because`
-        gives the reason in every state. Turning it into a ride is #128.
+        Always stores the value. While the fader is OPEN or READY it also rides
+        from where it is to the new level (READY: to the new hold), over
+        `retarget_ride_seconds`. Idle, standing down and releasing only store: a
+        fade still ends at -inf. A tap that would ride is a fader tap, so it is
+        stale-checked (#16) and refused whole when late; one that would only
+        store is not, since nothing can be late. While the level is unknown and
+        the fader is up the ride is refused, not the store. A tap naming the
+        target already set rides nothing, unless the last move stalled, so
+        tapping it again retries.
+
+        Says what happened on the page while the fader is up (#153): the note
+        is the box's, and the log's `stored_because` gives the reason in every
+        state, null when it rode.
 
         A level that is not one of the presets is refused, said on the page, and
         not logged: nothing happened.
         """
         with _tapped(tap):
             # Finite first: `level_for` cannot convert inf or nan, and this is a
-            # public coroutine whose callers may not have checked (#128 adds one).
+            # public coroutine whose callers may not have checked.
             if not math.isfinite(db) or not self._targets.allows(level := targets.level_for(db)):
                 self._last_refusal = TARGET_NOT_A_PRESET.format(db=db, presets=self._preset_names())
                 self._notify()
                 return
             before = self.machine
-            unchanged = level == self._target
-            because = stored_only_because(before, unchanged=unchanged)
-            self._stored = (level, because) if stored_note_shown(before) else None
-            previous = self._target
-            self._target = level
-            self._last_refusal = None
+            unchanged = level == self._target and not before.stalled
+            # The machine decides whether this rides, so the stale check applies
+            # exactly then and there is no second state table here.
+            outcome = None if unchanged else state.step(before, state.Event(state.Command.RETARGET))
+            rides = outcome is not None and outcome.fader is not None
+            if rides and self._refuse_stale("set_target", tap):
+                return
+            previous, self._target = self._target, level
+            if outcome is not None and (rides or outcome.refusal is not None):
+                # Only a tap that rides, or whose ride is refused, goes through
+                # the machine for real: a store-only tap changes nothing in it,
+                # and `_command` would push the page a second time for it.
+                outcome = await self._command(state.Command.RETARGET, detail=TARGET_SET)
+            else:
+                self._last_refusal = None
+            because = stored_only_because(before, outcome, unchanged=unchanged)
+            # A tap while the fader is closed is logged but not shown (#153).
+            self._stored = (level, because) if because is not None and stored_note_shown(before) else None
             self._record(
                 TARGET_SET,
                 data={
@@ -425,7 +456,7 @@ class App:
                     "previous_db": _finite(dm7.to_db(previous)),
                     "default": level == self._targets.default,
                     "state": self.machine.state.value,
-                    "stored_because": because.value,
+                    "stored_because": None if because is None else because.value,
                 },
                 project_seconds=self._playhead(),
             )
@@ -526,6 +557,8 @@ class App:
             return self._target
         if command in (state.FaderCommand.READY, state.FaderCommand.REPORT_READY):
             return self._hold_level()
+        if command is state.FaderCommand.RETARGET:
+            return self._hold_level() if self.machine.state is state.State.READY else self._target
         # FADE and CLOSE_NOW.
         return dm7.MINUS_INF
 
@@ -551,9 +584,11 @@ class App:
         # FADE and READY are always background; an OPEN is only when ridden.
         # CLOSE_NOW and REPORT_READY are always synchronous, like a snap open:
         # one packet or none, never a ramp of their own.
-        background = command in (state.FaderCommand.FADE, state.FaderCommand.READY) or (
-            command is state.FaderCommand.OPEN and ride_seconds is not None
-        )
+        background = command in (
+            state.FaderCommand.FADE,
+            state.FaderCommand.READY,
+            state.FaderCommand.RETARGET,
+        ) or (command is state.FaderCommand.OPEN and ride_seconds is not None)
         try:
             if command is state.FaderCommand.OPEN:
                 self._cancel_move()
@@ -582,6 +617,12 @@ class App:
                 self._cancel_move()
                 seconds = ride_seconds if ride_seconds is not None else self._ready_ride_seconds
                 self._start_ride_in(self._hold_level(), seconds, by=detail)
+            elif command is state.FaderCommand.RETARGET:
+                # The operator changed the target while the fader is up (#128):
+                # ride there from wherever it is, never snap. Relative, like
+                # READY's ride, and never held back for the same reason.
+                self._cancel_move()
+                self._start_ride_in(self._fader_target(command), self._retarget_ride_seconds, by=detail)
             elif command is state.FaderCommand.REPORT_READY:
                 # Belief only - never a packet. The operator says the fader is
                 # already at the hold level, and READY has no fast form to
@@ -726,8 +767,9 @@ class App:
     def _start_ride_in(self, level: int, seconds: float, *, by: str) -> None:
         """Ride the fader up to `level` over `seconds` instead of snapping it.
 
-        Shared by the ordinary open's ride-in (`up-slow`) and READY's ride to
-        the hold level (#6) - both are the same gesture to a different place.
+        Shared by the ordinary open's ride-in (`up-slow`), READY's ride to the
+        hold level (#6) and the retarget ride (#128) - all the same gesture to
+        a different place.
         Callers cancel any move in flight first.
 
         Runs as a task for the same reason the fade does: the operator has
@@ -1400,7 +1442,7 @@ def _absolute(command: state.FaderCommand, ride_seconds: float | None) -> bool:
     the moves that mark the level known, so those are the ones whose failure
     un-knows it again (#116). A ridden open is relative - it ramps from the
     belief, and `step` refuses it outright while the level is unknown - and so
-    are the fade and READY's ride. REPORT_READY writes no packet, so it has no
+    are the fade, READY's ride and the retarget ride. REPORT_READY writes no packet, so it has no
     send to fail."""
     if command is state.FaderCommand.CLOSE_NOW:
         return True

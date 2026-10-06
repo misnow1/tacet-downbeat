@@ -78,13 +78,20 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertEqual(riding["fader"]["move"]["by"], "up-slow")
         self.assertIsNotNone(riding["fader"]["move"]["knee"])
         stored = states["snapshot-target-stored.json"]
-        self.assertEqual(stored["state"], "open")
-        self.assertEqual(stored["fader"]["db"], 0.0)
-        self.assertIsNone(stored["fader"]["move"])
+        self.assertEqual(stored["state"], "releasing")
+        self.assertEqual(stored["fader"]["move"]["by"], "out")
         self.assertEqual(stored["target"]["db"], -3.0)
         self.assertEqual(stored["target"]["level"], -300)
-        self.assertEqual(stored["target"]["stored"], {"because": "open", "db": -3.0})
+        self.assertEqual(stored["target"]["stored"], {"because": "releasing", "db": -3.0})
         self.assertIsNone(stored["refusal"])
+        retargeting = states["snapshot-retargeting.json"]
+        self.assertEqual(retargeting["state"], "open")
+        self.assertEqual(retargeting["fader"]["move"]["kind"], "ride")
+        self.assertEqual(retargeting["fader"]["move"]["by"], "target-set")
+        self.assertEqual(retargeting["fader"]["move"]["to_db"], -3.0)
+        self.assertEqual(retargeting["fader"]["move"]["seconds"], 1.0)
+        self.assertIsNotNone(retargeting["fader"]["move"]["knee"])
+        self.assertIsNone(retargeting["target"]["stored"])
         prompt = states["snapshot-prompt.json"]
         self.assertEqual(prompt["state"], "open")
         self.assertEqual(prompt["prompt"], {"seq": 1, "kind": "stand-down", "source": "band-exits-stands"})
@@ -135,7 +142,14 @@ class TestSnapshotFixtures(unittest.TestCase):
                 self.assertEqual(snapshot["prompt"] is not None, asking)
 
     #: The fixtures with a move in flight; every other one has nothing moving.
-    MOVING = frozenset({"snapshot-releasing.json", "snapshot-riding.json"})
+    MOVING = frozenset(
+        {
+            "snapshot-releasing.json",
+            "snapshot-riding.json",
+            "snapshot-retargeting.json",
+            "snapshot-target-stored.json",
+        }
+    )
 
     def test_every_fixture_says_whether_a_move_is_in_flight(self):
         # #154: `fader.move` is the description the page animates from, and

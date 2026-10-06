@@ -1024,6 +1024,7 @@ check(
     "prompt",
     "prompt-arm",
     "releasing",
+    "retargeting",
     "riding",
     "standing-down",
     "target-stored",
@@ -2509,10 +2510,10 @@ for (const because of ["open", "ready", "releasing", "unchanged", "from-a-newer-
 }
 
 {
-  const { context, nodes } = browser();
-  context.render(structuredClone(SNAPSHOTS["target-stored"]));
+  const { context, nodes } = browser({ now: STILL });
+  context.render(fadeSnapshot("target-stored"));
   const note = nodes.get("target-note");
-  check("target-stored: the note is the open sentence", note.textContent, "Stored: -3 dB on the next open. " + NOT_MOVED_SENTENCE);
+  check("target-stored: the note is the fade sentence", note.textContent, "Stored: -3 dB on the next open. The fade carries on to -inf.");
   check("target-stored: and wants attention", note.className, "attention");
   check("target-stored: the chip says it is for the next open", nodes.get("target-level").textContent, "target -3 dB (next open)");
 
@@ -2554,6 +2555,125 @@ for (const because of ["open", "ready", "releasing", "unchanged", "from-a-newer-
   context.render(snap);
   check("unchanged while open: dim, not attention", nodes.get("target-note").className, "");
   check("unchanged while open: the chip adds nothing", nodes.get("target-level").textContent, "target -3 dB");
+}
+
+// -- a target tap while the fader is up rides there (#128) --------------------
+//
+// The box does the ride; the page greys the segments while the level is unknown
+// and the fader is up (a ride from an unknown level would be a guess), and the
+// selected segment wears the fading colour until the box says it landed.
+
+const TARGET_BLOCKED_COPY = runInContext("TARGET_BLOCKED", browser().context);
+const riding = (created) =>
+  created.filter((node) => node.tag === "button" && node.dataset.preset !== undefined && node.classList.contains("fading"));
+
+check(
+  "targetBlocked: true for open and ready with the level unknown",
+  ["open", "ready"].map((name) => pure.targetBlocked(name, { level_known: false })),
+  [true, true],
+);
+check(
+  "targetBlocked: false for idle, standing down and releasing with the level unknown",
+  ["idle", "standing-down", "releasing"].map((name) => pure.targetBlocked(name, { level_known: false })),
+  [false, false, false],
+);
+check("targetBlocked: false for open with the level known", pure.targetBlocked("open", { level_known: true }), false);
+check(
+  "storedNote: unknown says the box does not know",
+  pure.storedNote({ db: -3, because: "unknown" }).text,
+  "Stored: -3 dB on the next open. The fader did not move: the box does not know where it is.",
+);
+check("TARGET_BLOCKED is ASCII", /^[\x20-\x7e]*$/.test(TARGET_BLOCKED_COPY), true);
+
+{
+  const { context, nodes, created } = browser();
+  context.render(structuredClone(SNAPSHOTS["faults"]));
+  const segments = presetSegments(created);
+  check("faults (open, unknown): every segment is greyed", segments.map((node) => node.disabled), [true, true, true]);
+  check("faults: the note says why", nodes.get("target-note").textContent, TARGET_BLOCKED_COPY);
+  check("faults: and wants attention", nodes.get("target-note").className, "attention");
+
+  // The level comes back: the same nodes are re-enabled in place.
+  const back = structuredClone(SNAPSHOTS["faults"]);
+  back.at += 1;
+  back.fader.level_known = true;
+  const before = created.length;
+  context.render(back);
+  check("level back: no segment is rebuilt", created.length, before);
+  check("level back: the same segments are enabled", presetSegments(created).map((node) => node.disabled), [false, false, false]);
+  check("level back: the note is gone", nodes.get("target-note").textContent, "");
+}
+
+{
+  const { context, nodes, created } = browser();
+  context.render(structuredClone(SNAPSHOTS["standing-down"]));
+  check(
+    "standing down, unknown: segments stay enabled (storing is allowed)",
+    presetSegments(created).map((node) => node.disabled),
+    [false, false, false],
+  );
+  check("standing down, unknown: no note", nodes.get("target-note").textContent, "");
+}
+
+{
+  const snap = structuredClone(SNAPSHOTS["faults"]);
+  snap.target.stored = { db: -3, because: "unknown" };
+  const { context, nodes } = browser();
+  context.render(snap);
+  check(
+    "the note joins the stored sentence and the greyed reason",
+    nodes.get("target-note").textContent,
+    "Stored: -3 dB on the next open. The fader did not move: the box does not know where it is. " + TARGET_BLOCKED_COPY,
+  );
+}
+
+{
+  const { context, nodes, created } = browser({ now: STILL });
+  context.render(fadeSnapshot("retargeting"));
+  check(
+    "retargeting: the selected segment wears the fading colour",
+    riding(created).map((node) => node.dataset.preset),
+    ["-3"],
+  );
+  check(
+    "retargeting: no vocabulary button does",
+    created.some((node) => node.tag === "button" && node.dataset.key !== undefined && node.classList.contains("fading")),
+    false,
+  );
+  check("retargeting: the readout tag says riding", nodes.get("level-tag").textContent, "riding");
+  check("retargeting: the readout starts at the old level", nodes.get("level").textContent.startsWith("0.00 dB \u2192 -3.00 dB"), true);
+  check("retargeting: the segments are not greyed", presetSegments(created).some((node) => node.disabled), false);
+}
+
+{
+  // Landed-only (#154): the page's own clock running out does not end it.
+  let clock = 2_000_000;
+  const { context, created, intervals } = browser({ now: () => clock * 1000 });
+  const ride = fadeSnapshot("retargeting");
+  context.render(ride);
+  clock += 10;
+  intervals[0]();
+  check("retargeting: still painted after the ride's time is up", riding(created).map((node) => node.dataset.preset), ["-3"]);
+  context.render(landedSnapshot(ride, 10));
+  check("retargeting: a snapshot without a move clears it", riding(created).length, 0);
+}
+
+check(
+  "parity: a retarget curve is among the cases",
+  CURVES.some((curve) => curve.name.startsWith("retarget")),
+  true,
+);
+
+{
+  const { context, nodes, created } = browser({ now: STILL });
+  context.render(fadeSnapshot("target-stored"));
+  check(
+    "target-stored (releasing): the note is the fade sentence",
+    nodes.get("target-note").textContent,
+    "Stored: -3 dB on the next open. The fade carries on to -inf.",
+  );
+  check("target-stored (releasing): the chip says next open", nodes.get("target-level").textContent, "target -3 dB (next open)");
+  check("target-stored (releasing): no segment wears the riding colour", riding(created).length, 0);
 }
 
 // -- MAIN after Game 3 (#155) ------------------------------------------------

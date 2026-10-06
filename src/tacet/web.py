@@ -363,10 +363,11 @@ def _target_db(payload: Mapping[str, Any]) -> float:
 
 
 async def _set_target(request: web.Request) -> web.Response:
-    """Change the standing target level (#9). Stores the value and moves
-    nothing, in every state, so it is neither stale-checked nor refused by
-    state; a level that is not a preset comes back as a refusal on the
-    snapshot with a 200, like any other tap the box declines."""
+    """Change the standing target level (#9). Always stores the value, and rides
+    the fader there while it is up (#128). It is stale-checked only when it
+    would ride; a stale tap, a refused ride or a level that is not a preset
+    comes back as a refusal on the snapshot with a 200, like any other tap the
+    box declines."""
     app = request.app[_HUB].app
     received = app.now()
     payload = await _body(request)
@@ -704,13 +705,16 @@ margin:4px 0 0}
    more than fit a row. 96 x 72 pt each, the size the UX review settled on for a
    thumb: 96px wide is the label ("-3 dB") with room either side, 72px tall
    matches the fader column's smallest button (score-reversed), so a tap here is
-   as easy to land as the ones that matter more. The selected segment is solid
-   and NEUTRAL, deliberately. Green and blue are the fader's direction (#5),
-   and this control moves nothing: it stores the level the next open goes to,
-   so it must not borrow the colour that means "up" or "down". */
+   as easy to land as the ones that matter more. Styled as a fader control (a
+   2px border and bold, like the fader buttons) because a tap rides the fader
+   while it is up (#128). The selected segment is solid and NEUTRAL,
+   deliberately: a retarget goes either way, so it must not borrow the colour
+   that means "up" or "down" (#5). It wears the fading colour while the ride
+   lasts, and that rule comes after .selected, so order decides. */
 #target-control{display:flex;flex-wrap:wrap;gap:8px}
-#target-control button{width:96px;height:72px;font-size:16px;font-weight:700}
+#target-control button{width:96px;height:72px;font-size:16px;font-weight:700;border-width:2px}
 #target-control button.selected{background:var(--text);color:var(--bg);border-color:var(--text)}
+#target-control button.fading{background:var(--state-fading);border-color:var(--state-fading);color:#fff}
 /* The note under the segments when a tap stored and moved nothing (#153).
    Reserves two lines whether or not it has text, so showing, changing or
    clearing it moves nothing: the same reservation as #rec-why. Attention is
@@ -956,9 +960,10 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   </div>
   <!-- #9: the standing target level, from fader.presets. Below the hand-off
        confirmation, never between it and its button (#108). The segments are
-       built by script from the snapshot; storing a level moves nothing and a
-       tap here leaves the operator on MORE (#109). #target-note says, while the
-       fader is up, that a tap stored and did not move it (#153). -->
+       built by script from the snapshot; a tap stores the level and, while the
+       fader is up, rides it there (#128), and leaves the operator on MORE
+       (#109). #target-note says when a tap only stored, and why the segments
+       are greyed while the level is unknown (#153, #128). -->
   <h2>Target level</h2>
   <div id="target-control"></div>
   <div id="target-note"></div>

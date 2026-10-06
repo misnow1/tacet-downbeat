@@ -931,13 +931,95 @@ class TestReportReady(unittest.TestCase):
         self.assertEqual(send(reported, st.Command.RELEASE).fader, st.FaderCommand.FADE)
 
 
+class TestARetargetRidesOnlyWhileTheFaderIsUp(unittest.TestCase):
+    """#128: changing the standing target while the fader is up rides there.
+    The machine only decides whether it rides; the level lives in the app."""
+
+    CLOSED = (st.State.IDLE, st.State.STANDING_DOWN)
+
+    def test_while_open_a_retarget_rides_and_stays_open(self):
+        outcome = send(opened(level_known=True), st.Command.RETARGET)
+        self.assertEqual(outcome.fader, st.FaderCommand.RETARGET)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertFalse(outcome.machine.riding_in)
+        self.assertIsNone(outcome.refusal)
+
+    def test_while_riding_in_a_retarget_retargets_the_ride_and_stays_riding_in(self):
+        outcome = send(opened(level_known=True, riding_in=True), st.Command.RETARGET)
+        self.assertEqual(outcome.fader, st.FaderCommand.RETARGET)
+        self.assertTrue(outcome.machine.riding_in)
+        # A fast trigger mid-ride still snaps, now to the new target.
+        self.assertEqual(send(outcome.machine, st.Command.TRIGGER).fader, st.FaderCommand.OPEN)
+
+    def test_while_ready_a_retarget_moves_the_hold_and_is_a_ride(self):
+        outcome = send(readying(level_known=True), st.Command.RETARGET)
+        self.assertEqual(outcome.fader, st.FaderCommand.RETARGET)
+        self.assertEqual(outcome.machine.state, st.State.READY)
+        self.assertTrue(outcome.machine.riding_in)
+
+    def test_a_landed_retarget_in_ready_stops_riding_in(self):
+        rode = send(readying(level_known=True), st.Command.RETARGET).machine
+        landed = send(rode, st.Command.RIDE_IN_COMPLETE).machine
+        self.assertFalse(landed.riding_in)
+
+    def test_while_closed_a_retarget_stores_only(self):
+        for value in self.CLOSED:
+            with self.subTest(state=value):
+                start = st.Machine(state=value, level_known=True)
+                outcome = send(start, st.Command.RETARGET)
+                self.assertIsNone(outcome.fader)
+                self.assertIsNone(outcome.refusal)
+                self.assertFalse(outcome.changed)
+
+    def test_while_releasing_a_retarget_stores_only(self):
+        outcome = send(releasing(level_known=True), st.Command.RETARGET)
+        self.assertIsNone(outcome.fader)
+        self.assertIsNone(outcome.refusal)
+        self.assertFalse(outcome.changed)
+
+    def test_while_the_level_is_unknown_and_the_fader_is_up_a_retarget_is_refused(self):
+        for value in (st.State.OPEN, st.State.READY):
+            with self.subTest(state=value):
+                outcome = send(st.Machine(state=value, level_known=False), st.Command.RETARGET)
+                self.assertIsNone(outcome.fader)
+                self.assertEqual(outcome.refusal, st.UNKNOWN_LEVEL_MOVE)
+
+    def test_while_the_level_is_unknown_and_nothing_would_ride_a_retarget_is_not_a_refusal(self):
+        for value in (st.State.IDLE, st.State.STANDING_DOWN, st.State.RELEASING):
+            with self.subTest(state=value):
+                outcome = send(st.Machine(state=value, level_known=False), st.Command.RETARGET)
+                self.assertIsNone(outcome.fader)
+                self.assertIsNone(outcome.refusal)
+
+    def test_a_detector_cannot_retarget_in_any_state_even_when_allowed(self):
+        for value in ALL_STATES:
+            for known in (True, False):
+                with self.subTest(state=value, known=known):
+                    start = st.Machine(state=value, level_known=known, allow_detector=True)
+                    outcome = send(start, st.Command.RETARGET, st.Source.DETECTOR)
+                    self.assertIsNone(outcome.fader)
+                    self.assertEqual(outcome.refusal, st.DETECTOR_CANNOT_RETARGET)
+
+    def test_a_retarget_clears_a_stall(self):
+        for start in (opened(level_known=True, stalled=True), readying(level_known=True, stalled=True)):
+            with self.subTest(state=start.state):
+                self.assertFalse(send(start, st.Command.RETARGET).machine.stalled)
+
+    def test_an_open_tap_after_a_retarget_while_open_is_still_a_no_op(self):
+        rode = send(opened(level_known=True), st.Command.RETARGET).machine
+        outcome = send(rode, st.Command.TRIGGER)
+        self.assertIsNone(outcome.fader)
+        self.assertFalse(outcome.changed)
+
+
 class TestNeverMutes(unittest.TestCase):
-    def test_the_only_fader_commands_are_open_ready_fade_close_now_and_report_ready(self):
+    def test_the_only_fader_commands_are_open_ready_fade_close_now_report_ready_and_retarget(self):
         # Faders only, never mutes. READY is a level short of target, not
         # silence, so it belongs on this list rather than being a third,
         # unwritten option (#6). REPORT_READY writes nothing at all - a belief
         # correction, not a fader move - and CLOSE_NOW is one packet to -inf,
-        # never a mute (#12, #107).
+        # never a mute (#12, #107). RETARGET is a ride to a different level
+        # while the fader is up, still a level write (#128).
         self.assertEqual(
             set(st.FaderCommand),
             {
@@ -946,6 +1028,7 @@ class TestNeverMutes(unittest.TestCase):
                 st.FaderCommand.FADE,
                 st.FaderCommand.CLOSE_NOW,
                 st.FaderCommand.REPORT_READY,
+                st.FaderCommand.RETARGET,
             },
         )
 
@@ -961,8 +1044,8 @@ class TestNeverMutes(unittest.TestCase):
         self.assertNotIn("TAKE_BACK_UP", {c.name for c in st.FaderCommand})
         self.assertNotIn("TAKE_BACK_DOWN", {c.name for c in st.FaderCommand})
 
-    def test_the_two_enums_agree_on_the_belief_commands(self):
-        for name in ("CLOSE_NOW", "REPORT_READY"):
+    def test_the_two_enums_agree_where_they_share_a_name(self):
+        for name in ("CLOSE_NOW", "REPORT_READY", "RETARGET"):
             self.assertEqual(st.Command[name].value, st.FaderCommand[name].value)
 
 

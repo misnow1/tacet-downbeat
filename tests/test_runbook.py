@@ -227,6 +227,16 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
         self.assertIn(f"`{found[1]}`", runbook)
 
+    def test_the_runbook_quotes_the_greyed_target_note(self) -> None:
+        # #128: the sentence under the target segments while they are greyed,
+        # read out of app.js like RAMPING_BLOCKED above.
+        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
+        found = re.search(r'^const TARGET_BLOCKED = "([^"]+)";$', script, re.MULTILINE)
+        self.assertIsNotNone(found, "app.js no longer defines TARGET_BLOCKED")
+        assert found is not None
+        runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
+        self.assertIn(found[1], runbook)
+
     def test_the_runbook_quotes_the_stored_note(self) -> None:
         # #153: the sentence the page shows under the target segments when a tap
         # stored and moved nothing. Read out of app.js rather than typed twice,
