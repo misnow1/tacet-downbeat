@@ -10,7 +10,9 @@ Instants become markers, spans become regions, and names follow the
 Anything this cannot place is reported rather than dropped. Reaper has no
 negative timeline, so entries made before recording started have nowhere to go -
 but losing them quietly is the silent degradation CLAUDE.md forbids, so they
-come back in `skipped_before_anchor` for the caller to surface.
+come back in `skipped_before_anchor` for the caller to surface. A
+`recording-requested` entry always lands there: it is written before the
+recording it asked for exists.
 """
 
 from __future__ import annotations
@@ -22,16 +24,24 @@ from dataclasses import dataclass
 
 from .annotations import (
     ANCHOR_EVENT,
+    FOUND_EVENT,
     PHASE_END,
     PHASE_START,
     AnnotationError,
     Entry,
+    is_anchor,
     marker_name,
     project_seconds,
 )
 from .taps import delay_of
 
 CSV_FIELDS = ("name", "start", "end")
+
+#: How far a later `recording-found` entry may disagree with the anchor's
+#: arithmetic and still be the same take seen again. A separate take is at
+#: least a stop, Reaper's prompt and a restart away, which is seconds; the
+#: arithmetic holds to the second over a five hour game (#158).
+TAKE_MATCH_TOLERANCE_SECONDS = 2.0
 
 
 class NoAnchorError(AnnotationError):
@@ -74,15 +84,37 @@ class DerivedMarkers:
 
 
 def find_anchor(entries: Iterable[Entry]) -> Entry:
-    """The first recording-started entry.
+    """The first entry that is an anchor: a take seen starting, or a stamped
+    take found rolling (`is_anchor`).
 
     First, not last: a restarted recording begins a new project, which is a
     different problem from placing marks in this one.
     """
     for entry in entries:
-        if entry.event == ANCHOR_EVENT:
+        if is_anchor(entry):
             return entry
-    raise NoAnchorError(f"no {ANCHOR_EVENT!r} entry; nothing can be placed")
+    raise NoAnchorError(f"no {ANCHOR_EVENT!r} or stamped {FOUND_EVENT!r} entry; nothing can be placed")
+
+
+def _origin_of(anchor: Entry) -> float:
+    """The position the anchor itself stands at: Reaper's own number when it
+    has one (a take found rolling), else zero (a take seen starting)."""
+    return anchor.project_seconds if anchor.project_seconds is not None else 0.0
+
+
+def _arithmetic(entry: Entry, anchor: Entry) -> float:
+    return _origin_of(anchor) + project_seconds(entry, anchor)
+
+
+def _is_extra_recording(entry: Entry, anchor: Entry) -> bool:
+    """Whether `entry` is evidence of a recording other than the anchor's."""
+    if entry.seq == anchor.seq:
+        return False
+    if entry.event == ANCHOR_EVENT:
+        return True
+    if entry.event == FOUND_EVENT and entry.project_seconds is not None:
+        return abs(entry.project_seconds - _arithmetic(entry, anchor)) > TAKE_MATCH_TOLERANCE_SECONDS
+    return False
 
 
 def position_of(entry: Entry, anchor: Entry) -> float:
@@ -94,9 +126,17 @@ def position_of(entry: Entry, anchor: Entry) -> float:
     Either one says where the entry *arrived*. When the tap that made it logged
     how late it was (#11), the entry goes back by that much, to where the
     operator tapped. A negative delay is the clock estimate's error, and a tap
-    cannot follow its own arrival, so it moves nothing.
+    cannot follow its own arrival, so it moves nothing. An anchor or found
+    entry is never moved: it marks a recording, not a tap.
+
+    Arithmetic starts from the anchor's own position: zero for a take seen
+    starting, Reaper's stamp for one found rolling.
     """
-    arrived = entry.project_seconds if entry.project_seconds is not None else project_seconds(entry, anchor)
+    arrived = entry.project_seconds if entry.project_seconds is not None else _arithmetic(entry, anchor)
+    if entry.event in (ANCHOR_EVENT, FOUND_EVENT):
+        # It marks a recording, never a tap: a tap delay would place it before
+        # itself.
+        return arrived
     delay = delay_of(entry.data)
     return arrived if delay is None else arrived - max(0.0, delay)
 
@@ -120,7 +160,7 @@ def derive(
         # Every later recording in this log. Reported rather than placed on:
         # the arithmetic below is measured from `anchor`, so everything after a
         # restart is out by the length of the stop.
-        if entry.event == ANCHOR_EVENT and entry.seq != anchor.seq:
+        if _is_extra_recording(entry, anchor):
             extra_anchors.append(entry)
         position = position_of(entry, anchor)
         if position < 0:

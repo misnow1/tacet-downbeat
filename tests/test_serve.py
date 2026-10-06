@@ -285,6 +285,22 @@ class TestStartupBannerWarnsAboutAReusedLog(unittest.TestCase):
         self.assertIn("WARNING", text)
         self.assertIn("already contains a recording", text)
 
+    def test_a_log_holding_a_found_recording_gets_the_warning(self):
+        event = annotations.lookup(annotations.FOUND_EVENT)
+        found = annotations.Entry(
+            seq=1,
+            event=event.key,
+            category=str(event.category),
+            kind=str(event.kind),
+            label=event.label,
+            wall=self.WALL,
+            monotonic=0.0,
+            project_seconds=42.0,
+        )
+        args = serve.parser().parse_args(FULL)
+        text = "\n".join(serve.startup_lines(args, None, found))
+        self.assertIn("WARNING", text)
+
     def test_it_says_when_the_earlier_recording_was(self):
         args = serve.parser().parse_args(FULL)
         prior = self.prior()

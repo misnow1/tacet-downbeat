@@ -301,3 +301,74 @@ class TheTapTimeBeatsTheArrival(unittest.TestCase):
             build(clock, 2, "note", **self.tapped(-0.02, project_seconds=40.0)),
         ]
         self.assertEqual(markers.derive(entries, entries[0]).markers[-1].start, 40.0)
+
+
+class TestAnchorsOnConfirmation(unittest.TestCase):
+    """#158: a request is not an anchor, and a take found rolling can be one."""
+
+    def test_a_tapped_anchor_is_placed_at_zero(self):
+        clock = StepClock()
+        build(clock, 1, "recording-requested", data={"tap": {"delay": 0.4}})
+        anchor = build(clock, 2, "recording-started")
+        result = markers.derive([anchor], anchor)
+        self.assertAlmostEqual(result.markers[0].start, 0.0)
+
+    def test_an_anchor_with_a_tap_delay_is_not_moved_by_it(self):
+        clock = StepClock()
+        anchor = build(clock, 1, "recording-started", data={"tap": {"delay": 0.4}})
+        self.assertAlmostEqual(markers.position_of(anchor, anchor), 0.0)
+
+    def test_a_request_before_its_anchor_is_reported_not_dropped(self):
+        clock = StepClock()
+        request = build(clock, 1, "recording-requested")
+        anchor = build(clock, 2, "recording-started")
+        result = markers.derive([request, anchor], anchor)
+        self.assertEqual(result.skipped_before_anchor, (request,))
+
+    def test_a_found_entry_anchors_a_log_with_no_recording_started(self):
+        clock = StepClock()
+        found = build(clock, 1, "recording-found", project_seconds=500.0)
+        note = build(clock, 2, "note")
+        anchor = markers.find_anchor([found, note])
+        self.assertEqual(anchor.seq, 1)
+        result = markers.derive([found, note], anchor)
+        placed = {m.name: m.start for m in result.markers}
+        self.assertAlmostEqual(placed["SYS|recording-found"], 500.0)
+        self.assertAlmostEqual(placed["NOTE|note"], 501.0)
+
+    def test_an_unstamped_found_entry_cannot_anchor(self):
+        clock = StepClock()
+        with self.assertRaises(markers.NoAnchorError):
+            markers.find_anchor([build(clock, 1, "recording-found")])
+
+    def test_the_first_recording_in_log_order_is_the_anchor_whether_started_or_found(self):
+        clock = StepClock()
+        found = build(clock, 1, "recording-found", project_seconds=10.0)
+        started = build(clock, 2, "recording-started")
+        self.assertEqual(markers.find_anchor([found, started]).seq, 1)
+        self.assertEqual(markers.find_anchor([started, found]).seq, 2)
+
+    def test_a_found_entry_that_agrees_with_the_anchor_is_not_an_extra_recording(self):
+        clock = StepClock()
+        anchor = build(clock, 1, "recording-started")
+        found = build(clock, 2, "recording-found", project_seconds=1.5)
+        result = markers.derive([anchor, found], anchor)
+        self.assertEqual(result.extra_anchors, ())
+
+    def test_a_found_entry_that_disagrees_is_reported_as_an_extra_recording(self):
+        clock = StepClock()
+        anchor = build(clock, 1, "recording-started")
+        found = build(clock, 2, "recording-found", project_seconds=1.0 + markers.TAKE_MATCH_TOLERANCE_SECONDS + 1.0)
+        result = markers.derive([anchor, found], anchor)
+        self.assertEqual(result.extra_anchors, (found,))
+
+    def test_a_found_anchor_is_not_moved_by_a_tap_delay(self):
+        clock = StepClock()
+        found = build(clock, 1, "recording-found", project_seconds=30.0, data={"tap": {"delay": 0.5}})
+        self.assertAlmostEqual(markers.position_of(found, found), 30.0)
+
+    def test_the_origin_of_an_unstamped_anchor_is_zero(self):
+        clock = StepClock()
+        anchor = build(clock, 1, "recording-started")
+        note = build(clock, 2, "note")
+        self.assertAlmostEqual(markers.position_of(note, anchor), 1.0)

@@ -13,7 +13,7 @@ from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
 from tacet import provenance as prov
 from tests.disk import Disk
-from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply
+from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply, rolling_with_refresh
 from tests.test_annotations import Gate, Killed
 
 
@@ -431,6 +431,7 @@ class TestARecordSendThatFails(AppTestCase):
         snapshot = app.snapshot()
         self.assertIn("console unreachable", snapshot["refusal"])
         self.assertNotIn(tacet_app.RECORDING_STARTED, self.keys())
+        self.assertNotIn(tacet_app.RECORDING_REQUESTED, self.keys())
 
     async def test_it_can_be_tried_again(self):
         # Nothing reached Reaper, so there is nothing a second tap could stop.
@@ -1060,6 +1061,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         await app.start_recording()
         self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
+        self.assertEqual(self.keys().count(tacet_app.RECORDING_REQUESTED), 1)
 
     async def test_a_parked_reaper_streaming_meters_can_be_started(self):
         # The ordinary pre-game case on this rig: Reaper open and parked, with
@@ -1069,7 +1071,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
         self.reaper_parked(app)
         await app.start_recording()
         self.assertEqual(self.record_packets().count("/record"), 1)
-        self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
+        self.assertEqual(self.keys().count(tacet_app.RECORDING_REQUESTED), 1)
         self.assertIsNone(app.snapshot()["refusal"])
 
     async def test_a_silent_reaper_is_not_sent_a_start(self):
@@ -1079,6 +1081,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
         await app.start_recording()
         self.assertNotIn("/record", self.record_packets())
         self.assertNotIn(tacet_app.RECORDING_STARTED, self.keys())
+        self.assertNotIn(tacet_app.RECORDING_REQUESTED, self.keys())
         self.assertEqual(app.snapshot()["recording"]["refusal"], reaper.RECORD_REFUSED_SILENT)
 
     async def test_a_reaper_that_reported_a_stop_can_be_started(self):
@@ -1167,12 +1170,12 @@ class TestRecordIsNotAStopButton(AppTestCase):
         app.handle_recorder_packet(osc.encode_message("/record", 1.0))
         self.assertFalse(app.snapshot()["recording"]["can_start"])
 
-    async def test_only_one_recording_started_entry_for_a_double_tap(self):
+    async def test_only_one_request_for_a_double_tap(self):
         app = self.build()
         self.reaper_parked(app)
         await app.start_recording()
         await app.start_recording()
-        self.assertEqual(self.keys().count(tacet_app.RECORDING_STARTED), 1)
+        self.assertEqual(self.keys().count(tacet_app.RECORDING_REQUESTED), 1)
 
     async def test_the_snapshot_carries_the_refusal_record_refusal_returns(self):
         """The page shows `recording.refusal` beside the grey button, so it must
@@ -1530,12 +1533,13 @@ class TestAnnotation(AppTestCase):
 
 
 class TestRecorder(AppTestCase):
-    async def test_start_recording_commands_reaper_and_logs_the_anchor(self):
+    async def test_start_recording_commands_reaper_and_logs_the_request(self):
         app = self.build()
         self.reaper_parked(app)
         await app.start_recording()
         self.assertEqual(self.reaper_sender.addresses(), [reaper.DEFAULT_ADDRESSES.record])
-        self.assertIn("recording-started", self.keys())
+        self.assertIn("recording-requested", self.keys())
+        self.assertNotIn("recording-started", self.keys())
 
     async def test_there_is_no_stop(self):
         # design.md 5.9: a stop button does not belong on this screen.
@@ -1639,18 +1643,6 @@ class TestThePlayheadIsStamped(AppTestCase):
         commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
         self.assertTrue(commanded)
         self.assertEqual(commanded[-1].project_seconds, 42.0)
-
-    async def test_the_anchor_itself_is_not_stamped(self):
-        # The command has just gone out; Reaper has not begun rolling, so its
-        # last position is where the transport was parked.
-        app = self.build()
-        # Reaper says stopped, then streams a position: the record button is
-        # allowed and there is a fresh playhead available to stamp.
-        self.reaper_answers_stopped(app)
-        app.handle_recorder_packet(osc.encode_message("/time", 77.0))
-        await app.start_recording()
-        anchor = [e for e in self.entries() if e.event == ann.ANCHOR_EVENT][-1]
-        self.assertIsNone(anchor.project_seconds)
 
     async def test_no_recorder_means_no_stamp(self):
         self.build()  # sets up the console and the log
@@ -1767,6 +1759,197 @@ class TestARefreshInFlightGuardsTheStart(AppTestCase):
         app = self.build()
         app.handle_recorder_packet(meter_packet())
         self.assertIsNone(app.snapshot()["recording"]["error"])
+
+
+class TestTheAnchorIsReapersConfirmation(AppTestCase):
+    """#158: the anchor is written when Reaper reports a take starting, never on
+    the tap, which is only a request."""
+
+    def named(self, key):
+        return [e for e in self.entries() if e.event == key]
+
+    def record(self, app, on=1.0):
+        app.handle_recorder_packet(osc.encode_message("/record", on))
+
+    async def test_a_take_started_in_reaper_writes_exactly_one_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        self.record(app)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 1)
+        self.assertEqual(self.named(tacet_app.RECORDING_REQUESTED), [])
+
+    async def test_a_tapped_start_and_its_confirmation_write_one_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording()
+        self.record(app)
+        self.record(app)
+        requests = self.named(tacet_app.RECORDING_REQUESTED)
+        anchors = self.named(tacet_app.RECORDING_STARTED)
+        self.assertEqual((len(requests), len(anchors)), (1, 1))
+        self.assertLess(requests[0].seq, anchors[0].seq)
+
+    async def test_a_tap_writes_the_request_and_not_the_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording()
+        self.assertEqual(len(self.named(tacet_app.RECORDING_REQUESTED)), 1)
+        self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+
+    async def test_a_start_reaper_never_confirms_leaves_no_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording()
+        app.handle_recorder_packet(meter_packet())
+        self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+
+    async def test_a_second_take_writes_a_second_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        self.record(app)
+        self.record(app, 0.0)
+        self.record(app)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 2)
+
+    async def test_a_stop_writes_no_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        self.record(app, 0.0)
+        self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+
+    async def test_a_take_restarted_in_a_relaunched_reaper_writes_an_anchor(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.record(app)
+        # Reaper answers the refresh the box sent, so none is outstanding when
+        # the relaunched Reaper reports its new take.
+        self.record(app)
+        clock[0] += 60.0
+        self.record(app)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 2)
+
+    async def test_the_anchor_is_never_stamped_with_a_playhead(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.record(app)
+        clock[0] += 0.1
+        app.handle_recorder_packet(osc.encode_message("/time", 77.0))
+        clock[0] += 0.1
+        self.record(app, 0.0)
+        clock[0] += 0.1
+        self.record(app)
+        anchors = self.named(tacet_app.RECORDING_STARTED)
+        self.assertEqual(len(anchors), 2)
+        for anchor in anchors:
+            self.assertIsNone(anchor.project_seconds)
+
+    async def test_the_tap_is_on_the_request_and_not_on_the_anchor(self):
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording(tap=late(0.2))
+        self.record(app)
+        (request,) = self.named(tacet_app.RECORDING_REQUESTED)
+        (anchor,) = self.named(tacet_app.RECORDING_STARTED)
+        self.assertIn("tap", request.data)
+        self.assertNotIn("tap", anchor.data)
+
+    async def test_the_anchor_says_reaper_confirmed_it(self):
+        app = self.build()
+        self.reaper_parked(app)
+        self.record(app)
+        (anchor,) = self.named(tacet_app.RECORDING_STARTED)
+        self.assertEqual(anchor.data, {ann.ANCHOR_CONFIRMED_BY: ann.CONFIRMED_BY_REAPER})
+
+    async def test_a_log_holding_only_a_request_refuses_an_unknown_record_state(self):
+        with ann.AnnotationLog(self.root / "game.jsonl") as seeded:
+            seeded.record(tacet_app.RECORDING_REQUESTED)
+        app = self.build()
+        self.reaper_parked(app)
+        await app.start_recording()
+        self.assertNotIn("/record", self.reaper_sender.addresses())
+        self.assertEqual(app.snapshot()["recording"]["refusal"], reaper.RECORD_REFUSED_PRIOR)
+
+
+class TestAFoundTake(AppTestCase):
+    """#158: a take the box finds already rolling is logged as found, stamped
+    with Reaper's position, and never as an anchor."""
+
+    def run_stream(self, app, stream):
+        for at, packet in stream:
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+
+    def build_timed(self, seed=None):
+        self.t = [100.0]
+        if seed is not None:
+            with ann.AnnotationLog(self.root / "game.jsonl") as seeded:
+                seeded.record(seed)
+        return self.build(monotonic=lambda: self.t[0])
+
+    def named(self, key):
+        return [e for e in self.entries() if e.event == key]
+
+    def first_time_after_the_stall(self, **kwargs):
+        for _, packet in rolling_with_refresh(100.0, **kwargs):
+            decoded = osc.decode_packet(packet)
+            if isinstance(decoded, osc.Message) and decoded.address == "/time":
+                return decoded.args[0]
+        raise AssertionError("no /time in the stream")
+
+    async def test_a_box_started_mid_take_writes_a_found_entry_and_no_anchor(self):
+        app = self.build_timed()
+        self.run_stream(app, rolling_with_refresh(100.0))
+        self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+        self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
+
+    async def test_the_found_entry_is_stamped_with_the_first_clock_after_the_reply(self):
+        app = self.build_timed()
+        self.run_stream(app, rolling_with_refresh(100.0))
+        (found,) = self.named(tacet_app.RECORDING_FOUND)
+        self.assertEqual(found.project_seconds, self.first_time_after_the_stall())
+        self.assertEqual(found.data, {ann.ANCHOR_CONFIRMED_BY: ann.CONFIRMED_BY_REAPER})
+
+    async def test_a_box_restarted_on_its_own_log_mid_take_writes_no_second_anchor(self):
+        app = self.build_timed(seed=tacet_app.RECORDING_STARTED)
+        self.run_stream(app, rolling_with_refresh(100.0))
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 1)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
+
+    async def test_a_take_stopped_before_its_clock_arrives_writes_nothing(self):
+        app = self.build_timed()
+        self.run_stream(app, [(100.0, meter_packet())])
+        self.run_stream(
+            app, [(100.04 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
+        )
+        self.run_stream(app, [(100.1, osc.encode_message("/record", 0.0)), (100.2, osc.encode_message("/time", 5.0))])
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
+
+    async def test_a_refresh_after_a_take_the_box_saw_start_writes_one_anchor_and_one_found(self):
+        # The rig with its audio device off: the start burst is the first
+        # packet of the run, so the box sees the take start and then asks.
+        app = self.build_timed()
+        self.run_stream(app, [(100.0, osc.encode_message("/record", 1.0))])
+        replies = [(100.04 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
+        self.run_stream(app, replies)
+        self.run_stream(app, [(101.5, osc.encode_message("/time", 1.5))])
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 1)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
+
+    async def test_a_refresh_saying_stopped_writes_nothing(self):
+        app = self.build_timed()
+        self.run_stream(app, [(100.0, meter_packet())])
+        self.run_stream(
+            app, [(100.04 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=False, playing=False))]
+        )
+        self.run_stream(app, [(100.5, osc.encode_message("/time", 1.0))])
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
+        self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+
+    async def test_a_found_entry_carries_no_tap(self):
+        app = self.build_timed()
+        self.run_stream(app, rolling_with_refresh(100.0))
+        (found,) = self.named(tacet_app.RECORDING_FOUND)
+        self.assertNotIn("tap", found.data)
 
 
 class TestTheExpectedFaderStateIsVisible(AppTestCase):
@@ -3486,7 +3669,7 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
         self.assertIsNotNone(await app.start_span("last-two-minutes", tap=self.STALE))
         self.reaper_parked(app)
         await app.start_recording(tap=self.STALE)
-        self.assertIn(ann.ANCHOR_EVENT, self.events())
+        self.assertIn(tacet_app.RECORDING_REQUESTED, self.events())
         self.assertNotIn(tacet_app.STALE_TAP, self.events())
 
     async def test_a_prompt_tap_is_executed(self):

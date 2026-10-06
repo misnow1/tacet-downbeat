@@ -29,7 +29,7 @@ from . import annotations as ann
 from . import dm7, moves, prompts, state, taps, targets
 from . import provenance as prov
 from .net import TransportError
-from .reaper import Liveness, ReaperClient, record_refusal
+from .reaper import Liveness, ReaperClient, TakeReport, TransportState, clock_reading, record_refusal
 
 #: What an operator button that also moves the fader asks the machine to do.
 _ACTIONS: Mapping[ann.Action, state.Command] = {
@@ -147,6 +147,12 @@ TARGET_NOT_A_PRESET = "Not a target level: {db:g} dB is not one of the presets (
 #: this event and the box warns when a log already holds one, so all of them
 #: have to agree or the warning goes quiet.
 RECORDING_STARTED = ann.ANCHOR_EVENT
+#: The tap's own entry (#158) and the take found already rolling (#172).
+RECORDING_REQUESTED = ann.RECORD_REQUEST_EVENT
+RECORDING_FOUND = ann.FOUND_EVENT
+
+#: What an anchor or found entry says about itself: Reaper reported it (#158).
+_CONFIRMED_BY_REAPER = {ann.ANCHOR_CONFIRMED_BY: ann.CONFIRMED_BY_REAPER}
 
 #: Shown when `/record` could not be sent. Quoted in docs/troubleshooting.md.
 RECORD_SEND_FAILED = "Could not send the start to Reaper ({error}). Nothing started; tap again, or start it in Reaper."
@@ -299,6 +305,8 @@ class App:
         #: state moves on - otherwise the screen keeps saying "already
         #: recording" at a recorder that has since stopped.
         self._refused_recording = False
+        #: A take found rolling whose entry waits for the first `/time` (#158).
+        self._found_pending = False
         self._listeners: list[Callable[[], None]] = []
         #: The loop the writer thread wakes when a batch lands (#41). None when
         #: built outside one, in which case the page learns of a deferred
@@ -1107,12 +1115,10 @@ class App:
                 self._refused_recording = False
                 self._notify()
                 return
-        # Deliberately not stamped with a playhead. The command has just gone
-        # out and Reaper has not begun rolling, so whatever position it last
-        # reported is where the transport was parked, not where this recording
-        # starts. The anchor is the one entry whose position is genuinely not
-        # known yet, and guessing it would misplace everything measured from it.
-        self._record(RECORDING_STARTED)
+        # The tap is a request, not a recording (#158): Reaper may never
+        # confirm it, and the anchor is written when it does. Stamped like any
+        # entry, with the playhead when there is one.
+        self._record(RECORDING_REQUESTED, project_seconds=self._playhead())
         self._last_refusal = None
         self._refused_recording = False
         self._notify()
@@ -1135,13 +1141,44 @@ class App:
             # A log that already held a recording when it was opened is the one
             # sign that this box may have been restarted mid-take, when Reaper
             # has not yet said whether it is recording (D4, #163).
-            prior_recording=self._log.prior_anchor is not None,
+            prior_recording=self._log.prior_anchor is not None or self._log.prior_request is not None,
         )
 
     def handle_recorder_packet(self, packet: bytes) -> None:
-        if self._recorder is not None:
-            self._recorder.handle_packet(packet)
-            self._notify()
+        if self._recorder is None:
+            return
+        before = self._recorder.state
+        self._recorder.handle_packet(packet)
+        self._log_take(before, self._recorder.state, self._recorder.last_take)
+        self._notify()
+
+    def _log_take(self, before: TransportState, after: TransportState, take: TakeReport | None) -> None:
+        """What Reaper's report means for the log (#158). Only observes: it
+        writes entries and never touches the fader, the machine or a refusal."""
+        new_run = after.link_since != before.link_since
+        if take is TakeReport.STARTED:
+            self._found_pending = False
+            self._take_started()
+        elif take is TakeReport.FOUND:
+            self._found_pending = True
+        elif new_run:
+            # A run of feedback the box has not asked about yet: whatever was
+            # waiting for a clock belonged to the last one.
+            self._found_pending = False
+        if self._found_pending:
+            if after.recording is not True:
+                self._found_pending = False
+                return
+            reading = clock_reading(before, after)
+            if reading is not None:
+                self._found_pending = False
+                self._record(RECORDING_FOUND, data=_CONFIRMED_BY_REAPER, project_seconds=reading)
+
+    def _take_started(self) -> None:
+        """Reaper says a take began: the anchor. Unstamped, since `/record 1`
+        precedes the take's first `/time`, and untapped, since a tap only asked."""
+        with _tapped(None):
+            self._record(RECORDING_STARTED, data=_CONFIRMED_BY_REAPER)
 
     # -- what the UI renders ----------------------------------------------
 

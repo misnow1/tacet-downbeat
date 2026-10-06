@@ -1,5 +1,7 @@
 marker	SYS|box-started
 marker	SYS|recording-started
+marker	SYS|recording-requested
+marker	SYS|recording-found
 marker	SYS|recording-stopped
 marker	SYS|armed
 marker	SYS|stood-down
