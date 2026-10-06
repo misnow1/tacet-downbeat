@@ -55,10 +55,27 @@ Checked directly, not recalled:
   greyed out before you touch anything"), and Pre-flight step 0 has the
   workaround: roll and stop a take in Reaper, then start the real one on the
   page. The step was missed. A fix that does not depend on remembering it,
-  and a reason shown on the page, is #163. Every entry's `project_seconds` still puts the take start at
-  exactly 17:50:42, so alignment is intact, but `markers.py` cannot regenerate
-  the markers without an anchor. The corrections sidecar supplies one (#159);
-  the box writing it itself is #158.
+  and a reason shown on the page, is #163. The box now writes the anchor
+  itself when Reaper confirms a take, whoever started it (#158).
+- **The timeline is intact** despite the missing anchor (checked 2026-10-05,
+  #180):
+  - Every item sits at `POSITION 0`, `SOFFS 0`, and the WAVs carry a BWF
+    `bext` chunk: originator REAPER, 2026-10-02 **17:50:42**, TimeReference 0.
+    Sample 0 of every track is project time 0.000.
+  - **All 903 entries written during the take carry a playhead stamp**
+    (`project_seconds`). Wall time minus the BWF start minus the stamp is a
+    constant **0.45 s** (0.34-0.53) across all of them, so the take began at
+    about **17:50:42.45**; the BWF time is truncated to whole seconds.
+  - The only entries that cannot be placed are the **26 written before the
+    take started** (16:34-17:50), including the first `band-enters-stands`.
+    They predate the audio, so no anchor could place them.
+  - Reaper's live markers sit a median **0.18 s after** the log's stamps (max
+    0.36 s), because the mirror places them where Reaper's cursor is when it
+    polls (#66). **For offline work the log's stamps are the reference, not
+    the markers.**
+  - What is missing is tooling only: `markers.py` needs a `recording-started`
+    entry before it places anything. The corrections sidecar supplies a
+    synthetic one at project time 0.0 (#159).
 - **`2026-10-02-game.jsonl` is empty** (0 bytes, 16:30): a box start with a
   different `--log`, before the real one at 16:34. Nothing is missing from it.
 - **What the box ran:** `b7cec64`, from a worktree on `147-snapshot-churn`,
