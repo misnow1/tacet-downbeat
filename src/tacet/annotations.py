@@ -176,12 +176,30 @@ def _span(key: str, label: str, category: Category, *, button: bool = True) -> E
 
 #: The entry every other position in the log is measured from.
 #:
+#: Written when Reaper reports a take STARTING, whoever started it (#158): the
+#: page's tap, or Record pressed in Reaper. Never on the tap itself, which is
+#: only a request. Unstamped, since `/record 1` precedes the take's first
+#: `/time`.
+#:
 #: Named once, here, because three things now depend on it meaning the same
 #: string: the box writes it, `tacet.markers` anchors the whole timeline to the
 #: first one, and the box warns at startup when a log already contains one. A
 #: second copy of this string that drifted would break the warning silently,
 #: which is the exact failure the warning exists to prevent.
 ANCHOR_EVENT = "recording-started"
+
+#: The page's Start recording tap, written once the `/record` was sent (#158).
+#: A request, not a recording: Reaper may never confirm it.
+RECORD_REQUEST_EVENT = "recording-requested"
+
+#: A take the box found already rolling, from Reaper's reply to a refresh
+#: (#172, #158). Stamped with Reaper's own position, never an anchor of its own
+#: making: the take did not start now.
+FOUND_EVENT = "recording-found"
+
+#: What the box writes in `data` of an anchor or found entry: Reaper said so.
+ANCHOR_CONFIRMED_BY = "confirmed_by"
+CONFIRMED_BY_REAPER = "reaper"
 
 #: The box saying what code it is (#157). Written once per run, first, by
 #: `tacet.app` before anything is served. Named once, like `ANCHOR_EVENT`.
@@ -206,6 +224,8 @@ VOCABULARY: tuple[EventType, ...] = (
     # where it happened.
     _instant(BOX_STARTED, "Box started", Category.SESSION, button=False),
     _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),
+    _instant(RECORD_REQUEST_EVENT, "Recording requested", Category.SESSION, button=False),
+    _instant(FOUND_EVENT, "Recording found rolling", Category.SESSION, button=False),
     _instant("recording-stopped", "Recording stopped", Category.SESSION, button=False),
     _instant("armed", "Armed", Category.SESSION, button=False),
     _instant("stood-down", "Stood down", Category.SESSION, button=False),
@@ -614,6 +634,13 @@ READABLE_SCHEMAS: tuple[int, ...] = tuple(sorted(_READERS))
 def marker_name(entry: Entry) -> str:
     """The Reaper marker or region name for an entry."""
     return f"{entry.category}{MARKER_DELIMITER}{entry.event}"
+
+
+def is_anchor(entry: Entry) -> bool:
+    """An entry the timeline can be measured from: a take seen starting, or one
+    found rolling with Reaper's own position (#158). The one predicate
+    `tacet.markers`, the startup warning and the box's own D4 share."""
+    return entry.event == ANCHOR_EVENT or (entry.event == FOUND_EVENT and entry.project_seconds is not None)
 
 
 def project_seconds(entry: Entry, anchor: Entry) -> float:
@@ -1147,11 +1174,14 @@ class AnnotationLog:
         #: Entries handed to the writer and not yet reported on.
         self._unsettled = 0
         self._writer_stop_reported = False
-        #: The first `recording-started` already in the file when it was opened,
-        #: or None for a log this run started. Not a fault -- appending is what
+        #: The first anchor (`is_anchor`) already in the file when it was
+        #: opened, or None for a log this run started. Not a fault -- appending is what
         #: an append-only log is for -- but it means `tacet.markers` will anchor
         #: today's entries to an earlier recording, so the box says so.
         self.prior_anchor: Entry | None = None
+        #: The first `recording-requested` already in the file (#158): a tap
+        #: whose confirmation the box may not have heard.
+        self.prior_request: Entry | None = None
         #: The last entry already in the file, when its `monotonic` is ahead of
         #: this machine's clock - which restarts from near zero on a reboot.
         #: Offsets measured across that are wrong for any entry placed by
@@ -1184,8 +1214,10 @@ class AnnotationLog:
         for entry in read_entries(self.path):
             last = entry
             self._seq = max(self._seq, entry.seq)
-            if entry.event == ANCHOR_EVENT and self.prior_anchor is None:
+            if is_anchor(entry) and self.prior_anchor is None:
                 self.prior_anchor = entry
+            if entry.event == RECORD_REQUEST_EVENT and self.prior_request is None:
+                self.prior_request = entry
             follow_span(self._open_spans, entry)
         if last is not None:
             self.clock_reset = clock_reset(last, now=self._clock.monotonic())
@@ -1399,7 +1431,7 @@ class AnnotationLog:
 
 
 def find_prior_anchor(path: Path | str) -> Entry | None:
-    """The first `recording-started` already in a log, or None.
+    """The first anchor (`is_anchor`) already in a log, or None.
 
     Answered before the log is opened for writing, so the box can say at startup
     that today's entries will be positioned against an earlier recording. A
@@ -1409,7 +1441,7 @@ def find_prior_anchor(path: Path | str) -> Entry | None:
     if not path.exists():
         return None
     for entry in read_entries(path):
-        if entry.event == ANCHOR_EVENT:
+        if is_anchor(entry):
             return entry
     return None
 

@@ -712,6 +712,8 @@ class TestOperatorInput(unittest.TestCase):
         # measures the whole timeline from.
         box_only = [event.key for event in ann.VOCABULARY if not event.button]
         self.assertIn(ann.ANCHOR_EVENT, box_only)
+        self.assertIn(ann.RECORD_REQUEST_EVENT, box_only)
+        self.assertIn(ann.FOUND_EVENT, box_only)
         for key in box_only:
             with self.subTest(key=key), self.assertRaises(ann.NotAButtonError):
                 ann.operator_event(key)
@@ -1105,6 +1107,46 @@ class TestPriorAnchorIsNoticed(LogTestCase):
             log.record(ann.ANCHOR_EVENT)
         with self.log() as reopened:
             self.assertIsNotNone(reopened.prior_anchor)
+
+    def test_the_request_and_found_events_are_named_once_and_box_only(self):
+        self.assertEqual(ann.RECORD_REQUEST_EVENT, "recording-requested")
+        self.assertEqual(ann.FOUND_EVENT, "recording-found")
+        for key in (ann.RECORD_REQUEST_EVENT, ann.FOUND_EVENT):
+            with self.subTest(key=key):
+                self.assertIn(key, ann.EVENTS)
+                self.assertFalse(ann.EVENTS[key].button)
+
+    def test_is_anchor_takes_a_started_or_a_stamped_found_entry(self):
+        clock = FakeClock()
+        build = ann.Entry.build
+        self.assertTrue(ann.is_anchor(build(1, ann.lookup(ann.ANCHOR_EVENT), clock)))
+        self.assertTrue(ann.is_anchor(build(2, ann.lookup(ann.FOUND_EVENT), clock, project_seconds=5.0)))
+        self.assertFalse(ann.is_anchor(build(3, ann.lookup(ann.FOUND_EVENT), clock)))
+        self.assertFalse(ann.is_anchor(build(4, ann.lookup(ann.RECORD_REQUEST_EVENT), clock)))
+        self.assertFalse(ann.is_anchor(build(5, ann.lookup("note"), clock)))
+
+    def test_a_reopened_log_remembers_a_prior_request(self):
+        with self.log() as log:
+            log.record(ann.RECORD_REQUEST_EVENT)
+            self.assertIsNone(log.prior_request)
+        with self.log() as reopened:
+            assert reopened.prior_request is not None
+            self.assertEqual(reopened.prior_request.event, ann.RECORD_REQUEST_EVENT)
+            self.assertIsNone(reopened.prior_anchor)
+
+    def test_a_stamped_found_entry_is_a_prior_anchor(self):
+        with self.log() as log:
+            log.record(ann.FOUND_EVENT, project_seconds=42.0)
+        found = ann.find_prior_anchor(self.path)
+        assert found is not None
+        self.assertEqual(found.event, ann.FOUND_EVENT)
+        with self.log() as reopened:
+            self.assertIsNotNone(reopened.prior_anchor)
+
+    def test_an_unstamped_found_entry_is_not_a_prior_anchor(self):
+        with self.log() as log:
+            log.record(ann.FOUND_EVENT)
+        self.assertIsNone(ann.find_prior_anchor(self.path))
 
     def test_the_anchor_event_is_in_the_vocabulary(self):
         # The warning, the box's own entry and markers.find_anchor all key on

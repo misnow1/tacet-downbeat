@@ -401,6 +401,78 @@ def refresh_due(before: TransportState, after: TransportState, request: RecordRe
     )
 
 
+class TakeReport(StrEnum):
+    """What a `/record` report means for the log (#158)."""
+
+    #: A take began: write the anchor.
+    STARTED = "started"
+    #: A take already rolling, learnt from a refresh reply: never an anchor.
+    FOUND = "found"
+
+
+def take_report(
+    before: TransportState,
+    after: TransportState,
+    *,
+    record_request: RecordRequest | None,
+    refresh_request: RecordRequest | None,
+    timeout: float = DEFAULT_FEEDBACK_TIMEOUT,
+) -> TakeReport | None:
+    """Classify the packet that took the state from `before` to `after`.
+
+    Pure. The requests are as they stood before the packet: the client may send
+    a new refresh once it has applied it, and that must not change what this
+    packet meant. In order:
+
+    0. No `/record` report in it, or it does not say recording: nothing.
+    1. It answers the box's own start: STARTED, even if it also answers a
+       refresh sent at the same moment. It is the take the operator just
+       started.
+    2. It answers an outstanding refresh, within `REFRESH_ANSWER_SECONDS` of
+       it: FOUND. A refresh reply reports a take already rolling, never one
+       starting. Past the cap the refresh is abandoned, and the report falls
+       through to the rules below.
+    3. It repeats a belief that Reaper is recording on a live link: nothing.
+    4. Otherwise STARTED: someone pressed Record in Reaper. This includes a
+       take restarted in a relaunched Reaper that never said `/record 0`
+       (`before.recording` True on a LOST link).
+    """
+    if after.record_reports == before.record_reports or after.recording is not True:
+        return None
+    if _answers(record_request, before, after):
+        return TakeReport.STARTED
+    if _answers_refresh(refresh_request, before, after):
+        return TakeReport.FOUND
+    if before.recording is True and before.liveness(after.last_packet or 0.0, timeout=timeout) is Liveness.LIVE:
+        return None
+    return TakeReport.STARTED
+
+
+def _answers(request: RecordRequest | None, before: TransportState, after: TransportState) -> bool:
+    return request is not None and not request.answered_by(before) and request.answered_by(after)
+
+
+def _answers_refresh(request: RecordRequest | None, before: TransportState, after: TransportState) -> bool:
+    """Whether this report answers the refresh while it is still awaited: the
+    cap that ends the refusal (`REFRESH_ANSWER_SECONDS`) ends the wait."""
+    if request is None or after.last_packet is None:
+        return False
+    return _answers(request, before, after) and (after.last_packet - request.sent_at) < REFRESH_ANSWER_SECONDS
+
+
+def clock_reading(before: TransportState, after: TransportState) -> float | None:
+    """The `/time` this packet carried, or None if it carried none.
+
+    A `(monotonic, position)` pair taken at the same moment, which is what a
+    found take is stamped with (#158).
+    """
+    if after.position is None or after.position_at is None:
+        return None
+    if after.position_at != after.last_packet or after.position_at == before.position_at:
+        return None
+    return after.position
+
+
 def record_refusal(
     state: TransportState,
     now: float,
@@ -499,6 +571,8 @@ class ReaperClient:
         self.record_request: RecordRequest | None = None
         #: The last refresh sent (#172), kept for the same reason.
         self.refresh_request: RecordRequest | None = None
+        #: What the last packet meant for the log (#158), set on every packet.
+        self.last_take: TakeReport | None = None
 
     @property
     def healthy(self) -> bool:
@@ -551,6 +625,11 @@ class ReaperClient:
     def handle_packet(self, packet: bytes) -> TransportState:
         before = self.state
         self.state = apply_feedback(packet, before, now=self._monotonic(), addresses=self.addresses)
+        # Classified against the requests as they stood before this packet: the
+        # refresh sent below must not change what the packet that drew it meant.
+        self.last_take = take_report(
+            before, self.state, record_request=self.record_request, refresh_request=self.refresh_request
+        )
         if refresh_due(before, self.state, self.refresh_request):
             # A datagram callback: nothing may escape it. A failed send shows
             # on `healthy` and leaves no request, so the next run tries again.

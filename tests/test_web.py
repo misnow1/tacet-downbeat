@@ -592,7 +592,8 @@ class TestCommands(WebTestCase):
         self.tacet.handle_recorder_packet(meter_packet())
         response = await self.client.post("/api/record")
         self.assertEqual(response.status, 200)
-        self.assertIn("recording-started", self.entries())
+        self.assertIn("recording-requested", self.entries())
+        self.assertNotIn("recording-started", self.entries())
 
     async def test_there_is_no_stop_route(self):
         # design.md 5.9. Asserted against the router so it cannot creep back in.

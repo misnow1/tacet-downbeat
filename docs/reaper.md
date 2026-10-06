@@ -248,13 +248,18 @@ them. Kept, the edit cursor stays at the end of the take, so a re-record
 appends after it. Deleted, the cursor goes back to where the take began, and a
 re-record stacks on top of it at the same timeline position.
 
-**Start it from the page, not in Reaper.** `recording-started` is written only
-by the page's Start recording button, and it is the anchor the whole log is
-measured from. Start the recording in Reaper instead and the log has no anchor,
-so markers cannot be derived from it afterwards at all. The box refuses a page
-start when the log already holds a recording and Reaper has not said whether it
-is rolling, so a reused log after a box restart shows that reason rather than a
-live button.
+**One recording, one log.** `recording-started` is the anchor the whole log is
+measured from, and the box writes it when Reaper *reports a take starting*
+(#158): from the page's Start recording button or from Record pressed in Reaper,
+either way. The tap itself is logged as `recording-requested`, which is only a
+request, and a tap Reaper never confirms writes no anchor. A box that finds a
+take already rolling (restarted mid-take) logs `recording-found` with Reaper's
+own position, never an anchor of its own, and markers measure from it if the log
+has no anchor. Any take rolled against the game log writes an anchor, a test
+take included, so test takes go to a scratch `--log`. The box refuses a page
+start when the log already holds a recording or a request and Reaper has not
+said whether it is rolling, so a reused log after a box restart shows that
+reason rather than a live button.
 
 **Record before annotating.** Reaper has no negative timeline, so anything
 logged before recording starts has nowhere to go on it. Those entries are kept
@@ -356,6 +361,9 @@ Reaper's feedback has to survive all of it.
   `/stop` are not in the *launch or project-load* dump, so after a launch, a
   relaunch or a box restart the record state is unknown until the transport next
   changes - unless the box asks, below.
+- **`/record 1` carries only the flag and precedes the take's first `/time`.**
+  That is why the anchor is written unstamped, and why a found entry waits for
+  the first `/time` after the refresh reply to take its position.
 - **Refresh all surfaces (action 41743)**, sent as OSC `/action` with int
   `41743`, draws the current transport state within 10-40 ms, in three forms.
   Unlike the launch dump, this one does carry `/record`:
@@ -378,6 +386,7 @@ Reaper's feedback has to survive all of it.
   (`REFRESH_ANSWER_SECONDS`), as `Listening to Reaper`. A slow dump can stall
   `/time` for longer than the 2 s timeout, which on its own would look like a
   parked transport. After the 5 s the box is back to #163's rules.
+  A `/record 1` more than 5 s after an unanswered refresh is a new take.
 - **It does not ask again while a refresh is unanswered.** Any `/record` report
   answers it. Unanswered (an older Reaper, the action missing), after the 5 s
   guard above the box behaves as #163 shipped it, until Reaper's next record

@@ -501,7 +501,7 @@ class TestMotionIsTheClock(unittest.TestCase):
 
 
 class TestPresence(unittest.TestCase):
-    """Silence never permits a send: a `/record` into nothing is a false anchor."""
+    """Silence never permits a send: a `/record` into nothing is a false request, and a latch nothing will answer."""
 
     def test_never_heard_from_refuses_as_silent(self):
         self.assertEqual(reaper.record_refusal(reaper.TransportState(), 100.0), reaper.RECORD_REFUSED_SILENT)
@@ -1000,3 +1000,154 @@ class TestTheRefreshStall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _request(state, at=100.0):
+    return reaper.RecordRequest(sent_at=at, reports_before=state.record_reports)
+
+
+def _step(state, packet, at):
+    return reaper.apply_feedback(packet, state, now=at)
+
+
+def _record(on: bool = True) -> bytes:
+    return osc.encode_message("/record", float(on))
+
+
+class TestTakeReport(unittest.TestCase):
+    """#158: what a `/record` report means for the log."""
+
+    def classify(self, before, packet, *, record=None, refresh=None, at=101.0):
+        after = _step(before, packet, at)
+        return reaper.take_report(before, after, record_request=record, refresh_request=refresh)
+
+    def parked(self):
+        return _step(reaper.TransportState(), _record(False), 100.0)
+
+    def test_a_record_report_from_a_parked_reaper_is_started(self):
+        self.assertIs(self.classify(self.parked(), _record()), reaper.TakeReport.STARTED)
+
+    def test_unknown_to_recording_with_no_refresh_outstanding_is_started(self):
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        self.assertIs(self.classify(before, _record()), reaper.TakeReport.STARTED)
+
+    def test_a_record_report_answering_the_refresh_is_found_not_started(self):
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        self.assertIs(
+            self.classify(before, _record(), refresh=_request(before)),
+            reaper.TakeReport.FOUND,
+        )
+
+    def test_a_refresh_reply_to_a_box_already_believing_recording_is_found(self):
+        before = _step(_step(reaper.TransportState(), _record(), 100.0), meter_packet(), 100.5)
+        self.assertIs(
+            self.classify(before, _record(), refresh=_request(before), at=100.6),
+            reaper.TakeReport.FOUND,
+        )
+
+    def test_a_record_report_answering_the_boxs_own_start_is_started_even_if_it_answers_a_refresh(self):
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        request = _request(before)
+        self.assertIs(
+            self.classify(before, _record(), record=request, refresh=request),
+            reaper.TakeReport.STARTED,
+        )
+
+    def test_a_refresh_reply_saying_not_recording_is_nothing(self):
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        self.assertIsNone(self.classify(before, _record(False), refresh=_request(before)))
+
+    def test_a_stop_report_is_nothing(self):
+        before = _step(reaper.TransportState(), _record(), 100.0)
+        self.assertIsNone(self.classify(before, _record(False), at=100.1))
+
+    def test_other_traffic_is_nothing(self):
+        before = self.parked()
+        for label, packet in (
+            ("meter", meter_packet()),
+            ("time", osc.encode_message("/time", 5.0)),
+            ("play", osc.encode_message("/play", 1.0)),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(self.classify(before, packet))
+
+    def test_a_malformed_packet_is_nothing(self):
+        self.assertIsNone(self.classify(self.parked(), b"not osc"))
+
+    def test_a_new_take_after_a_stop_is_started(self):
+        before = _step(_step(reaper.TransportState(), _record(), 100.0), _record(False), 100.5)
+        self.assertIs(self.classify(before, _record(), at=100.6), reaper.TakeReport.STARTED)
+
+    def test_a_repeated_record_report_while_rolling_live_is_nothing(self):
+        before = _step(reaper.TransportState(), _record(), 100.0)
+        self.assertIsNone(self.classify(before, _record(), at=100.5))
+
+    def test_a_record_report_after_the_refresh_cap_is_started(self):
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        request = _request(before)
+        before = _step(before, meter_packet(), 105.0)
+        self.assertIs(
+            self.classify(before, _record(), refresh=request, at=100.0 + reaper.REFRESH_ANSWER_SECONDS + 1.0),
+            reaper.TakeReport.STARTED,
+        )
+
+    def test_a_record_report_inside_the_cap_answering_the_refresh_is_found(self):
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        request = _request(before)
+        before = _step(before, meter_packet(), 104.0)
+        self.assertIs(
+            self.classify(before, _record(), refresh=request, at=100.0 + reaper.REFRESH_ANSWER_SECONDS - 0.1),
+            reaper.TakeReport.FOUND,
+        )
+
+    def test_a_record_report_exactly_at_the_refresh_cap_is_started(self):
+        # The cap is exclusive, like the start guard's: at the cap the refresh
+        # is already abandoned.
+        before = _step(reaper.TransportState(), meter_packet(), 100.0)
+        request = _request(before)
+        before = _step(before, meter_packet(), 104.0)
+        self.assertIs(
+            self.classify(before, _record(), refresh=request, at=100.0 + reaper.REFRESH_ANSWER_SECONDS),
+            reaper.TakeReport.STARTED,
+        )
+
+    def test_a_record_report_after_a_lost_take_is_started(self):
+        # A take restarted in a relaunched Reaper that never said `/record 0`.
+        before = _step(reaper.TransportState(), _record(), 100.0)
+        late = 100.0 + 10 * reaper.DEFAULT_FEEDBACK_TIMEOUT
+        self.assertIs(self.classify(before, _record(), at=late), reaper.TakeReport.STARTED)
+
+    def test_the_start_burst_in_one_bundle_is_one_take(self):
+        bundle = osc.encode_bundle([_record(), osc.encode_message("/play", 1.0)])
+        self.assertIs(self.classify(self.parked(), bundle), reaper.TakeReport.STARTED)
+
+
+class TestClockReading(unittest.TestCase):
+    def test_a_packet_carrying_time_gives_its_reading(self):
+        before = _step(reaper.TransportState(), _record(), 100.0)
+        after = _step(before, osc.encode_message("/time", 12.5), 100.1)
+        self.assertEqual(reaper.clock_reading(before, after), 12.5)
+
+    def test_a_meter_gives_no_clock_reading(self):
+        before = _step(_step(reaper.TransportState(), _record(), 100.0), osc.encode_message("/time", 1.0), 100.1)
+        after = _step(before, meter_packet(), 100.2)
+        self.assertIsNone(reaper.clock_reading(before, after))
+
+
+class TestTheClientClassifiesAgainstTheRequestsBeforeThePacket(unittest.TestCase):
+    def test_the_refresh_sent_from_inside_handle_packet_does_not_change_the_packet_that_drew_it(self):
+        c, sender, clock = timed_client()
+        # A `/record 1` as the first packet of a run: the refresh is sent after
+        # applying it, and it has not been answered, so the packet is a start.
+        hear(c, clock, _record(), 100.0)
+        self.assertIs(c.last_take, reaper.TakeReport.STARTED)
+        self.assertEqual(actions(sender), 1)
+
+    def test_the_reply_to_that_refresh_is_found(self):
+        c, _, clock = timed_client()
+        hear(c, clock, meter_packet(), 100.0)
+        self.assertIsNone(c.last_take)
+        hear(c, clock, _record(), 100.04)
+        self.assertIs(c.last_take, reaper.TakeReport.FOUND)
+        hear(c, clock, _record(), 100.05)
+        self.assertIsNone(c.last_take)
