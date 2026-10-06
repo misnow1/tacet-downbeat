@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-10-04.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
+**Last updated 2026-10-06.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -96,7 +96,10 @@ come first; the layout change lands early so the pre-game runthrough (about
 | 8 | [#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue | Before the runthrough, so it runs from the updated runbook |
 
 Nice for Game 4: [#156](https://github.com/misnow1/tacet-downbeat/issues/156)
-(swipe, never from the fader column), #44 and #73.
+(swipe, never from the fader column), #44 and ~~#73~~ (done: a ping at startup,
+at every arm and every 4 minutes, a `ping` banner row and a console chip only
+when something is wrong; whether the DM7 answers ping is still to be measured
+at the runthrough).
 
 Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159)
 (Game 3 sidecar and pilot analysis, after #133). Game 5 or later:
