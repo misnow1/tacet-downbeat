@@ -626,7 +626,9 @@ Reaper already is a scrubbable timeline with the audio and the marks on it.
 **The box's log is the source of truth; markers are a derived view.** Every
 annotation is appended to the box's own log as it happens. Markers are mirrored
 into Reaper from that log and can be regenerated from it at any time, given the
-record-start anchor. If Reaper crashes or the mirroring script is not loaded,
+record-start anchor. The anchor is written when Reaper reports a take starting,
+whoever started it; a take found already rolling is logged with Reaper's own
+position instead. If Reaper crashes or the mirroring script is not loaded,
 the convenient view is lost and the data is not.
 
 This also settles marker naming. Reaper's built-in insert-marker action yields

@@ -228,11 +228,12 @@ reads right. Starting early costs nothing; see
 0. **If Start recording is greyed out, read the line under the Recording
    panel and do what it says**
    ([what each one means](troubleshooting.md)). Never start the game take in
-   Reaper while the page's button is live: only the page writes the anchor
-   (until #158 lands).
-1. **Tap Start recording on the page, not in Reaper.** The recording line goes
-   to `ROLLING`, tagged **confirmed**, with a playhead counting up. Only this
-   button writes the anchor the whole log is measured from.
+   Reaper while the page's button is live, and never roll a test take in Reaper
+   against the game log: every take Reaper reports starting writes an anchor.
+1. **Tap Start recording on the page, or press Record in Reaper.** Either
+   writes the anchor the whole log is measured from, when Reaper reports the
+   take. The recording line goes to `ROLLING`, tagged **confirmed**, with a
+   playhead counting up: that is the check.
 2. **Check a marker lands.** Tap any annotation button and confirm a marker
    appears in Reaper at the playhead. This is the only check that covers the
    whole chain - box, queue, script, Reaper.
