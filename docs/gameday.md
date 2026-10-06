@@ -214,7 +214,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 |---|---|
 | State | `STANDING DOWN` |
 | Fader | `unknown`, tagged **unknown**. The box does not know where the fader is at any boot, and says so rather than showing a number it cannot vouch for |
-| Recording | `unknown`, tagged **not yet reported**, with Start recording live within a couple of seconds (Reaper open, its audio device running). **no feedback** with the button grey means Reaper is not open, or its OSC device is not sending to the box: the line under the panel says so |
+| Recording | `stopped`, tagged **confirmed**, with Start recording live (Reaper open, its audio device running): the box asks Reaper for its state when it first hears it. `unknown` tagged **not yet reported** means Reaper did not answer; Start recording is still live within five seconds. **no feedback** with the button grey means Reaper is not open, or its OSC device is not sending to the box: the line under the panel says so |
 | Top of the screen | Nothing. No banner is the healthy state |
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |

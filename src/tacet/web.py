@@ -875,6 +875,8 @@ justify-content:flex-start;overflow:hidden}
 #readout #level{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;
 text-overflow:ellipsis}
 #readout .tag{flex:none}
+#rec-error{color:#ff9d94;font-size:12px;line-height:15px;min-height:15px;overflow:hidden;white-space:nowrap;
+text-overflow:ellipsis}
 #readout #fader-error{color:#ff9d94;font-size:12px;line-height:15px;flex:0 0 auto;
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #col-refusal{color:#ffb4a9;font-size:12px;line-height:15px;display:none;flex:0 1 auto;
@@ -926,7 +928,8 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 <div class="panel" id="recording-status"><div class="label">Recording</div>
   <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
   <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div>
-  <div id="rec-why"></div></div>
+  <div id="rec-why"></div>
+  <div id="rec-error"></div></div>
 <div class="tabs">
   <button id="tab-btn-main" class="tab-btn on">Main</button>
   <button id="tab-btn-more" class="tab-btn">More</button>

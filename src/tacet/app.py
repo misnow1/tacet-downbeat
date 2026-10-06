@@ -1100,9 +1100,12 @@ class App:
 
         Freshness is the whole test. Reaper streams `/time` while the transport
         moves and stops when it parks, so a reading that arrived within the
-        timeout is current by construction; one older than that is wherever the
-        transport was last seen, and stamping it would place a marker at a
-        confidently wrong point. Unstamped falls back to the arithmetic, which
+        current window (`reaper.POSITION_CURRENT_SECONDS`, six `/time`
+        intervals) is current by construction; one older than that is wherever
+        the transport was last seen, and stamping it would place a marker at a
+        confidently wrong point. The window is short of the timeout so that the
+        1.5 s `/time` stall while Reaper answers the box's refresh (#172) goes
+        unstamped rather than stale-stamped. Unstamped falls back to the arithmetic, which
         is what happened before this existed. The freshness is of `/time`
         itself, not of the link: see `TransportState.current_position`.
 
@@ -1170,6 +1173,7 @@ class App:
             self._recorder.state,
             now,
             request=self._recorder.record_request,
+            refresh=self._recorder.refresh_request,
             # A log that already held a recording when it was opened is the one
             # sign that this box may have been restarted mid-take, when Reaper
             # has not yet said whether it is recording (D4, #163).
@@ -1297,6 +1301,9 @@ class App:
                 # it does not churn the snapshot coalescing (#147).
                 "refusal": record_refused,
                 "healthy": self._recorder.healthy if self._recorder is not None else True,
+                # Why it is not, for the line under the panel (#172). A refresh
+                # that cannot be sent is otherwise visible nowhere.
+                "error": self._recorder.last_error if self._recorder is not None else None,
             },
             "buttons": [
                 {

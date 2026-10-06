@@ -723,6 +723,10 @@ function recordReason(rec) {
   return typeof rec.refusal === "string" && rec.refusal ? rec.refusal : RECORD_REASON_MISSING;
 }
 
+// Said under the Recording panel when a send to Reaper failed, as the console's
+// is under the readout (#172). Quoted in docs/troubleshooting.md.
+const RECORDER_ERROR_PREFIX = "Reaper unreachable: ";
+
 function recordingTag(liveness, known) {
   if (liveness === "lost") return ["unknown", "LINK LOST"];
   if (liveness === "unknown") return ["unknown", "no feedback"];
@@ -892,6 +896,7 @@ function render(received) {
   setDisabled(record, !rec.can_start);
   setText(record, rec.known && rec.recording ? "Recording" : "Start recording");
   setText($("rec-why"), recordReason(rec));
+  setText($("rec-error"), rec.healthy === false ? RECORDER_ERROR_PREFIX + rec.error : "");
 
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
