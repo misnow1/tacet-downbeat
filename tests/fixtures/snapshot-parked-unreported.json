@@ -1,5 +1,5 @@
 {
-  "at": 5002.0,
+  "at": 5005.0,
   "buttons": [
     {
       "action": null,
@@ -238,6 +238,7 @@
   "recording": {
     "can_start": true,
     "confirmed": true,
+    "error": null,
     "healthy": true,
     "known": false,
     "liveness": "live",

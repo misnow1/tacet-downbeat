@@ -238,7 +238,8 @@
   "recording": {
     "can_start": false,
     "confirmed": false,
-    "healthy": true,
+    "error": "no route to host",
+    "healthy": false,
     "known": false,
     "liveness": "lost",
     "position": null,

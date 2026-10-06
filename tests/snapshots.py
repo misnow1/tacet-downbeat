@@ -99,6 +99,7 @@ def _build(
     root: Path,
     *,
     console: _Sender | _Unreachable,
+    recorder: _Sender | _Unreachable | None = None,
     machine: Machine | None = None,
     code: provenance.Provenance = CLEAN,
 ) -> Box:
@@ -117,7 +118,7 @@ def _build(
     app = App(
         console=dm7.Dm7Client("192.0.2.1", dca=3, sender=console, monotonic=lambda: clock[0], sleep=tick),
         log=log,
-        recorder=reaper.ReaperClient(sender=_Sender(), monotonic=lambda: clock[0]),
+        recorder=reaper.ReaperClient(sender=recorder or _Sender(), monotonic=lambda: clock[0]),
         monotonic=lambda: clock[0],
         machine=machine,
         provenance=code,
@@ -155,13 +156,15 @@ async def open_recording(root: Path) -> dict[str, Any]:
 async def parked_unreported(root: Path) -> dict[str, Any]:
     """Reaper open and parked with its audio device running: meters stream and
     nothing is said about the transport, which Reaper announces only when it
-    changes. The normal pregame page after #163 - the button is live."""
+    changes. A Reaper that never answered the box's refresh (#172): the page
+    after #163 - the button is live once the refresh's cap has passed."""
     box = _build(root, console=_Sender(), machine=_known())
-    # Listened to for a full timeout: the box will not call a transport parked
-    # before that, so the button is live only now.
-    for _ in range(2):
+    # Listened to for a full timeout, and past the refresh's cap: the box will
+    # not call a transport parked before the first, nor start into the second.
+    steps = 5
+    for _ in range(steps):
         box.reaper_says(METER, 0.0)
-        box.clock[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT / 2
+        box.clock[0] += reaper.REFRESH_ANSWER_SECONDS / steps
     box.reaper_says(METER, 0.0)
     return box.app.snapshot()
 
@@ -228,7 +231,7 @@ async def faults(root: Path) -> dict[str, Any]:
     The snap open's send never left the box, and it was absolute, so the
     level goes back to unknown (#116): this fixture's fader reads unknown too,
     for real, not just at cold boot."""
-    box = _build(root, console=_Unreachable(), machine=_known(), code=DIRTY)
+    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known(), code=DIRTY)
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE

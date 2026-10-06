@@ -13,7 +13,7 @@ from tacet import app as tacet_app
 from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
 from tacet import provenance as prov
 from tests.disk import Disk
-from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream
+from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply
 from tests.test_annotations import Gate, Killed
 
 
@@ -196,6 +196,13 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         parked before that (#163)."""
         listened_parked(self.reaper, self._clock())
         app.handle_recorder_packet(meter_packet())
+
+    def reaper_answers_stopped(self, app):
+        """The box's first contact with Reaper, and Reaper's answer to its
+        refresh: not recording (#172)."""
+        app.handle_recorder_packet(meter_packet())
+        for packet in refresh_reply(recording=False, playing=False):
+            app.handle_recorder_packet(packet)
 
     def expect_push(self, app, condition):
         """A future for the first push to satisfy `condition`.
@@ -1076,18 +1083,22 @@ class TestRecordIsNotAStopButton(AppTestCase):
 
     async def test_a_reaper_that_reported_a_stop_can_be_started(self):
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.reaper_answers_stopped(app)
         await app.start_recording()
         self.assertIn("/record", self.record_packets())
 
     async def test_a_moving_transport_of_unknown_record_state_is_refused(self):
         """A box restarted mid-game hears /time and no transport change, so it
-        cannot tell a safe send from one that ends the recording."""
-        app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 12.0))
+        cannot tell a safe send from one that ends the recording. Reaper has not
+        answered the box's refresh, and its cap (#172) has passed."""
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        for _ in range(int(reaper.REFRESH_ANSWER_SECONDS / 0.5) + 1):
+            app.handle_recorder_packet(osc.encode_message("/time", 12.0))
+            clock[0] += 0.5
         await app.start_recording()
         self.assertNotIn("/record", self.record_packets())
-        self.assertIn("not said whether", app.snapshot()["refusal"])
+        self.assertEqual(app.snapshot()["refusal"], reaper.RECORD_REFUSED_MOVING)
 
     async def test_a_lost_recorder_is_refused(self):
         clock = [1000.0]
@@ -1142,7 +1153,7 @@ class TestRecordIsNotAStopButton(AppTestCase):
         # The press-box rig: never silent, and after the workaround take it has
         # said it is not recording, which on its own permits a send.
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.reaper_answers_stopped(app)
         app.handle_recorder_packet(osc.encode_message("/time", 4.8))
         await app.start_recording()
         await app.start_recording()
@@ -1635,7 +1646,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         app = self.build()
         # Reaper says stopped, then streams a position: the record button is
         # allowed and there is a fresh playhead available to stamp.
-        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+        self.reaper_answers_stopped(app)
         app.handle_recorder_packet(osc.encode_message("/time", 77.0))
         await app.start_recording()
         anchor = [e for e in self.entries() if e.event == ann.ANCHOR_EVENT][-1]
@@ -1646,6 +1657,116 @@ class TestThePlayheadIsStamped(AppTestCase):
         app = tacet_app.App(console=self.console, log=self.log, recorder=None)
         await app.annotate("band-enters-stands")
         self.assertIsNone(self.last().project_seconds)
+
+
+class TestTheBoxAsksReaper(AppTestCase):
+    """#172: the box asks Reaper for its transport state when it first hears
+    it, so the record state is reported rather than inferred."""
+
+    def build_timed(self):
+        self.t = [100.0]
+        return self.build(monotonic=lambda: self.t[0])
+
+    def hear(self, app, packet, at):
+        self.t[0] = at
+        app.handle_recorder_packet(packet)
+
+    def asked(self):
+        return self.reaper_sender.addresses().count("/action")
+
+    async def test_the_box_asks_reaper_once_when_it_first_hears_it(self):
+        app = self.build_timed()
+        self.hear(app, meter_packet(), 100.0)
+        self.assertEqual(self.asked(), 1)
+        self.hear(app, meter_packet(), 100.09)
+        self.assertEqual(self.asked(), 1)
+
+    async def test_a_box_started_beside_a_parked_reaper_is_live_once_reaper_answers(self):
+        app = self.build_timed()
+        self.hear(app, meter_packet(), 100.0)
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+        for k, packet in enumerate(refresh_reply(recording=False, playing=False)):
+            self.hear(app, packet, 100.04 + k * 0.001)
+        self.t[0] = 100.1
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["can_start"])
+        self.assertTrue(recording["known"])
+        self.assertFalse(recording["recording"])
+
+    async def test_a_box_started_mid_take_learns_it_is_recording(self):
+        app = self.build_timed()
+        self.hear(app, meter_packet(), 100.0)
+        self.hear(app, osc.encode_message("/time", 10.0), 100.02)
+        for k, packet in enumerate(refresh_reply(recording=True, playing=True)):
+            self.hear(app, packet, 100.04 + k * 0.001)
+        self.t[0] = 100.1
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["known"])
+        self.assertTrue(recording["recording"])
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_ROLLING)
+        await app.start_recording()
+        self.assertNotIn("/record", self.reaper_sender.addresses())
+
+    async def test_an_entry_made_during_the_refresh_stall_is_not_stamped(self):
+        app = self.build_timed()
+        self.hear(app, osc.encode_message("/time", 10.0), 100.0)
+        for at in (100.2, 100.4, 100.6):
+            self.hear(app, meter_packet(), at)
+        await app.annotate("note")
+        self.log.close()
+        entry = [e for e in ann.read_entries(self.log.path) if e.event == "note"][-1]
+        self.assertIsNone(entry.project_seconds)
+
+
+class TestARefreshInFlightGuardsTheStart(AppTestCase):
+    """#172: while the box's refresh is unanswered, a start is refused as
+    listening, for at most `REFRESH_ANSWER_SECONDS`."""
+
+    def hear(self, app, packet, at):
+        self.t[0] = at
+        app.handle_recorder_packet(packet)
+
+    async def test_a_start_is_refused_while_the_refresh_is_unanswered(self):
+        self.t = [100.0]
+        app = self.build(monotonic=lambda: self.t[0])
+        for at in (100.0, 100.5, 101.0, 101.5, 102.0, 102.5):
+            self.hear(app, meter_packet(), at)
+        # Two seconds of meters and no `/time`: #163 alone would permit it.
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["can_start"])
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_LISTENING)
+        await app.start_recording()
+        self.assertNotIn("/record", self.reaper_sender.addresses())
+
+    async def test_an_unanswered_refresh_stops_refusing_after_the_cap(self):
+        self.t = [100.0]
+        app = self.build(monotonic=lambda: self.t[0])
+        at = 100.0
+        while at <= 100.0 + reaper.REFRESH_ANSWER_SECONDS:
+            self.hear(app, meter_packet(), at)
+            at += 0.5
+        self.assertTrue(app.snapshot()["recording"]["can_start"])
+
+    async def test_an_answered_refresh_lifts_the_guard_in_the_same_tick(self):
+        self.t = [100.0]
+        app = self.build(monotonic=lambda: self.t[0])
+        self.hear(app, meter_packet(), 100.0)
+        self.assertFalse(app.snapshot()["recording"]["can_start"])
+        for packet in refresh_reply(recording=False, playing=False):
+            self.hear(app, packet, 100.04)
+        self.assertTrue(app.snapshot()["recording"]["can_start"])
+
+    async def test_a_failed_refresh_send_is_on_the_snapshot(self):
+        app = self.build(reaper_sender=FailingSender())
+        app.handle_recorder_packet(meter_packet())
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["healthy"])
+        self.assertIn("unreachable", recording["error"])
+
+    async def test_a_healthy_recorder_has_no_error(self):
+        app = self.build()
+        app.handle_recorder_packet(meter_packet())
+        self.assertIsNone(app.snapshot()["recording"]["error"])
 
 
 class TestTheExpectedFaderStateIsVisible(AppTestCase):
