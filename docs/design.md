@@ -353,8 +353,8 @@ What the flag gates is absolute against relative:
   belief it briefly held, immediately followed by `move-failed`: read that
   pair together, since the `took-back` alone did not survive its own packet.
 - A **relative** command ramps from the believed level: the 2 s fade, READY's
-  ride to the hold level, and the slow open. Each is refused while the level is
-  unknown, with the reason on the page. Refused, not queued - a tap held back
+  ride to the hold level, the slow open, and the retarget ride (#128). Each is
+  refused while the level is unknown, with the reason on the page. Refused, not queued - a tap held back
   and run later runs on a belief nobody has looked at since. The page also
   greys the four column buttons that make these moves, in place, so the refusal
   is rarely reached.
@@ -420,11 +420,11 @@ Minimum during-game requirements:
 - A fade or ride is described once and animated on the page; its in-flight
   state ends only on the box's word, never on the page's own timer (#154)
 - **Open** and **fade out** buttons
-- A target tap that stores without moving the fader, while the fader is up,
-  says so where the operator tapped, under the Target level segments. The box
-  owns the note and clears it on the next tap, fader move or state change; the
-  page has no timer for it. A tap while the fader is closed says nothing, since
-  storing is what the operator expects there (#153)
+- A target tap rides the fader to the new level while it is up (#128), and says
+  so where the operator tapped, under the Target level segments, when it only
+  stored. The box owns the note and clears it on the next tap, fader move or
+  state change; the page has no timer for it. A tap while the fader is closed
+  says nothing, since storing is what the operator expects there (#153)
 - State colours (fault red, attention amber, healthy green, fading) are
   reserved and never mark a button category (#155)
 - Plain-language "why" line — what state the machine is in and what put it there

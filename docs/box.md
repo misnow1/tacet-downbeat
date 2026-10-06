@@ -308,8 +308,11 @@ mics. A site whose ring-out raised the cap to +3 dB writes
 `presets = [3.0, 0.0, -3.0, -6.0]`, `max_target_db = 3.0` and
 `default_target_db = 0.0`: the page reads loudest first, but the box still
 boots to unity, and +3 is one tap away for a very loud crowd. Changing the
-target on the page stores the value and sends nothing; the next open uses it,
-and the READY hold level follows it (`fader.hold_below_db` below it). With
+target on the page always stores the value, and while the fader is up rides it
+there over `fader.retarget_ride_seconds` (default 1.0, `--retarget-ride`): the
+open level to the new target, or READY's hold to the new hold. Closed or
+fading, it stores and sends nothing; the next open uses it. The READY hold
+level follows it (`fader.hold_below_db` below it). With
 flags, a value that starts with a minus needs the equals form for `--presets`
 (`--presets=-3,-6`), but not for `--default-target`: a bare negative number is
 not mistaken for another flag, the way `--max-target -2.0` already is not.

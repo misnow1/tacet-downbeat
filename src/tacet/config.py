@@ -127,6 +127,7 @@ SCHEMA: tuple[Option, ...] = (
     Option("fader", "slow_open_seconds", "float", "ride-in for up-slow, when the start was missed"),
     Option("fader", "hold_below_db", "float", "how far below target READY's hold level sits"),
     Option("fader", "ready_ride_seconds", "float", "ride from idle to the READY hold level"),
+    Option("fader", "retarget_ride_seconds", "float", "ride to a new target while the fader is up"),
     Option("fader", "stale_tap_seconds", "float", "a fader tap arriving later than this is not executed"),
     Option(
         "fader",

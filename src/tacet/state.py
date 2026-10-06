@@ -38,7 +38,7 @@
     The invariant is absolute against relative. An absolute command (a snap
     TRIGGER, CLOSE_NOW) lands the fader in one known place whatever the box
     believed, so it is always safe, and it makes the level known. A relative
-    one - RELEASE's fade, READY's ride, a gradual TRIGGER - ramps from
+    one - RELEASE's fade, READY's ride, a gradual TRIGGER, a retarget ride - ramps from
     `commanded_level`, which is fiction while the level is unknown, so it is
     refused (not queued: there is no intention worth holding onto, and a queued
     tap ran later on a belief nobody had looked at). ARM is refused too: it
@@ -139,6 +139,10 @@ class Command(StrEnum):
     #: Belief only, never a packet: READY has no fast form (see _readying), so
     #: it is the one state that cannot be reached by driving to it (#107).
     REPORT_READY = "report-ready"
+    #: The operator changed the standing target; rides while the fader is up
+    #: (#128). The target value lives in the app: the machine only decides
+    #: whether it rides.
+    RETARGET = "retarget"
 
 
 class FaderCommand(StrEnum):
@@ -153,6 +157,10 @@ class FaderCommand(StrEnum):
     #: Belief only, never a packet: it names the level `Dm7Client.assume`
     #: should trust without sending anything (#107).
     REPORT_READY = "report-ready"
+    #: Ride from the believed level to the new target (OPEN) or the new hold
+    #: (READY) (#128). Relative, so it needs a known level. Still a level write,
+    #: never a mute.
+    RETARGET = "retarget"
 
 
 @dataclass(frozen=True)
@@ -236,6 +244,9 @@ DETECTOR_CANNOT_PREDICT = "READY is operator-only; only a person can tell what i
 #: READY's: a wrong reason for a different wrong command is worse than none.
 DETECTOR_CANNOT_HAND_OFF = "handing the DCA over is operator-only; only a person can tell that StageMix has it"
 
+#: Why a detector-sourced RETARGET is refused (#128).
+DETECTOR_CANNOT_RETARGET = "the target level is the operator's; a detector cannot choose how loud the band is"
+
 #: Commands only a person can give, each with why. READY is entered on a
 #: prediction that something is about to happen and REPORT_READY says the fader
 #: is already at the hold level: neither is something a detector can know (#6,
@@ -247,7 +258,12 @@ _OPERATOR_ONLY: dict[Command, str] = {
     Command.READY: DETECTOR_CANNOT_PREDICT,
     Command.REPORT_READY: DETECTOR_CANNOT_PREDICT,
     Command.HANDOFF: DETECTOR_CANNOT_HAND_OFF,
+    Command.RETARGET: DETECTOR_CANNOT_RETARGET,
 }
+
+#: The states where a retarget has a fader to ride (#128). Everywhere else it
+#: only stores: there is nothing up to move, or a fade is still going to -inf.
+_RETARGET_RIDES: frozenset[State] = frozenset({State.OPEN, State.READY})
 
 #: Why a bare ARM is refused while the level is unknown. Quoted in
 #: docs/troubleshooting.md, where a test holds it.
@@ -349,6 +365,9 @@ def _refused_while_unknown(machine: Machine, event: Event) -> Outcome | None:
                 armed_by_operator=False,
             )
         )
+    if event.command is Command.RETARGET:
+        # Store-only states have nothing to ride, so nothing to refuse (#128).
+        return _unchanged(machine, UNKNOWN_LEVEL_MOVE if machine.state in _RETARGET_RIDES else None)
     if _needs_a_known_level(event):
         return _unchanged(machine, UNKNOWN_LEVEL_MOVE)
     return None
@@ -439,6 +458,8 @@ def _standing_down(machine: Machine, event: Event) -> Outcome:
         return Outcome(machine=replace(machine, state=State.IDLE))
     if event.command is Command.STAND_DOWN:
         return _unchanged(machine)
+    if event.command is Command.RETARGET:
+        return _unchanged(machine)  # stores only: nothing is up to ride
     if event.command is Command.TRIGGER:
         # The operator has opened the fader, so the band is evidently playing
         # and the box is on duty. Announced: the state changes, the why line
@@ -537,6 +558,8 @@ def _closing(machine: Machine, *, pending_stand_down: bool) -> Outcome:
 
 
 def _idle(machine: Machine, event: Event) -> Outcome:
+    if event.command is Command.RETARGET:
+        return _unchanged(machine)  # stores only: nothing is up to ride
     if event.command is Command.TRIGGER:
         return _opening(machine, event)
     if event.command is Command.READY:
@@ -550,6 +573,9 @@ def _idle(machine: Machine, event: Event) -> Outcome:
 
 
 def _ready(machine: Machine, event: Event) -> Outcome:
+    if event.command is Command.RETARGET:
+        # READY's own ride, to the new hold; RIDE_IN_COMPLETE clears it (#128).
+        return Outcome(machine=replace(machine, stalled=False, riding_in=True), fader=FaderCommand.RETARGET)
     if event.command is Command.TRIGGER:
         # Committing: the ordinary up buttons, from wherever the ride to the
         # hold level got to - mid-ride or already settled makes no difference,
@@ -574,6 +600,11 @@ def _ready(machine: Machine, event: Event) -> Outcome:
 
 
 def _open(machine: Machine, event: Event) -> Outcome:
+    if event.command is Command.RETARGET:
+        # `riding_in` is left as it was: True mid slow-open, so a fast trigger
+        # still snaps (to the new target), and False otherwise, so an open tap
+        # stays a no-op (#128).
+        return Outcome(machine=replace(machine, stalled=False), fader=FaderCommand.RETARGET)
     if event.command is Command.RELEASE:
         return _closing(machine, pending_stand_down=False)
     if event.command is Command.STAND_DOWN:
@@ -595,6 +626,8 @@ def _open(machine: Machine, event: Event) -> Outcome:
 
 
 def _releasing(machine: Machine, event: Event) -> Outcome:
+    if event.command is Command.RETARGET:
+        return _unchanged(machine)  # stores only: the fade still ends at -inf
     if event.command is Command.TRIGGER:
         # The snap back. A pending stand-down is cancelled: the band started
         # again, so standing down would now be wrong.

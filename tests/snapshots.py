@@ -50,6 +50,8 @@ CLOCK_START = 5000.0
 #: How long READY's ride takes in the curves fixture. Arbitrary, but not the
 #: slow open's length, so a mix-up between the two shows.
 READY_SECONDS = 4.0
+#: The retarget ride, as the box ships it (#128).
+RETARGET_SECONDS = dm7.DEFAULT_RETARGET_RIDE_SECONDS
 #: A playhead that renders as a recognisable timecode, 0:12:34.500, and that
 #: float32 - which OSC carries - holds exactly.
 POSITION = 754.5
@@ -192,13 +194,28 @@ async def riding(root: Path) -> dict[str, Any]:
 
 
 async def target_stored(root: Path) -> dict[str, Any]:
-    """Open at unity; the operator taps -3 dB on MORE. Under #9 that stores and
-    moves nothing, and the page says so under the segments (#153)."""
+    """Open, fading out after Out; the operator taps -3 dB. A fade still ends at
+    -inf, so the tap stores and says so (#153, #128)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.annotate("out")
+    await box.app.set_target(-3.0)
+    snapshot = box.app.snapshot()
+    box.app._cancel_move()
+    return snapshot
+
+
+async def retargeting(root: Path) -> dict[str, Any]:
+    """Open at unity; the operator taps -3 dB and the fader rides there (#128).
+    The push that follows the tap, before the ride has taken a step."""
     box = _build(root, console=_Sender(), machine=_known())
     await box.app.arm()
     await box.app.annotate("up-whistle")
     await box.app.set_target(-3.0)
-    return box.app.snapshot()
+    snapshot = box.app.snapshot()
+    box.app._cancel_move()
+    return snapshot
 
 
 async def prompt_open(root: Path) -> dict[str, Any]:
@@ -251,6 +268,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "releasing": releasing,
     "riding": riding,
     "target-stored": target_stored,
+    "retargeting": retargeting,
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,
     "faults": faults,
@@ -315,6 +333,10 @@ def curves() -> list[dict[str, Any]]:
         _curve("ride from -10 dB to unity", ride, _units(-10.0), dm7.UNITY, dm7.DEFAULT_SLOW_OPEN_SECONDS, taper),
         _curve("ready down from unity to -15 dB", ride, dm7.UNITY, _units(-15.0), READY_SECONDS, taper),
         _curve("ride from -inf to below the floor", ride, dm7.MINUS_INF, _units(-70.0), READY_SECONDS, taper),
+        _curve("retarget down from unity to -3 dB", ride, dm7.UNITY, _units(-3.0), RETARGET_SECONDS, taper),
+        _curve("retarget up from -6 dB to unity", ride, _units(-6.0), dm7.UNITY, RETARGET_SECONDS, taper),
+        _curve("retarget the hold from -15 to -21 dB", ride, _units(-15.0), _units(-21.0), RETARGET_SECONDS, taper),
+        _curve("retarget mid ride-in from -40 dB to -3 dB", ride, _units(-40.0), _units(-3.0), RETARGET_SECONDS, taper),
     ]
 
 

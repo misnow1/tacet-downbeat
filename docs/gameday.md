@@ -395,17 +395,25 @@ reads it (`target 0 dB`) and goes amber when it is not the default -
 `fader.default_target_db`, or the first preset when the site does not set
 one - so a quiet setting left over from earlier is not forgotten. Change it
 in MORE, under **Target level**: tap a segment, and the solid one is the
-target now. **Nothing moves when you tap it.** The fader stays where it is
-and the next open goes to the new level; **Ready**'s hold level is measured
-from it too. It works in every state, even while the fader reads `unknown`.
-While the fader is up (open, Ready or fading) a note under the segments says
-what happened - `Stored: -3 dB on the next open. The fader did not move.` -
-and the chip adds `(next open)` for as long as it stands. The note goes when
-the fader next moves, the state changes or you tap another level. While the
-fader is closed there is no note: the solid segment and the chip are the
-answer. Otherwise, `(next open)` means a move in flight is heading somewhere
+target now. **While the fader is up (open or Ready), the tap rides it
+there**, in about a second, and the segment turns magenta until the box says
+it has landed; in Ready the hold level moves instead. Tapping the level
+already set does nothing. **While the fader is fading, the tap stores only**:
+the fade still ends at `-inf`, the next open goes to the new level, and a note
+under the segments says so - `Stored: -3 dB on the next open. The fade carries
+on to -inf.` The chip adds `(next open)` for as long as it stands, and the
+note goes when the fader next moves, the state changes or you tap another
+level. **While the fader is closed (idle or standing down) it stores
+silently**: there is no note, and the solid segment and the chip are the
+answer. A tap works in every state, even while the fader reads `unknown`, but
+**while the fader is up and reads `unknown` the segments are greyed**, with
+`Greyed: a new target would ride from an unknown level. Close it now, or open,
+first.` under them: a ride from a level the box cannot vouch for would be a
+guess. A tap that still reaches the box stores the level, moves nothing, and
+the note ends `The fader did not move.` with the reason. An open button while
+open still does nothing. Otherwise, `(next open)` means a move in flight is heading somewhere
 other than the target: a ride that began before you changed it, or Ready's own
-ride to its hold level. The target applies to the next open.
+ride to its hold level.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
 the box does not know where it really is. Nothing that ramps from a level can be

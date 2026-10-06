@@ -229,6 +229,49 @@ class TestTheRideInTaper(unittest.TestCase):
                 dm7.Taper(knee_level=self.TAPER.knee_level, knee_fraction=fraction)
 
 
+class TestARetargetRide(unittest.TestCase):
+    """#128: the ride between targets while the fader is up. No new ramp code:
+    it is a ride-in over `DEFAULT_RETARGET_RIDE_SECONDS`, so what is pinned here
+    is that the existing shape does the right thing between two close levels."""
+
+    TAPER = dm7.RIDE_IN_TAPER
+    SECONDS = dm7.DEFAULT_RETARGET_RIDE_SECONDS
+    HZ = 50.0
+
+    def ride(self, start, target):
+        return list(dm7.ramp_steps(start, target, self.SECONDS, tick_hz=self.HZ, taper=self.TAPER))
+
+    def test_the_retarget_ride_is_about_a_second(self):
+        self.assertEqual(self.SECONDS, 1.0)
+
+    def test_a_retarget_ride_down_is_linear_in_db_and_ends_at_the_new_target(self):
+        levels = [level for _, level in self.ride(dm7.UNITY, -300)]
+        self.assertTrue(all(-300 <= level <= dm7.UNITY for level in levels))
+        self.assertEqual(levels, sorted(levels, reverse=True))
+        self.assertEqual(len(levels), len(set(levels)))
+        self.assertEqual(levels[-1], -300)
+        self.assertNotIn(dm7.MINUS_INF, levels)
+        self.assertEqual(len(levels), round(self.SECONDS * self.HZ))
+
+    def test_a_retarget_ride_up_above_the_knee_is_linear(self):
+        taper = self.ride(-600, dm7.UNITY)
+        self.assertEqual(taper, list(dm7.ramp_steps(-600, dm7.UNITY, self.SECONDS, tick_hz=self.HZ)))
+        self.assertEqual(taper[-1][1], dm7.UNITY)
+
+    def test_a_retarget_from_below_the_knee_keeps_the_taper(self):
+        steps = self.ride(-4000, -300)
+        self.assertEqual(steps[-1][1], -300)
+        self.assertNotEqual(steps, list(dm7.ramp_steps(-4000, -300, self.SECONDS, tick_hz=self.HZ)))
+        knee_at = crossing(steps, self.TAPER.knee_level)
+        self.assertLessEqual(knee_at, self.TAPER.knee_fraction * self.SECONDS + 1 / self.HZ)
+
+    def test_a_retarget_of_the_hold_moves_it_by_the_target_difference(self):
+        steps = self.ride(-1500, -2100)
+        self.assertEqual(steps[-1][1], -2100)
+        self.assertEqual(-1500 - -2100, 600)
+        self.assertEqual([level for _, level in steps], sorted((level for _, level in steps), reverse=True))
+
+
 class TestSending(unittest.TestCase):
     def test_send_level_emits_one_int_argument_at_the_fader_address(self):
         c, sender = client()
@@ -520,6 +563,10 @@ class TestMoves(unittest.IsolatedAsyncioTestCase):
         await c.open(seconds=0.01)
         await c.fade_out(seconds=0.05)
         await c.ride_in(seconds=0.05)
+        # A retarget is in the cycle too (#128): rides between two levels, up
+        # and down, never anything but a level write.
+        await c.ride_in(-300, seconds=0.05)
+        await c.ride_in(dm7.UNITY, seconds=0.05)
         await c.fade_out(seconds=0.05)
         self.assertGreater(len(sender.packets), 3)
         for message in sender.messages():
