@@ -326,6 +326,9 @@ class App:
         self._monotonic = monotonic
         #: What `begin_stop` did to a ride, so `finish_stop` can still report it.
         self._stopped: Stopped | None = None
+        #: The fade `begin_stop` left to land, so a fade that lands before
+        #: `finish_stop` looks is still reported as one.
+        self._landing: moves.MoveDescription | None = None
         self._stale_tap_seconds = stale_tap_seconds
         #: The last fader tap refused as stale, until the next command. Shown
         #: loudly: the operator tapped, nothing happened, and they have to
@@ -918,6 +921,7 @@ class App:
         if move.kind is moves.MoveKind.RIDE:
             self._abandon_move(AbandonedBecause.RIDE)
             return None
+        self._landing = move
         return move
 
     async def finish_stop(self, *, abandon: asyncio.Event, margin: float = STOP_LANDING_MARGIN_SECONDS) -> Stopped:
@@ -935,7 +939,12 @@ class App:
         task = self._move_task
         move = self._move
         if task is None or task.done() or move is None:
-            return self._stopped or Stopped(kind=None, end=None, level=self._console.commanded_level, abandoned=None)
+            level = self._console.commanded_level
+            if self._stopped is not None:
+                return self._stopped
+            if self._landing is not None:
+                return Stopped(kind=self._landing.kind, end=self._landing.end, level=level, abandoned=None)
+            return Stopped(kind=None, end=None, level=level, abandoned=None)
         deadline = stop_deadline(move, margin=margin)
         if deadline is None:
             return self._abandon_move(AbandonedBecause.RIDE)

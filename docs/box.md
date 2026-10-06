@@ -328,7 +328,7 @@ early in a game cannot pair up with an unrelated one later.
 
 It starts no fader move on the way out (#44), and the operator is left in
 control. A fade already under way is let land, for no longer than the fade itself
-plus half a second; a ride up (up-slow, READY, a target change) is stopped where
+plus half a second; a ride (up-slow, Ready, a target change) is stopped where
 it is and logged `move-abandoned`. After that the console keeps whatever level it
 was last commanded. The terminal says which, in its last `fader:` line, since
 the page is gone by then.

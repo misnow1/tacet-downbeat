@@ -219,6 +219,11 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.sender = ClosableFakeSender()
         self.addCleanup(signal.signal, signal.SIGTERM, signal.SIG_DFL)
         self.addCleanup(signal.signal, signal.SIGINT, signal.default_int_handler)
+        # The terminal lines, for the whole run.
+        self.out = io.StringIO()
+        patcher = mock.patch("sys.stdout", self.out)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def args(self):
         return argparse.Namespace(
@@ -240,15 +245,15 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         )
         self.console = console
         self.log = log
+        closer = mock.patch.object(log, "close", wraps=log.close)
+        self.log_close = closer.start()
+        self.addCleanup(closer.stop)
         return app, log
 
     async def running(self, app, log, signum):
         """Start `_run`, and return its task once `signum` is handled. Never
         returns, and never lets the caller send, when it is not."""
-        with (
-            mock.patch("tacet.serve.build", return_value=(app, log, None)),
-            mock.patch("sys.stdout", io.StringIO()),
-        ):
+        with mock.patch("tacet.serve.build", return_value=(app, log, None)):
             before = signal.getsignal(signum)
             task = asyncio.ensure_future(serve._run(self.args(), CLEAN_CODE))
             for _ in range(500):
@@ -275,7 +280,8 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.assertIn(tacet_app.MOVE_LANDED, events)
         self.assertNotIn(tacet_app.MOVE_ABANDONED, events)
         self.assertTrue(self.sender.closed)
-        self.assertFalse(log._file.is_open)
+        self.log_close.assert_called_once()
+        self.assertIn("fader: the fade landed at -inf", self.out.getvalue())
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
     async def test_two_ctrl_c_mid_ride_leave_the_ride_where_it_was(self):
@@ -294,7 +300,8 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.assertIn(tacet_app.MOVE_ABANDONED, events)
         self.assertNotIn(tacet_app.MOVE_LANDED, events)
         self.assertTrue(self.sender.closed)
-        self.assertFalse(log._file.is_open)
+        self.log_close.assert_called_once()
+        self.assertIn("the ride was stopped where it was", self.out.getvalue())
 
 
 FULL = [

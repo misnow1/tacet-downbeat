@@ -487,8 +487,8 @@ recording nor the log depends on the page or the markers working.
 2. Save the project.
 3. Stop `tacet-serve` with **Ctrl-C twice**. It starts no fader move on the way
    out: a fade already under way is let land (no longer than the fade), and a
-   ride up is stopped where it is. The terminal's last `fader:` line says which.
-   Stopping the box does not stop the recording.
+   ride (up-slow, Ready, a target change) is stopped where it is. The terminal's last `fader:` line says
+   which. Stopping the box does not stop the recording.
 4. **Save the console file** (the DM7 show file) and put it with the
    recordings, with a line in the game notes on what changed in the mix and
    why. It is the only record of how the band PA was actually processed; at

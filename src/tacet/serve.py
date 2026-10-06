@@ -91,9 +91,9 @@ Stopping the box does not stop the recording. Reaper keeps rolling and is
 stopped in Reaper, deliberately (design.md 5.9).
 
 It starts no fader move. A fade already under way is let land first, which
-takes no longer than the fade itself; a ride up stops where it is. After that
-the console keeps whatever level it was last commanded, and the operator has
-the iPad.
+takes no longer than the fade itself; a ride (up-slow, Ready, a target change)
+stops where it is. After that the console keeps whatever level it was last
+commanded, and the operator has the iPad.
 
 Press Ctrl-C again within {STOP_CONFIRM_SECONDS:.0f}s to stop.
 """
@@ -286,18 +286,21 @@ async def _run(args: argparse.Namespace, code: provenance.Provenance) -> None:
                 stopped = await app.finish_stop(abandon=abandon)
                 print(stopped_line(stopped))
         finally:
-            # Removed last, not first: a Ctrl-C while the fade lands is the
-            # operator saying to leave it, not a KeyboardInterrupt.
-            loop.remove_signal_handler(signal.SIGTERM)
-            loop.remove_signal_handler(signal.SIGINT)
+            # Handlers are removed last, after the synchronous closes: a Ctrl-C
+            # while the fade lands is the operator saying to leave it, and one
+            # during a close must not raise KeyboardInterrupt mid-close.
             try:
                 app.close_console()
             finally:
-                if transport is not None:
-                    transport.close()
-                log.close()
-                if queue is not None:
-                    queue.close()
+                try:
+                    if transport is not None:
+                        transport.close()
+                    log.close()
+                    if queue is not None:
+                        queue.close()
+                finally:
+                    loop.remove_signal_handler(signal.SIGTERM)
+                    loop.remove_signal_handler(signal.SIGINT)
 
 
 #: Width of the startup banner's rules. Wide enough for a long path plus its

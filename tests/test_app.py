@@ -4844,27 +4844,28 @@ class TestStoppingTheBox(AppTestCase):
         self.assertIsNone(result.abandoned)
         self.assertEqual(result.kind, moves.MoveKind.FADE)
 
-    async def test_a_fade_landing_on_the_way_out_sends_only_the_steps_it_had_planned(self):
+    async def test_a_fade_landing_on_the_way_out_sends_only_the_steps_it_had_planned(self) -> None:
         app = self.build(fade=1.0, steady=True)
         await app.arm()
         await app.trigger()
         start = self.console.commanded_level
+        released = len(self.console_sender.packets)
         await app.release()
         for _ in range(5):
             await asyncio.sleep(0)
+        stopped_at = len(self.console_sender.packets)
         app.begin_stop()
-        before = len(self.console_sender.packets)
         await app.finish_stop(abandon=asyncio.Event())
-        levels = self.console_sender.levels()
-        after = levels[before:]
-        planned = [level for _, level in dm7.ramp_steps(start, dm7.MINUS_INF, 1.0, tick_hz=200.0)]
-        self.assertTrue(after)
-        # An in-order subsequence of the plan, not a literal tail: the drive
-        # sends only the newest of the steps sharing an instant, so a close's
-        # floor is passed over in favour of its -inf.
-        remaining = iter(planned)
-        self.assertTrue(all(level in remaining for level in after), after)
-        self.assertEqual(after[-1], dm7.MINUS_INF)
+        # The drive sends only the newest of the steps sharing an instant (a
+        # close's floor and its -inf, #40), so the plan is the newest level per
+        # offset. Counted from before the release: any extra packet anywhere in
+        # the stop path, a re-send or a new -inf, breaks the equality.
+        by_offset: dict[float, int] = {}
+        for offset, level in dm7.ramp_steps(start, dm7.MINUS_INF, 1.0, tick_hz=200.0):
+            by_offset[offset] = level
+        self.assertEqual(self.console_sender.levels()[released:], list(by_offset.values()))
+        self.assertLess(released, stopped_at)
+        self.assertLess(stopped_at, len(self.console_sender.packets))
 
     async def test_every_packet_sent_while_stopping_is_a_fader_level_write(self):
         address = "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3"
@@ -5038,6 +5039,16 @@ class TestStoppingTheBox(AppTestCase):
         await asyncio.sleep(SUPERSEDED_WAKES)
         self.assertEqual(len(self.console_sender.packets), count)
         self.assertEqual(self.moved(tacet_app.MOVE_ABANDONED)[-1].data["because"], "ride")
+
+    async def test_a_fade_that_lands_before_finish_stop_is_reported_as_landed(self):
+        app = self.build(fade=0.2)
+        await self.fade_in_flight(app)
+        self.assertIsNotNone(app.begin_stop())
+        await app.wait_for_fade()
+        result = await app.finish_stop(abandon=asyncio.Event())
+        self.assertEqual(result.kind, moves.MoveKind.FADE)
+        self.assertEqual(result.level, dm7.MINUS_INF)
+        self.assertIsNone(result.abandoned)
 
     async def test_close_console_closes_the_sender(self):
         sender = ClosableFakeSender()
