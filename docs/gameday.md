@@ -227,9 +227,9 @@ reads right. Starting early costs nothing; see
 
 0. **If Start recording is greyed out, read the line under the Recording
    panel and do what it says**
-   ([what each one means](troubleshooting.md)). Never start the game take in
-   Reaper while the page's button is live, and never roll a test take in Reaper
-   against the game log: every take Reaper reports starting writes an anchor.
+   ([what each one means](troubleshooting.md)). Never roll a test take in
+   Reaper against the game log: every take Reaper reports starting writes an
+   anchor.
 1. **Tap Start recording on the page, or press Record in Reaper.** Either
    writes the anchor the whole log is measured from, when Reaper reports the
    take. The recording line goes to `ROLLING`, tagged **confirmed**, with a

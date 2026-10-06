@@ -428,8 +428,10 @@ def take_report(
     1. It answers the box's own start: STARTED, even if it also answers a
        refresh sent at the same moment. It is the take the operator just
        started.
-    2. It answers an outstanding refresh: FOUND. A refresh reply reports a take
-       already rolling, never one starting.
+    2. It answers an outstanding refresh, within `REFRESH_ANSWER_SECONDS` of
+       it: FOUND. A refresh reply reports a take already rolling, never one
+       starting. Past the cap the refresh is abandoned, and the report falls
+       through to the rules below.
     3. It repeats a belief that Reaper is recording on a live link: nothing.
     4. Otherwise STARTED: someone pressed Record in Reaper. This includes a
        take restarted in a relaunched Reaper that never said `/record 0`
@@ -439,7 +441,7 @@ def take_report(
         return None
     if _answers(record_request, before, after):
         return TakeReport.STARTED
-    if _answers(refresh_request, before, after):
+    if _answers_refresh(refresh_request, before, after):
         return TakeReport.FOUND
     if before.recording is True and before.liveness(after.last_packet or 0.0, timeout=timeout) is Liveness.LIVE:
         return None
@@ -448,6 +450,14 @@ def take_report(
 
 def _answers(request: RecordRequest | None, before: TransportState, after: TransportState) -> bool:
     return request is not None and not request.answered_by(before) and request.answered_by(after)
+
+
+def _answers_refresh(request: RecordRequest | None, before: TransportState, after: TransportState) -> bool:
+    """Whether this report answers the refresh while it is still awaited: the
+    cap that ends the refusal (`REFRESH_ANSWER_SECONDS`) ends the wait."""
+    if request is None or after.last_packet is None:
+        return False
+    return _answers(request, before, after) and (after.last_packet - request.sent_at) < REFRESH_ANSWER_SECONDS
 
 
 def clock_reading(before: TransportState, after: TransportState) -> float | None:

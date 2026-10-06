@@ -372,3 +372,15 @@ class TestAnchorsOnConfirmation(unittest.TestCase):
         anchor = build(clock, 1, "recording-started")
         note = build(clock, 2, "note")
         self.assertAlmostEqual(markers.position_of(note, anchor), 1.0)
+
+    def test_a_found_entry_just_inside_the_tolerance_is_not_an_extra_recording(self):
+        clock = StepClock()
+        anchor = build(clock, 1, "recording-started")
+        found = build(clock, 2, "recording-found", project_seconds=1.0 + 1.9)
+        self.assertEqual(markers.derive([anchor, found], anchor).extra_anchors, ())
+
+    def test_a_found_entry_just_outside_the_tolerance_is_an_extra_recording(self):
+        clock = StepClock()
+        anchor = build(clock, 1, "recording-started")
+        found = build(clock, 2, "recording-found", project_seconds=1.0 + 2.1)
+        self.assertEqual(markers.derive([anchor, found], anchor).extra_anchors, (found,))

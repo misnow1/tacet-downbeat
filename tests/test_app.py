@@ -1817,16 +1817,44 @@ class TestTheAnchorIsReapersConfirmation(AppTestCase):
         self.record(app, 0.0)
         self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
 
-    async def test_a_take_restarted_in_a_relaunched_reaper_writes_an_anchor(self):
-        clock = [1000.0]
-        app = self.build(monotonic=lambda: clock[0])
+    def relaunch(self, app, clock, *, answers_stop):
+        """A take rolls and is answered; Reaper quits and comes back parked a
+        minute later. Its first packet draws a refresh."""
         self.record(app)
-        # Reaper answers the refresh the box sent, so none is outstanding when
-        # the relaunched Reaper reports its new take.
         self.record(app)
         clock[0] += 60.0
+        app.handle_recorder_packet(meter_packet())
+        if answers_stop:
+            self.record(app, 0.0)
+        for _ in range(12):
+            clock[0] += 0.5
+            app.handle_recorder_packet(meter_packet())
+
+    async def test_a_take_restarted_in_a_relaunched_reaper_writes_an_anchor(self):
+        # The refresh the relaunch drew is never answered, and the new take is
+        # reported more than the cap after it: a new take, not a reply.
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.relaunch(app, clock, answers_stop=False)
         self.record(app)
         self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 2)
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
+
+    async def test_a_take_restarted_in_a_relaunched_reaper_that_answered_stop_writes_an_anchor(self):
+        clock = [1000.0]
+        app = self.build(monotonic=lambda: clock[0])
+        self.relaunch(app, clock, answers_stop=True)
+        self.record(app)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 2)
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
+
+    async def test_the_anchor_carries_no_tap_even_inside_a_tapped_context(self):
+        app = self.build()
+        self.reaper_parked(app)
+        with tacet_app._tapped(late(0.2)):
+            self.record(app)
+        (anchor,) = self.named(tacet_app.RECORDING_STARTED)
+        self.assertNotIn("tap", anchor.data)
 
     async def test_the_anchor_is_never_stamped_with_a_playhead(self):
         clock = [1000.0]
@@ -1944,6 +1972,32 @@ class TestAFoundTake(AppTestCase):
         self.run_stream(app, [(100.5, osc.encode_message("/time", 1.0))])
         self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
         self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+
+    async def test_the_found_entry_is_not_stamped_with_a_clock_from_before_the_reply(self):
+        app = self.build_timed()
+        self.run_stream(app, [(100.0, osc.encode_message("/time", 500.0))])
+        replies = [(100.04 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
+        self.run_stream(app, replies)
+        self.run_stream(app, [(101.5, osc.encode_message("/time", 501.5))])
+        (found,) = self.named(tacet_app.RECORDING_FOUND)
+        self.assertEqual(found.project_seconds, 501.5)
+
+    async def test_a_slow_reply_that_starts_a_new_run_still_writes_the_found_entry(self):
+        app = self.build_timed()
+        self.run_stream(app, [(100.0, meter_packet())])
+        replies = [(103.0 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
+        self.run_stream(app, replies)
+        self.run_stream(app, [(103.5, osc.encode_message("/time", 7.0))])
+        self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
+        self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
+
+    async def test_a_found_take_waiting_for_its_clock_is_dropped_by_a_gap(self):
+        app = self.build_timed()
+        self.run_stream(app, [(100.0, meter_packet())])
+        replies = [(100.04 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
+        self.run_stream(app, replies)
+        self.run_stream(app, [(105.0, osc.encode_message("/time", 9.0))])
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
 
     async def test_a_found_entry_carries_no_tap(self):
         app = self.build_timed()
