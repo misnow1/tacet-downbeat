@@ -920,7 +920,8 @@ class TestStartupBannerSaysWhatThePingProved(unittest.TestCase):
 
     def test_an_answer_does_not_claim_it_is_the_console(self):
         text = banner(check=ANSWERED_CHECK)
-        self.assertIn("not proof it is the DM7 or that the port is right", text)
+        self.assertIn("not proof it is the DM7", text)
+        self.assertIn("not proof the port is right", text)
 
     def test_nothing_there_is_a_warning(self):
         lines = self.rows(console_check(reach.Reach.NOTHING_THERE))

@@ -260,8 +260,14 @@ async def faults(root: Path) -> dict[str, Any]:
     The snap open's send never left the box, and it was absolute, so the
     level goes back to unknown (#116): this fixture's fader reads unknown too,
     for real, not just at cold boot."""
-    box = _build(root, console=_Unreachable(), recorder=_Unreachable(), machine=_known(), code=DIRTY,
-        console_check=_pinged(reach.Reach.NOTHING_THERE))
+    box = _build(
+        root,
+        console=_Unreachable(),
+        recorder=_Unreachable(),
+        machine=_known(),
+        code=DIRTY,
+        console_check=_pinged(reach.Reach.NOTHING_THERE),
+    )
     await box.app.arm()
     box.reaper_says("/record", 1.0)
     box.clock[0] += SILENCE

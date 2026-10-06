@@ -89,9 +89,7 @@ class ManualClock:
         # window is woken again, as real time would.
         while True:
             await self.settle()
-            due = sorted(
-                (at, f) for at, f in self._sleepers if at <= target and not f.done()
-            )
+            due = sorted((at, f) for at, f in self._sleepers if at <= target and not f.done())
             if not due:
                 break
             at, future = due[0]

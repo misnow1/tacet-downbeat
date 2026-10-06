@@ -1,4 +1,5 @@
 marker	SYS|box-started
+marker	SYS|console-checked
 marker	SYS|recording-started
 marker	SYS|recording-requested
 marker	SYS|recording-found

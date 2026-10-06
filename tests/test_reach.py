@@ -274,7 +274,7 @@ class TestTheShell(unittest.TestCase):
         self.assertEqual(result.detail, "ping did not finish within 3s")
 
     def test_the_check_runs_nothing_but_ping_and_arp_against_the_console_host_only(self):
-        outcomes = [
+        outcomes: list[reach.ProcessOutput | Exception] = [
             ANSWERED,
             MAC_NO_REPLY,
             reach.ProcessOutput(68, b"", b"Host is down"),

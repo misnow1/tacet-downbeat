@@ -198,6 +198,12 @@
       "label": "Note"
     }
   ],
+  "console": {
+    "checked_at": 5000.0,
+    "detail": null,
+    "reach": "answered",
+    "trigger": "startup"
+  },
   "detector_enabled": false,
   "duty": {
     "armed": true,

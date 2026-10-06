@@ -10,9 +10,8 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
+from tacet import dm7, mirror, osc, prompts, reach, reaper, state, taps, targets, web
 from tacet import provenance as prov
-from tacet import reach
 from tests.disk import Disk
 from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
 from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply, rolling_with_refresh
@@ -4886,7 +4885,9 @@ class TestTheConsoleCheck(AppTestCase):
         app.on_armed(lambda: seen.append(len(self.console_sender.packets)))
         await app.annotate("up-whistle")
         self.assertEqual(app.machine.state, state.State.OPEN)
-        self.assertEqual(seen, [1])
+        # Every packet of the open had gone by the time the check was asked for.
+        self.assertGreaterEqual(seen[0], 1)
+        self.assertEqual(seen, [len(self.console_sender.packets)])
 
     async def test_accepting_the_arm_prompt_requests_a_check(self):
         app = self.build()
