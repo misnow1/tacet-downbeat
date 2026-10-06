@@ -751,6 +751,30 @@ function provenanceChip(p) {
     + ". The log names the commit, not the changes."];
 }
 
+// #73: the console chip's head words. Quoted in the docs; tests hold them together.
+const CONSOLE_NOTHING_THERE = "Nothing at the console address";
+const CONSOLE_NO_ANSWER = "Console did not answer ping";
+const CONSOLE_NOT_CHECKED = "Could not check the console";
+
+// What the last ping at the console's address found (#73), or null when there
+// is nothing to say. No chip is the healthy state: an answer, no check yet, or
+// a box from before #73 that sends no `console`. It is presence at an address
+// and never the DM7, the port or a delivered move, so it never says "confirmed".
+function consoleChip(c) {
+  if (!c) return null;
+  if (c.reach === "nothing-there") {
+    return ["fault", CONSOLE_NOTHING_THERE + " (no ARP reply). Fader moves are not reaching anything. "
+      + "Check the cable and the console IP; the operator has the fader."];
+  }
+  if (c.reach === "no-answer") {
+    return ["note", CONSOLE_NO_ANSWER + ". It may ignore ping. Fader moves are still sent, unconfirmed."];
+  }
+  if (c.reach === "could-not-check") {
+    return ["note", CONSOLE_NOT_CHECKED + ": " + c.detail + "."];
+  }
+  return null;
+}
+
 // Whether annotations are reaching the disk. A full disk leaves the fader
 // buttons working and nothing else on the page looking wrong, while every
 // annotation from then on is lost - the half nothing can recover afterwards
@@ -843,6 +867,10 @@ function render(received) {
   const code = provenanceChip(next.provenance);
   $("provenance").className = code ? code[0] : "";
   setText($("provenance"), code ? code[1] : "");
+  // #73: guarded the same way. Never in the fader column, which has no room.
+  const reachChip = consoleChip(next.console);
+  $("console-reach").className = reachChip ? reachChip[0] : "";
+  setText($("console-reach"), reachChip ? reachChip[1] : "");
   const saving = savingBanner(next.log, next.mirror);
   $("saving").className = saving ? saving[0] : "";
   $("saving").textContent = saving ? saving[1] : "";
@@ -1128,7 +1156,7 @@ for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-read
 // than a class: the functional colour classes above (loud, failed, fault...)
 // are overwritten wholesale on every render, and a class toggled here would be
 // wiped the next time one of those runs.
-for (const id of ["link", "refusal", "tap", "saving", "provenance"]) {
+for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach"]) {
   $(id).onclick = () => {
     const node = $(id);
     node.dataset.expanded = node.dataset.expanded ? "" : "1";

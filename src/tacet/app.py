@@ -26,7 +26,7 @@ from collections.abc import Callable, Coroutine, Iterator, Mapping
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, moves, prompts, state, taps, targets
+from . import dm7, moves, prompts, reach, state, taps, targets
 from . import provenance as prov
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, TakeReport, TransportState, clock_reading, record_refusal
@@ -252,8 +252,14 @@ class App:
         monotonic: Callable[[], float] = time.monotonic,
         stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
         provenance: prov.Provenance | None = None,
+        console_check: reach.Check | None = None,
     ) -> None:
         self._console = console
+        #: What the last ping at the console's address found (#73): the startup
+        #: result until the watch reports another. Presence at an address and
+        #: nothing more - `fader.confirmed` stays False whatever it says. None
+        #: only in tests.
+        self._console_check = console_check
         #: What code this box is (#157). None only in tests that do not care;
         #: `serve.build` always passes one. Never probed here: git is asked once,
         #: by `serve.main`, before the loop exists.
@@ -322,6 +328,9 @@ class App:
         #: A take found rolling whose entry waits for the first `/time` (#158).
         self._found_pending = False
         self._listeners: list[Callable[[], None]] = []
+        #: Told when the box becomes armed (#73): how the console check hears
+        #: about an arm without the arm path knowing a check exists.
+        self._armed_listeners: list[Callable[[], None]] = []
         #: The loop the writer thread wakes when a batch lands (#41). None when
         #: built outside one, in which case the page learns of a deferred
         #: write failure from the next snapshot instead - the state tick's, at
@@ -536,9 +545,11 @@ class App:
         # a detector's, since #117 - must not write the entry an operator's
         # does (#118).
         accepted = None if outcome.refusal is not None else command
+        armed_now = False
         for key in session_entries(before, outcome.machine, accepted):
             if key in _DUTY_ENTRIES:
                 self._duty_since = self._monotonic()
+            armed_now = armed_now or key == ARMED
             self._record(
                 key,
                 data={"state": self.machine.state.value},
@@ -546,6 +557,10 @@ class App:
             )
         self._settle_prompt()
         self._notify()
+        if armed_now:
+            # After the move's packet has gone and the page has been told:
+            # a check only ever follows an arm, it never holds one up (#73).
+            self._notify_armed()
         return outcome
 
     def _hold_level(self) -> int:
@@ -1074,6 +1089,37 @@ class App:
         data = None if self._provenance is None else self._provenance.as_data()
         return self._record(ann.BOX_STARTED, data=data)
 
+    def console_checked(self, check: reach.Check) -> None:
+        """What a ping at the console's address found (#73). Never raises.
+
+        Logged at startup and at every arm, and from a keepalive only when the
+        result changed: each entry becomes a Reaper marker. The page is told
+        only when what it shows changed.
+        """
+        previous = self._console_check
+        before = None if previous is None else previous.reach
+        changed = previous is None or (check.reach, check.detail) != (previous.reach, previous.detail)
+        self._console_check = check
+        if check.trigger in (reach.Trigger.STARTUP, reach.Trigger.ARM) or check.reach != before:
+            data = {**check.as_data(), "previous": None if before is None else str(before)}
+            self._record(ann.CONSOLE_CHECKED, data=data)
+        if changed:
+            self._notify()
+
+    @property
+    def fader_moving(self) -> bool:
+        """Whether a fader move is in flight. The console check waits on it."""
+        return self._move is not None or self._console.is_ramping
+
+    def on_armed(self, listener: Callable[[], None]) -> None:
+        self._armed_listeners.append(listener)
+
+    def _notify_armed(self) -> None:
+        for listener in self._armed_listeners:
+            # A broken check must not break an arm.
+            with contextlib.suppress(Exception):
+                listener()
+
     def _record(
         self,
         event_key: str,
@@ -1367,6 +1413,10 @@ class App:
             # What code the box is running (#157), fixed for the run, so it never
             # churns the snapshot. None only when built without it (tests).
             "provenance": None if self._provenance is None else self._provenance.as_snapshot(),
+            # What the last ping at the console's address found (#73). Presence
+            # at an IP, never the DM7, the port or a delivered packet:
+            # `fader.confirmed` stays False regardless.
+            "console": (self._console_check or reach.Check.not_checked("")).as_snapshot(),
         }
 
     # -- change notification ----------------------------------------------
