@@ -437,9 +437,10 @@ function paintTarget(target, fader, stateName) {
 //
 // The fader column and the status strip are visible in both; only the two
 // vocabulary panels swap. The tab moves only when the operator taps a tab
-// button (#109): a tap inside MORE leaves them on MORE, so a run of taps there
-// does not bounce them back to MAIN between each one. Navigation, not a mode
-// change, so nothing here is announced or logged.
+// button or swipes across the left panel (#109, #156): a tap inside MORE
+// leaves them on MORE, so a run of taps there does not bounce them back to
+// MAIN between each one. Navigation, not a mode change, so nothing here is
+// announced or logged.
 let activeTab = "main";
 
 function paintTabs() {
@@ -479,6 +480,88 @@ function returnToMain() {
 
 $("tab-btn-main").onclick = () => selectTab("main");
 $("tab-btn-more").onclick = () => selectTab("more");
+
+// -- swiping between MAIN and MORE (#156) ----------------------------------
+//
+// A swipe across the left panel does what a tap on the other tab button does,
+// through the same selectTab, so #108's cancellation comes with it. The
+// listeners sit on #left and nowhere else. #fader-column is a sibling of #left,
+// not inside it, so a touch that starts on a fader button never reaches them:
+// a slid tap on Up on drums cannot change the tab, and the fader column has no
+// touch listener and no preventDefault to go wrong during a play.
+//
+// Touch events, not pointer events: in a scrolling panel the browser claims a
+// pan and sends pointercancel, so a pointerup never arrives; and a mouse
+// drag-select on a laptop must not change tabs. There is no touchmove listener
+// at all - the start comes from touchstart and the end from touchend - so
+// nothing sits on the scroll path. A recognised swipe always calls
+// preventDefault on touchend, so the button it began on does not also get a
+// click, even when there is no tab to go to.
+const TABS = ["main", "more"]; // left to right, as the tab buttons sit
+// Apple's minimum touch target: the same 44 the fader column's shrink floor is
+// held above (tests/test_web.py), which reads it from here.
+const MIN_TAP_PX = 44;
+const SWIPE_MIN_PX = 2 * MIN_TAP_PX; // far beyond any slid tap (iOS tap slop is ~10pt)
+const SWIPE_DOMINANCE = 2; // |dx| >= 2|dy|: within ~27 degrees of horizontal
+const SWIPE_MAX_MS = 500; // slower is a slide-off-to-cancel or a read
+const SWIPE_NEXT = 1; // a step through TABS
+const SWIPE_PREVIOUS = -1;
+const NOT_A_SWIPE = 0;
+
+// Pure. A finger moving left pages to the right-hand tab, as iOS paging does.
+// Every boundary is inclusive.
+function swipeDirection(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (end.t - start.t > SWIPE_MAX_MS) return NOT_A_SWIPE;
+  if (Math.abs(dx) < SWIPE_MIN_PX) return NOT_A_SWIPE;
+  if (Math.abs(dx) < SWIPE_DOMINANCE * Math.abs(dy)) return NOT_A_SWIPE;
+  return dx < 0 ? SWIPE_NEXT : SWIPE_PREVIOUS;
+}
+
+// Pure. The tab a step lands on, or null at either end or for no step.
+function tabAfter(current, direction) {
+  if (direction === NOT_A_SWIPE) return null;
+  return TABS[TABS.indexOf(current) + direction] ?? null;
+}
+
+let swipeStart = null;
+
+function touchPoint(touch, t) {
+  return {x: touch.clientX, y: touch.clientY, t};
+}
+
+function swipeBegin(event) {
+  // A second finger abandons the gesture.
+  if (event.touches.length !== 1) {
+    swipeStart = null;
+    return;
+  }
+  const touch = event.touches[0];
+  swipeStart = {id: touch.identifier, ...touchPoint(touch, event.timeStamp)};
+}
+
+function swipeEnd(event) {
+  const start = swipeStart;
+  swipeStart = null;
+  if (!start) return;
+  const touch = Array.from(event.changedTouches).find((t) => t.identifier === start.id);
+  if (!touch) return;
+  const direction = swipeDirection(start, touchPoint(touch, event.timeStamp));
+  if (direction === NOT_A_SWIPE) return;
+  // A swipe is never also a tap, even with no tab to go to.
+  if (event.cancelable) event.preventDefault();
+  const tab = tabAfter(activeTab, direction);
+  if (tab !== null) selectTab(tab);
+}
+
+function swipeCancel() {
+  swipeStart = null;
+}
+
+$("left").addEventListener("touchstart", swipeBegin, {passive: true});
+$("left").addEventListener("touchend", swipeEnd, {passive: false});
+$("left").addEventListener("touchcancel", swipeCancel, {passive: true});
 
 // Span buttons toggle: the first tap opens the region, the second closes it.
 // Instants fire once. The highlight alone cannot carry that difference - it

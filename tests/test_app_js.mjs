@@ -14,6 +14,11 @@ import { createContext, runInContext } from "node:vm";
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCE = readFileSync(join(here, "..", "src", "tacet", "static", "app.js"), "utf8");
 
+// Each id on the page and its nearest ancestor that has an id (#156). The stub
+// uses it to give nodes a parent, so a touch can bubble as it does in the real
+// markup; tests/test_web.py holds the file to the page's own HTML.
+const PAGE_PARENTS = JSON.parse(readFileSync(join(here, "fixtures", "page-parents.json"), "utf8"));
+
 let checks = 0;
 let failures = 0;
 
@@ -44,6 +49,13 @@ function element(id) {
     onclick: null,
     disabled: false,
     children,
+    parentNode: null,
+    // Every listener added, by type, so a test can see what the page listens
+    // for and where (#156).
+    listeners: {},
+    addEventListener(type, fn, options = {}) {
+      (this.listeners[type] ||= []).push({ fn, options });
+    },
     // As the DOM: a node's text is its descendants' text, and setting it (or
     // innerHTML) replaces the children. The page's buttons hold an icon and a
     // label span since #155, and the tests read a button's text as before.
@@ -72,6 +84,7 @@ function element(id) {
       contains: (name) => classes.has(name),
     },
     appendChild(child) {
+      child.parentNode = this;
       children.push(child);
       return child;
     },
@@ -85,6 +98,34 @@ function browser(options = {}) {
   const posted = [];
   const intervals = [];
   const frames = [];
+  const documentListeners = {};
+  const document = {
+    getElementById(id) {
+      if (!nodes.has(id)) {
+        const node = element(id);
+        if (PAGE_PARENTS[id]) node.parentNode = document.getElementById(PAGE_PARENTS[id]);
+        nodes.set(id, node);
+      }
+      return nodes.get(id);
+    },
+    createElement(tag) {
+      const node = element(tag);
+      node.tag = tag;
+      created.push(node);
+      return node;
+    },
+    // The page only ever asks for buttons across the fader column and the
+    // two tabs (#5). The stub ignores the selector itself and answers with
+    // every button it has been asked to make.
+    querySelectorAll: () => created.filter((node) => node.tag === "button"),
+    // Recorded, never fired: the page re-takes its wake lock when the tab
+    // comes back, and what is tested is the branch it calls into. Recording
+    // lets a test see that nothing listens for touches up here (#156).
+    addEventListener(type, fn, options = {}) {
+      (documentListeners[type] ||= []).push({ fn, options });
+    },
+    hidden: false,
+  };
   const context = createContext({
     console,
     // The page reads `Date.now()` for its own clock. A test that needs the
@@ -109,26 +150,7 @@ function browser(options = {}) {
       frames.push(callback);
       return frames.length;
     },
-    document: {
-      getElementById(id) {
-        if (!nodes.has(id)) nodes.set(id, element(id));
-        return nodes.get(id);
-      },
-      createElement(tag) {
-        const node = element(tag);
-        node.tag = tag;
-        created.push(node);
-        return node;
-      },
-      // The page only ever asks for buttons across the fader column and the
-      // two tabs (#5). The stub ignores the selector itself and answers with
-      // every button it has been asked to make.
-      querySelectorAll: () => created.filter((node) => node.tag === "button"),
-      // The page re-takes its wake lock when the tab comes back. Nothing here
-      // ever fires it; what is tested is the branch it calls into.
-      addEventListener() {},
-      hidden: false,
-    },
+    document,
     location: { protocol: "http:", host: "box:8080" },
     // No wake lock, which is the deployed case: the API needs a secure context
     // and the page is served over plain HTTP.
@@ -169,7 +191,7 @@ function browser(options = {}) {
     },
   });
   runInContext(SOURCE, context);
-  return { context, nodes, created, sockets, posted, intervals, frames };
+  return { context, nodes, created, sockets, posted, intervals, frames, documentListeners };
 }
 
 // -- snapshots --------------------------------------------------------------
@@ -3300,6 +3322,249 @@ for (const name of Object.keys(SNAPSHOTS)) {
   snap.console = { reach: "answered", detail: null, checked_at: 2, trigger: "keepalive" };
   context.render(snap);
   check("an answer afterwards clears it", [nodes.get("console-reach").className, nodes.get("console-reach").textContent], ["", ""]);
+}
+
+// -- swiping between MAIN and MORE (#156) ----------------------------------
+
+// The thresholds are read from the page, so a retune moves the tests with it;
+// the three that are pinned by number below are the ones decided in the issue.
+const swipeProbe = browser().context;
+const swipeConst = (name) => runInContext(name, swipeProbe);
+const SWIPE_MIN_PX = swipeConst("SWIPE_MIN_PX");
+const SWIPE_DOMINANCE = swipeConst("SWIPE_DOMINANCE");
+const SWIPE_MAX_MS = swipeConst("SWIPE_MAX_MS");
+const SWIPE_NEXT = swipeConst("SWIPE_NEXT");
+const SWIPE_PREVIOUS = swipeConst("SWIPE_PREVIOUS");
+const NOT_A_SWIPE = swipeConst("NOT_A_SWIPE");
+
+check("swipe: the distance is two minimum tap targets", SWIPE_MIN_PX, 88);
+check("swipe: horizontal at least twice vertical", SWIPE_DOMINANCE, 2);
+check("swipe: max duration", SWIPE_MAX_MS, 500);
+
+const LEFTWARD = { dx: -2 * SWIPE_MIN_PX, dy: 0 };
+const RIGHTWARD = { dx: 2 * SWIPE_MIN_PX, dy: 0 };
+const VERTICAL = { dx: 0, dy: 3 * SWIPE_MIN_PX };
+const NO_MOVE = { dx: 0, dy: 0 };
+const ORIGIN = { x: 300, y: 300 };
+const SWIPE_FAST_MS = SWIPE_MAX_MS / 2;
+
+const swipeOf = (move, ms = SWIPE_FAST_MS) =>
+  swipeProbe.swipeDirection({ ...ORIGIN, t: 0 }, { x: ORIGIN.x + move.dx, y: ORIGIN.y + move.dy, t: ms });
+
+check("swipe: leftward is next", swipeOf(LEFTWARD), SWIPE_NEXT);
+check("swipe: rightward is previous", swipeOf(RIGHTWARD), SWIPE_PREVIOUS);
+check("swipe: one px short is not a swipe", swipeOf({ dx: -(SWIPE_MIN_PX - 1), dy: 0 }), NOT_A_SWIPE);
+check("swipe: exactly the threshold is", swipeOf({ dx: -SWIPE_MIN_PX, dy: 0 }), SWIPE_NEXT);
+check("swipe: too steep is not", swipeOf({ dx: -2 * SWIPE_MIN_PX, dy: 2 * SWIPE_MIN_PX }), NOT_A_SWIPE);
+check(
+  "swipe: on the dominance line is",
+  swipeOf({ dx: -2 * SWIPE_MIN_PX, dy: (2 * SWIPE_MIN_PX) / SWIPE_DOMINANCE }),
+  SWIPE_NEXT,
+);
+check("swipe: a vertical scroll is not", swipeOf(VERTICAL), NOT_A_SWIPE);
+check("swipe: one ms too slow is not", swipeOf(LEFTWARD, SWIPE_MAX_MS + 1), NOT_A_SWIPE);
+check("swipe: exactly the max duration is", swipeOf(LEFTWARD, SWIPE_MAX_MS), SWIPE_NEXT);
+check("swipe: no movement is not", swipeOf(NO_MOVE), NOT_A_SWIPE);
+
+check("swipe: MAIN next is MORE", swipeProbe.tabAfter("main", SWIPE_NEXT), "more");
+check("swipe: MORE previous is MAIN", swipeProbe.tabAfter("more", SWIPE_PREVIOUS), "main");
+check("swipe: past the last tab is nothing", swipeProbe.tabAfter("more", SWIPE_NEXT), null);
+check("swipe: before the first is nothing", swipeProbe.tabAfter("main", SWIPE_PREVIOUS), null);
+check("swipe: not a swipe goes nowhere", swipeProbe.tabAfter("main", NOT_A_SWIPE), null);
+
+// A touch event as the page sees it. A touch is {identifier, clientX, clientY}.
+function touchEvent(target, touches, changedTouches, timeStamp) {
+  return {
+    target,
+    touches,
+    changedTouches,
+    timeStamp,
+    cancelable: true,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  };
+}
+
+// The browser's bubbling: a touch event is targeted at the node the touch
+// began on and runs every listener up the chain, then the document's.
+function dispatch(world, target, type, event) {
+  for (let node = target; node; node = node.parentNode) {
+    for (const { fn } of node.listeners[type] ?? []) fn(event);
+  }
+  for (const { fn } of world.documentListeners[type] ?? []) fn(event);
+  return event;
+}
+
+const touchAt = (point, identifier = 0) => ({ identifier, clientX: point.x, clientY: point.y });
+
+// One finger down at ORIGIN at t=0 and up again `ms` later; returns the end
+// event so a test can read `defaultPrevented`.
+function gesture(world, target, move, ms = SWIPE_FAST_MS) {
+  const from = touchAt(ORIGIN);
+  const to = touchAt({ x: ORIGIN.x + move.dx, y: ORIGIN.y + move.dy });
+  dispatch(world, target, "touchstart", touchEvent(target, [from], [from], 0));
+  return dispatch(world, target, "touchend", touchEvent(target, [], [to], ms));
+}
+
+// The page on MAIN or MORE with the real vocabulary rendered.
+function swipeWorld(tab = "main") {
+  const world = browser();
+  world.context.render(snapshot({}, {}, undefined, []));
+  world.buttons = world.created.filter((node) => node.tag === "button");
+  world.byKey = new Map(world.buttons.map((node) => [node.dataset.key, node]));
+  if (tab === "more") world.nodes.get("tab-btn-more").onclick();
+  world.posted.length = 0;
+  return world;
+}
+
+const onMore = (world) => world.nodes.get("tab-more").style.display === "";
+const onMain = (world) => world.nodes.get("tab-main").style.display === "";
+
+{
+  const world = swipeWorld();
+  const end = gesture(world, world.byKey.get("touchdown"), LEFTWARD);
+  check("swipe: a leftward swipe in the panel goes to MORE", onMore(world), true);
+  check("swipe: MAIN is hidden", world.nodes.get("tab-main").style.display, "none");
+  check("swipe: MORE's tab button is on", world.nodes.get("tab-btn-more").classList.contains("on"), true);
+  check("swipe: the left panel is tinted", world.nodes.get("left").classList.contains("more"), true);
+  check("swipe: the swiped-over button's tap is suppressed", end.defaultPrevented, true);
+  check("swipe: and nothing was posted", world.posted.length, 0);
+}
+
+{
+  const world = swipeWorld("more");
+  const end = gesture(world, world.byKey.get("false-open"), RIGHTWARD);
+  check("swipe: a rightward swipe on MORE comes back to MAIN", onMain(world), true);
+  check("swipe: MAIN's tab button is on", world.nodes.get("tab-btn-main").classList.contains("on"), true);
+  check("swipe: the return is also suppressed", end.defaultPrevented, true);
+  check("swipe: and nothing was posted on the way back", world.posted.length, 0);
+}
+
+{
+  const world = swipeWorld();
+  const button = world.byKey.get("touchdown");
+  const end = gesture(world, button, NO_MOVE);
+  check("swipe: a tap in the panel leaves the tab alone", onMain(world), true);
+  check("swipe: a tap in the panel is not suppressed", end.defaultPrevented, false);
+  button.onclick();
+  check("swipe: and still fires", world.posted.map((p) => p.path), ["/api/annotate"]);
+}
+
+{
+  const world = swipeWorld();
+  const end = gesture(world, world.byKey.get("touchdown"), VERTICAL);
+  check("swipe: a vertical scroll in the panel changes nothing", onMain(world), true);
+  check("swipe: a vertical scroll is not suppressed", end.defaultPrevented, false);
+}
+
+{
+  // DONE WHEN: a gesture that starts in the fader column never changes tab.
+  const lateral = { MAIN: LEFTWARD, MORE: RIGHTWARD };
+  for (const key of FADER_KEYS) {
+    for (const [tab, move] of Object.entries(lateral)) {
+      const world = swipeWorld(tab.toLowerCase());
+      const end = gesture(world, world.byKey.get(key), move);
+      check(`swipe: ${key} on ${tab} keeps the tab`, tab === "MAIN" ? onMain(world) : onMore(world), true);
+      check(`swipe: ${key} on ${tab} is not suppressed`, end.defaultPrevented, false);
+    }
+    const world = swipeWorld();
+    const button = world.byKey.get(key);
+    const end = gesture(world, button, NO_MOVE);
+    check(`swipe: a tap on ${key} leaves the tab alone`, onMain(world), true);
+    check(`swipe: a tap on ${key} is not suppressed`, end.defaultPrevented, false);
+    button.onclick();
+    check(`swipe: a tap on ${key} still fires`, world.posted.map((p) => p.body?.key), [key]);
+  }
+  for (const [tab, move] of Object.entries(lateral)) {
+    const world = swipeWorld(tab.toLowerCase());
+    const end = gesture(world, world.nodes.get("btn-close-now"), move);
+    check(`swipe: Close now on ${tab} keeps the tab`, tab === "MAIN" ? onMain(world) : onMore(world), true);
+    check(`swipe: Close now on ${tab} is not suppressed`, end.defaultPrevented, false);
+  }
+}
+
+{
+  const world = swipeWorld();
+  const heard = (node) => Object.keys(node.listeners).filter((type) => type.startsWith("touch"));
+  const column = ["fader-column", "fader-top", "fader-bottom", "readout", "belief", "btn-close-now", "btn-report-ready"];
+  const nodesToCheck = column.map((id) => world.nodes.get(id)).concat(FADER_KEYS.map((k) => world.byKey.get(k)));
+  check("swipe: nothing listens for touches in the fader column or above it", nodesToCheck.flatMap(heard), []);
+  check(
+    "swipe: nor on the document",
+    Object.keys(world.documentListeners).filter((type) => type.startsWith("touch")),
+    [],
+  );
+}
+
+{
+  const world = swipeWorld();
+  const listeners = world.nodes.get("left").listeners;
+  check("swipe: touchstart is passive", listeners.touchstart.map((l) => l.options.passive), [true]);
+  check("swipe: touchend may prevent default", listeners.touchend.map((l) => l.options.passive), [false]);
+  check("swipe: there is no touchmove listener", listeners.touchmove, undefined);
+}
+
+{
+  // #108: a swipe is a tab change, so it cancels the confirmation like a tap.
+  const world = swipeWorld("more");
+  world.nodes.get("btn-handoff").onclick();
+  check("swipe: the confirmation is open", world.nodes.get("handoff-confirm").style.display, "block");
+  world.posted.length = 0;
+  gesture(world, world.nodes.get("btn-handoff"), RIGHTWARD);
+  check("swipe: leaving MORE closes the confirmation", world.nodes.get("handoff-confirm").style.display, "none");
+  check("swipe: and sends nothing at all", world.posted.length, 0);
+}
+
+{
+  const world = browser();
+  world.context.render(structuredClone(SNAPSHOTS["prompt"]));
+  world.nodes.get("tab-btn-more").onclick();
+  world.nodes.get("btn-handoff").onclick();
+  check("swipe: opening the confirmation hides the question", world.nodes.get("prompt-panel").style.display, "none");
+  gesture(world, world.nodes.get("btn-handoff"), RIGHTWARD);
+  check("swipe: leaving MORE brings the question back", world.nodes.get("prompt-panel").style.display, "block");
+}
+
+{
+  const world = swipeWorld("more");
+  world.nodes.get("btn-handoff").onclick();
+  const end = gesture(world, world.nodes.get("btn-handoff"), LEFTWARD);
+  check("swipe: past the last tab stays on MORE", onMore(world), true);
+  check("swipe: past the last tab keeps the confirmation", world.nodes.get("handoff-confirm").style.display, "block");
+  check("swipe: past the last tab still suppresses the tap", end.defaultPrevented, true);
+}
+
+{
+  const world = swipeWorld("more");
+  world.nodes.get("btn-handoff").onclick();
+  gesture(world, world.byKey.get("up-drums"), RIGHTWARD);
+  check("swipe: a fader-column gesture on MORE leaves the confirmation open", world.nodes.get("handoff-confirm").style.display, "block");
+}
+
+{
+  // A second finger abandons the gesture.
+  const world = swipeWorld();
+  const target = world.byKey.get("touchdown");
+  const [a, b] = [touchAt(ORIGIN, 0), touchAt({ x: ORIGIN.x + 20, y: ORIGIN.y }, 1)];
+  dispatch(world, target, "touchstart", touchEvent(target, [a], [a], 0));
+  dispatch(world, target, "touchstart", touchEvent(target, [a, b], [b], 1));
+  const to = touchAt({ x: ORIGIN.x + LEFTWARD.dx, y: ORIGIN.y }, 0);
+  const end = dispatch(world, target, "touchend", touchEvent(target, [b], [to], SWIPE_FAST_MS));
+  check("swipe: a second finger abandons it", onMain(world), true);
+  check("swipe: and the tap is not suppressed", end.defaultPrevented, false);
+}
+
+{
+  const world = swipeWorld();
+  const target = world.byKey.get("touchdown");
+  const from = touchAt(ORIGIN);
+  dispatch(world, target, "touchstart", touchEvent(target, [from], [from], 0));
+  dispatch(world, target, "touchcancel", touchEvent(target, [], [from], 1));
+  const to = touchAt({ x: ORIGIN.x + LEFTWARD.dx, y: ORIGIN.y });
+  dispatch(world, target, "touchend", touchEvent(target, [], [to], SWIPE_FAST_MS));
+  check("swipe: a cancelled touch is not a swipe", onMain(world), true);
 }
 
 // -- report -----------------------------------------------------------------

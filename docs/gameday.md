@@ -388,8 +388,9 @@ everything else. Amber and red only ever mean a state on this page, never a
 button. The new MAIN changes muscle memory, so walk it at the pre-game
 runthrough. MORE holds band movement, the other band, the drumline,
 Note, and Arm / Stand down / Start recording / StageMix has it. A tap in MORE
-leaves you on MORE; tap **Main** when you want it back. Buttons marked
-`(start)` are spans: tap once to open the region, again to close it. They read
+leaves you on MORE; tap **Main**, or swipe right across the left panel, when
+you want it back (swipe left on MAIN for MORE). A swipe that starts on the
+fader column never changes tab. Buttons marked `(start)` are spans: tap once to open the region, again to close it. They read
 `(end)` while open. A span left open by an earlier run whose button has since
 gone (a retired Q1-Q4, Halftime or Timeout: officials, say) appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
 button to end it.
@@ -454,8 +455,8 @@ trust. It cuts the band PA at once, so once the box knows the level use
 
 **If you take the fader to StageMix**, tap **StageMix has it** in MORE first
 and confirm. The Yes / No confirmation appears directly under the button, in
-MORE; leaving MORE before you answer cancels it and sends nothing, so tap the
-button again if you still mean it. The commanded reading goes to `unknown` - it
+MORE; leaving MORE (by tap or swipe) before you answer cancels it and sends
+nothing, so tap the button again if you still mean it. The commanded reading goes to `unknown` - it
 would otherwise sit there looking current while StageMix moves the real fader,
 which is exactly what happened for 76 minutes in game 2. When you take it back,
 tap **Close now** or an open, as above. The log's `handed-off` entry marks the
