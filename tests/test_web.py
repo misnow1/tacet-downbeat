@@ -4,6 +4,7 @@ import json
 import re
 import time
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, ClassVar
@@ -219,7 +220,7 @@ class TestPage(WebTestCase):
         body = await (await self.client.get("/")).text()
         floor = body.split("#fader-top button,#fader-bottom button{", 1)[1].split("}", 1)[0]
         floor_px = int(floor.split("min-height:", 1)[1].split("px", 1)[0])
-        self.assertGreaterEqual(floor_px, 44)
+        self.assertGreaterEqual(floor_px, _min_tap_px())
 
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
         # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
@@ -1801,3 +1802,83 @@ class TestCategoryTones(unittest.TestCase):
             if ".ico" in sel:
                 with self.subTest(selector=sel):
                     self.assertNotIn("position:", body)
+
+
+#: Elements with no end tag, which the ancestor walk below must not push.
+VOID_ELEMENTS = frozenset({"meta", "br", "hr", "img", "input", "link"})
+PAGE_PARENTS_FIXTURE = Path(__file__).parent / "fixtures" / "page-parents.json"
+LEFT_PANEL_ID = "left"
+FADER_COLUMN_ID = "fader-column"
+TOUCH_LISTENER = 'addEventListener("touch'
+LEFT_PANEL_LOOKUP = '$("left").'
+
+
+MIN_TAP_PX_PATTERN = re.compile(r"^const MIN_TAP_PX = (\d+);", re.MULTILINE)
+
+
+def _min_tap_px() -> int:
+    """The page script's minimum tap target, the one source of the 44."""
+    found = MIN_TAP_PX_PATTERN.search(web._SCRIPT)
+    if found is None:
+        raise AssertionError("MIN_TAP_PX not found in app.js")
+    return int(found.group(1))
+
+
+class _Ancestors(HTMLParser):
+    """Maps each id on the page to the ids of its ancestors, nearest first."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stack: list[tuple[str, str | None]] = []
+        self.ancestors: dict[str, list[str]] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in VOID_ELEMENTS:
+            return
+        ident = dict(attrs).get("id")
+        if ident is not None:
+            self.ancestors[ident] = [i for _, i in reversed(self.stack) if i is not None]
+        self.stack.append((tag, ident))
+
+    def handle_endtag(self, tag: str) -> None:
+        for depth in range(len(self.stack) - 1, -1, -1):
+            if self.stack[depth][0] == tag:
+                del self.stack[depth:]
+                return
+
+
+def _page_ancestors() -> dict[str, list[str]]:
+    parser = _Ancestors()
+    parser.feed(web.PAGE)
+    return parser.ancestors
+
+
+class TestTheSwipeSurface(unittest.TestCase):
+    """The structure #156's swipe depends on, held against the real markup."""
+
+    def test_the_fader_column_is_not_inside_the_swipe_surface(self) -> None:
+        ancestors = _page_ancestors()
+        self.assertNotIn(LEFT_PANEL_ID, ancestors[FADER_COLUMN_ID])
+        self.assertNotIn(FADER_COLUMN_ID, ancestors[LEFT_PANEL_ID])
+
+    def test_both_tab_panels_are_inside_the_swipe_surface(self) -> None:
+        ancestors = _page_ancestors()
+        for panel in ("tab-main", "tab-more"):
+            with self.subTest(panel=panel):
+                self.assertIn(LEFT_PANEL_ID, ancestors[panel])
+
+    def test_the_js_stubs_page_parents_are_the_pages_own(self) -> None:
+        ancestors = _page_ancestors()
+        parents: dict[str, str | None] = json.loads(PAGE_PARENTS_FIXTURE.read_text(encoding="utf-8"))
+        for ident, parent in parents.items():
+            with self.subTest(ident=ident):
+                self.assertIn(ident, ancestors)
+                nearest = ancestors[ident][0] if ancestors[ident] else None
+                self.assertEqual(nearest, parent)
+
+    def test_the_script_listens_for_touches_on_the_left_panel_only(self) -> None:
+        script = web._SCRIPT
+        self.assertIn(TOUCH_LISTENER, script)
+        for found in re.finditer(re.escape(TOUCH_LISTENER), script):
+            with self.subTest(at=found.start()):
+                self.assertTrue(script[: found.start()].endswith(LEFT_PANEL_LOOKUP))
