@@ -10,6 +10,7 @@ reads the imports and fails.
 """
 
 import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -90,10 +91,93 @@ class TestOnlyServeAsksGit(unittest.TestCase):
 
     def test_only_serve_asks_git(self):
         for path in sorted(PACKAGE_ROOT.glob("*.py")):
+            if path.name == "reach.py":
+                # reach defines its own `probe(`, and asks the network, not git.
+                # It runs children through asyncio's subprocess support, so it
+                # still imports no `subprocess` and never mentions git (#73).
+                self.assertNotIn("subprocess", _imported_top_level_modules(path))
+                self.assertNotIn("git", re.findall(r"\w+", path.read_text(encoding="utf-8").lower()))
+                continue
             if path.name in ("provenance.py", "serve.py"):
                 continue
             self.assertNotIn("subprocess", _imported_top_level_modules(path), path.name)
             self.assertNotIn("probe(", path.read_text(encoding="utf-8"), path.name)
+
+
+def _imported_tacet_modules(source: Path) -> set[str]:
+    """Every tacet module a file imports, however spelled: `from . import osc`,
+    `from .net import X`, `from tacet import osc` and `import tacet.osc`."""
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] == "tacet" and len(parts) > 1:
+                    found.add(parts[1])
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level > 0 or module == "tacet":
+                if module and node.level > 0:
+                    found.add(module.split(".")[0])
+                else:
+                    found.update(alias.name for alias in node.names)
+            elif module.startswith("tacet."):
+                found.add(module.split(".")[1])
+    return found
+
+
+class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
+    """#73: a ping and a read of the neighbour table, never a packet of ours.
+
+    `reach` is outside the control path and moves nothing. It imports nothing
+    that can send to the console - no `socket`, no `osc`, `net` or `dm7` - and
+    these tests read its source for the ways round that. They are a tripwire on
+    what the module says, not a sandbox: what it proves is that no line of it
+    opens a socket or an OSC encoder.
+    """
+
+    def test_reach_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "reach.py"):
+            self.assertIn(module, allowed, f"tacet.reach imports {module!r}, which is not in the standard library")
+
+    def test_reach_cannot_send_osc(self):
+        self.assertNotIn("socket", _imported_top_level_modules(PACKAGE_ROOT / "reach.py"))
+        tacet_modules = _imported_tacet_modules(PACKAGE_ROOT / "reach.py")
+        for forbidden in ("osc", "net", "dm7"):
+            self.assertNotIn(forbidden, tacet_modules)
+
+    #: Ways to reach a socket without importing one, or to import by string.
+    FORBIDDEN_NAMES = frozenset({"importlib", "__import__"})
+    FORBIDDEN_ATTRIBUTES = frozenset(
+        {"create_datagram_endpoint", "create_connection", "open_connection", "sock_sendto", "sock_connect"}
+    )
+
+    def test_reach_has_no_way_round_the_import_check(self):
+        tree = ast.parse((PACKAGE_ROOT / "reach.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, self.FORBIDDEN_NAMES)
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, self.FORBIDDEN_ATTRIBUTES)
+            if isinstance(node, ast.alias | ast.ImportFrom):
+                names = [node.name] if isinstance(node, ast.alias) else [node.module or ""]
+                for name in names:
+                    self.assertNotEqual(name.split(".")[0], "importlib")
+
+    def test_the_helper_sees_every_spelling_of_an_import(self):
+        # Proves the check above could fail.
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "sample.py"
+            sample.write_text("from . import osc\nfrom .net import X\nfrom tacet.dm7 import Y\nimport tacet.state\n")
+            self.assertEqual(_imported_tacet_modules(sample), {"osc", "net", "dm7", "state"})
+
+    def test_no_control_path_module_imports_reach(self):
+        for name in CONTROL_PATH:
+            self.assertNotIn("reach", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
 if __name__ == "__main__":

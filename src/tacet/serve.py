@@ -32,7 +32,8 @@ To find out whether a command would start, without starting it:
     tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl --check
 
 prints the same banner, or the same refusal, and exits: zero if the box would
-have started. Nothing binds, nothing is sent, and the log and queue are only
+have started. Nothing binds and nothing is sent to the console's OSC port or to
+Reaper; one ping goes to the console's address (#73). The log and queue are only
 read. `--check` is a flag and never a config key, since a file that set it
 would stop the box from ever starting.
 
@@ -48,6 +49,13 @@ SIGTERM while a fade lands leaves it where it is too.
 The banner's `code` row says what commit and branch is running, and whether the
 tree is dirty (#157). The log's first entry of every run, `box-started`, records
 the same. git is asked once, here, before the event loop exists.
+
+The `ping` row says whether anything answered an ICMP ping at the console's
+address (#73): presence at the address, never the DM7, the port or a delivered
+fader move. It is asked once here, before the loop exists, then again at every
+arm and every few minutes by `tacet.reach`, which also keeps the laptop's ARP
+entry for the console warm. A warning, never a refusal: the operator has the
+fader.
 """
 
 from __future__ import annotations
@@ -57,12 +65,14 @@ import asyncio
 import contextlib
 import enum
 import signal
+import sys
+import textwrap
 import time
 from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, moves, provenance, reaper, taps, targets, web
+from . import config, disk, dm7, mirror, moves, provenance, reach, reaper, taps, targets, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -191,7 +201,10 @@ class _Feedback(asyncio.DatagramProtocol):
 
 
 def build(
-    args: argparse.Namespace, code: provenance.Provenance
+    args: argparse.Namespace,
+    code: provenance.Provenance,
+    *,
+    console_check: reach.Check | None = None,
 ) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
     # First, so a preset above the cap, or a default that is not one of the
     # presets, raises before the log or the queue is opened. Held here as well
@@ -220,13 +233,34 @@ def build(
         target_levels=levels,
         provenance=code,
     )
-    # The run's first entry, before anything is served (#157).
+    # The run's first entry, before anything is served (#157), and straight
+    # after it what the startup ping found (#73). `console_checked` stores it
+    # too, so the startup entry has no previous result - nothing came before.
     app.log_box_started()
+    if console_check is not None:
+        app.console_checked(console_check)
     return app, log, queue
 
 
-async def _run(args: argparse.Namespace, code: provenance.Provenance) -> None:
-    app, log, queue = build(args, code)
+def _watch_stopped(app: App, host: str, task: asyncio.Future[None]) -> None:
+    """A dead background task is a fault in its own right (#41): say so."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        failed = reach.CHECK_STOPPED.format(error=f"{type(error).__name__}: {error}")
+        app.console_checked(
+            reach.Check(reach.Reach.COULD_NOT_CHECK, reach.Trigger.KEEPALIVE, host, app.now(), detail=failed)
+        )
+
+
+async def _run(
+    args: argparse.Namespace,
+    code: provenance.Provenance,
+    console_check: reach.Check | None = None,
+    tools: reach.Tools | None = None,
+) -> None:
+    app, log, queue = build(args, code, console_check=console_check)
     server = web.create_app(app)
 
     loop = asyncio.get_running_loop()
@@ -236,6 +270,23 @@ async def _run(args: argparse.Namespace, code: provenance.Provenance) -> None:
             lambda: _Feedback(app), local_addr=(args.listen, args.reaper_feedback_port)
         )
         print(f"listening for Reaper feedback on {args.listen}:{args.reaper_feedback_port}")
+
+    # The ping that keeps the console's ARP entry warm, and checks at every arm
+    # (#73). Built, and told about arms, before the page goes up: an arm in the
+    # first milliseconds still gets its check, which the watch holds until its
+    # task starts. For the life of the box, armed or not: an operator open from
+    # STANDING DOWN (#89) must not meet a cold entry after halftime. The first
+    # keepalive is one interval after the startup check, which already warmed
+    # it. It holds no sender and writes no OSC; it waits for any fader move.
+    watch = reach.Watch(
+        args.console_host,
+        tools if tools is not None else reach.find_tools(reach.platform_of(sys.platform)),
+        runner=reach.AsyncioRunner(),
+        busy=lambda: app.fader_moving,
+        on_result=app.console_checked,
+        first_due=time.monotonic() + reach.KEEPALIVE_SECONDS,
+    )
+    app.on_armed(lambda: watch.request(reach.Trigger.ARM))
 
     runner = aiohttp_web.AppRunner(server)
     await runner.setup()
@@ -272,9 +323,18 @@ async def _run(args: argparse.Namespace, code: provenance.Provenance) -> None:
     loop.add_signal_handler(signal.SIGINT, lambda: on_signal(signals.interrupt(loop.time())))
     loop.add_signal_handler(signal.SIGTERM, lambda: on_signal(signals.terminate()))
 
+    watch_task: asyncio.Future[None] = asyncio.ensure_future(watch.run())
+    watch_task.add_done_callback(lambda task: _watch_stopped(app, args.console_host, task))
+
     try:
         await stop.wait()
     finally:
+        # First, so no child ping outlives the box (#73). The watch skips its
+        # pings while the fader moves, and a landing fade runs in its own task,
+        # so cancelling it here does not hold the fade up.
+        watch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await watch_task
         # The box starts no move on the way out (#44). A ride was left where it
         # was when the stop was confirmed; a fade is let land, after the page
         # has hung up so no tap can start a move behind it. Nested, so a
@@ -464,6 +524,49 @@ def _code_warning_lines(code: provenance.Provenance | None) -> list[str]:
     return []
 
 
+#: What the banner says when nothing answered at the console's address (#73).
+#: Quoted in docs/troubleshooting.md.
+NOTHING_THERE_WARNING = "nothing answered at the console address"
+
+#: Room for a value after the label column and the rule's indent.
+BANNER_VALUE_WIDTH = BANNER_WIDTH - BANNER_LABEL_WIDTH - 2
+
+
+def _wrapped_row(label: str, text: str) -> list[str]:
+    """A row whose value may be long: the rest hangs under it as notes."""
+    first, *rest = textwrap.wrap(text, BANNER_VALUE_WIDTH) or [""]
+    return [_row(label, first), *(_note(line) for line in rest)]
+
+
+def _ping_lines(check: reach.Check | None) -> list[str]:
+    """The `ping` row and what it does and does not prove (#73)."""
+    if check is None:
+        return []
+    lines = _wrapped_row("ping", check.summary())
+    if check.reach is reach.Reach.ANSWERED:
+        lines.append(_note("something is at this address; not proof it is the DM7"))
+        lines.append(_note("and not proof the port is right"))
+    elif check.reach is reach.Reach.NO_ANSWER:
+        lines.append(_note("the console may ignore ping, or not be there"))
+        lines.append(_note("fader moves are still sent"))
+    return lines
+
+
+def _ping_warning_lines(check: reach.Check | None) -> list[str]:
+    """Warned, not refused (#73): the console may be coming up later, and the
+    operator has the fader either way."""
+    if check is None or check.reach is not reach.Reach.NOTHING_THERE:
+        return []
+    return [
+        _rule(),
+        _row("WARNING", NOTHING_THERE_WARNING),
+        _note(f"at {check.host}: wrong address, wrong adapter,"),
+        _note("cable out, or console off"),
+        _note("the box starts anyway; fader moves may be going nowhere"),
+        _note("fix it, or carry on if the console is coming up later"),
+    ]
+
+
 def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
     """The block for a log written before this machine's clock last restarted.
 
@@ -536,6 +639,7 @@ def startup_lines(
     open_spans: list[AnnotationEntry] | None = None,
     space: disk.Verdict | None = None,
     code: provenance.Provenance | None = None,
+    console_check: reach.Check | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -554,6 +658,7 @@ def startup_lines(
         _rule(),
         _row("console", f"{args.console_host}:{args.console_port}   DCA {args.dca}"),
         _note("commanded, never confirmed - the DM7's OSC is write-only"),
+        *_ping_lines(console_check),
     ]
     if args.quantized:
         lines.append(_note("fader values snapped to Table 1"))
@@ -594,6 +699,7 @@ def startup_lines(
     if torn_queue is not None and args.queue:
         lines.extend(_torn_lines("queue", args.queue, torn_queue, keeps_entries=False))
     lines.extend(_code_warning_lines(code))
+    lines.extend(_ping_warning_lines(console_check))
     lines.append(_rule())
     lines.extend(_checklist(args))
     lines.append(_rule("="))
@@ -745,7 +851,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--check",
         action="store_true",
-        help="print the banner, or the refusal, and exit without starting: zero if it would start",
+        help=(
+            "print the banner, or the refusal, and exit without starting: zero if it would start. "
+            "Nothing binds and nothing is sent to the console's OSC port or to Reaper; "
+            "one ping goes to the console's address"
+        ),
     )
     return p
 
@@ -800,6 +910,12 @@ def main(argv: list[str] | None = None) -> int:
     # after every refusal so a box that will not start never waits on git.
     # Read-only, so --check asks too and prints what a start prints.
     code = provenance.probe()
+    # Whether anything answers at the console's address (#73). Asked here, once,
+    # before the loop exists, and after every refusal so a box that will not
+    # start never pings. One ping and one table read; no OSC. --check asks too:
+    # a typo'd address is the cheapest thing to catch before the day.
+    tools = reach.find_tools(reach.platform_of(sys.platform))
+    console_check = reach.probe(args.console_host, tools)
     banner = startup_lines(
         args,
         config_path,
@@ -810,6 +926,7 @@ def main(argv: list[str] | None = None) -> int:
         open_spans=open_spans,
         space=space,
         code=code,
+        console_check=console_check,
     )
     for line in banner:
         print(line)
@@ -818,7 +935,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return 0
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run(args, code))
+        asyncio.run(_run(args, code, console_check, tools))
     return 0
 
 

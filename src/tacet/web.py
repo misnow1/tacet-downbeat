@@ -783,6 +783,14 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #strip > #provenance.warn{display:block;background:var(--attention);color:var(--attention-text)}
 #strip > #provenance.note{display:block;color:#ffca7a}
 #strip > #provenance[data-expanded="1"]{max-width:100%}
+/* Whether anything answers at the console's address (#73): shown only when
+   something is wrong, so no chip is the healthy state. The `#strip >` prefix is
+   for the same specificity reason as above. Never in the fader column, whose
+   readout has no room. */
+#strip > #console-reach{display:none;max-width:240px;cursor:pointer}
+#strip > #console-reach.fault{display:block;background:var(--warn);color:#fff}
+#strip > #console-reach.note{display:block;color:#ffca7a}
+#strip > #console-reach[data-expanded="1"]{max-width:100%}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
@@ -907,6 +915,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <div id="duty"></div>
   <div id="target-level"></div>
   <div id="provenance"></div>
+  <div id="console-reach"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>

@@ -95,7 +95,7 @@ come first; the layout change lands early so the pre-game runthrough (about
 | ~~7~~ | ~~[#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag~~ | Done. A `box-started` entry first in every run, a `code` banner row, and an amber chip on the page while the tree is dirty |
 | ~~8~~ | ~~[#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue~~ | Done, with #166 (Reaper OSC behaviour, the mirror toggle) |
 | ~~9~~ | ~~[#44](https://github.com/misnow1/tacet-downbeat/issues/44) Stopping the box mid-fade leaves the fader at an arbitrary level~~ | Done. A confirmed stop starts no move, lets a fade land and leaves a ride where it is, and SIGTERM is handled |
-| 10 | [#73](https://github.com/misnow1/tacet-downbeat/issues/73) Check the console answers at startup and at arm | Console-side safety; being planned (2026-10-05) |
+| ~~10~~ | ~~[#73](https://github.com/misnow1/tacet-downbeat/issues/73) Check the console answers at startup and at arm~~ | Done. A ping at startup, at every arm and every 4 minutes, a `ping` banner row and a console chip only when something is wrong; whether the DM7 answers ping is still to be measured at the runthrough |
 
 Nice for Game 4: ~~[#156](https://github.com/misnow1/tacet-downbeat/issues/156)
 (swipe, never from the fader column)~~ (done) and

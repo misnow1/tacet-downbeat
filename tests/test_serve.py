@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
-from tacet import annotations, disk, dm7, moves, provenance, serve, state, targets
+from tacet import annotations, disk, dm7, moves, provenance, reach, serve, state, targets
 from tacet import app as tacet_app
 from tests.test_app import ClosableFakeSender
 
@@ -29,6 +29,15 @@ CLEAN_CODE = provenance.Provenance(
 DIRTY_CODE = dataclasses.replace(CLEAN_CODE, branch="157-fix", dirty=True, worktree=True)
 UNKNOWN_CODE = provenance.Provenance.unknown("git did not answer within 5s", path=Path("/checkout"), worktree=False)
 NOT_A_CHECKOUT_CODE = provenance.Provenance.not_a_checkout()
+CONSOLE = "10.0.0.5"
+
+
+def console_check(kind=reach.Reach.ANSWERED, *, detail=None, rtt_ms=1.234):
+    """What the startup ping found. Never a real ping: no test here sends one."""
+    return reach.Check(kind, reach.Trigger.STARTUP, CONSOLE, 1.0, detail=detail, rtt_ms=rtt_ms)
+
+
+ANSWERED_CHECK = console_check()
 
 
 class TestStopConfirmation(unittest.TestCase):
@@ -212,6 +221,11 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
     check that the handler is installed: unhandled, SIGTERM ends the process,
     and pytest with it."""
 
+    CONSOLE_HOST = "192.0.2.1"
+    #: An unsupported platform, so every console check is could-not-check and
+    #: no ping is ever spawned (#73).
+    NO_TOOLS = reach.Tools(platform=None, ping=None, arp=None)
+
     def setUp(self):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -227,6 +241,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
 
     def args(self):
         return argparse.Namespace(
+            console_host=self.CONSOLE_HOST,
             reaper_host=None,
             listen="127.0.0.1",
             http_port=0,
@@ -235,7 +250,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
 
     def build_app(self, *, fade, slow_open=5.0):
         log = annotations.AnnotationLog(self.root / "game.jsonl").open()
-        console = dm7.Dm7Client("192.0.2.1", dca=3, sender=self.sender, tick_hz=200.0)
+        console = dm7.Dm7Client(self.CONSOLE_HOST, dca=3, sender=self.sender, tick_hz=200.0)
         app = tacet_app.App(
             console=console,
             log=log,
@@ -255,7 +270,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         returns, and never lets the caller send, when it is not."""
         with mock.patch("tacet.serve.build", return_value=(app, log, None)):
             before = signal.getsignal(signum)
-            task = asyncio.ensure_future(serve._run(self.args(), CLEAN_CODE))
+            task = asyncio.ensure_future(serve._run(self.args(), CLEAN_CODE, tools=self.NO_TOOLS))
             for _ in range(500):
                 if signal.getsignal(signum) is not before:
                     return task
@@ -313,10 +328,10 @@ FULL = [
 ]  # fmt: skip
 
 
-def banner(*extra, argv=None, code=None):
+def banner(*extra, argv=None, code=None, check=None):
     """The banner for a set of flags, as one string. No config file, no sockets."""
     args = serve.parser().parse_args((FULL if argv is None else argv) + list(extra))
-    return "\n".join(serve.startup_lines(args, None, code=code))
+    return "\n".join(serve.startup_lines(args, None, code=code, console_check=check))
 
 
 class TestStartupBannerSaysWhatItWasTold(unittest.TestCase):
@@ -658,6 +673,7 @@ class _RunMain(unittest.TestCase):
             mock.patch("sys.stdout", io.StringIO()),
             mock.patch("tacet.serve.asyncio.run") as run,
             mock.patch("tacet.serve.provenance.probe", return_value=CLEAN_CODE),
+            mock.patch("tacet.serve.reach.probe", return_value=ANSWERED_CHECK),
             self.assertRaises(SystemExit) as caught,
         ):
             serve.main(["--config", str(self.config), *argv])
@@ -841,6 +857,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         self.free = PLENTY
         self.code = CLEAN_CODE
         self.probe = mock.Mock(side_effect=lambda: self.code)
+        self.found = ANSWERED_CHECK
+        self.pinged = mock.Mock(side_effect=lambda host, tools: self.found)
 
     def start(self, argv, *, config=True):
         """(exit code, stdout, stderr) for `serve.main`, which never binds:
@@ -857,6 +875,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
             mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(self.free)),
             # Never git against the checkout the tests run in (#157).
             mock.patch("tacet.serve.provenance.probe", self.probe),
+            # Never a real ping either (#73).
+            mock.patch("tacet.serve.reach.probe", self.pinged),
         ):
             code: int | str | None
             try:
@@ -1054,6 +1074,7 @@ class TestGitIsAskedOnceBeforeTheLoop(TestCheckAnswersWithoutStarting):
             mock.patch("tacet.serve.asyncio.run", side_effect=enter),
             mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(PLENTY)),
             mock.patch("tacet.serve.provenance.probe", self.probe),
+            mock.patch("tacet.serve.reach.probe", self.pinged),
         ):
             serve.main(["--config", str(self.config), *self.good()])
         self.assertEqual(asked, [1])
@@ -1110,6 +1131,117 @@ class TestGitIsAskedOnceBeforeTheLoop(TestCheckAnswersWithoutStarting):
         self.assertEqual(run.call_args.args[1], CLEAN_CODE)
 
 
+class TestStartupBannerSaysWhatThePingProved(unittest.TestCase):
+    """#73: presence at an address, never the DM7, the port or a delivered move."""
+
+    def rows(self, check):
+        return banner(check=check).splitlines()
+
+    def test_the_banner_says_what_the_ping_proved(self):
+        cases = {
+            reach.Reach.ANSWERED: "  ping        answered ping (1.2 ms)",
+            reach.Reach.NO_ANSWER: "  ping        did not answer ping",
+            reach.Reach.NOTHING_THERE: "  ping        nothing at this address (no ARP reply)",
+        }
+        for kind, row in cases.items():
+            with self.subTest(kind=kind):
+                self.assertIn(row, self.rows(console_check(kind)))
+        self.assertIn(
+            "  ping        could not check: ping is not installed or not on PATH",
+            self.rows(console_check(reach.Reach.COULD_NOT_CHECK, detail=reach.PING_NOT_FOUND)),
+        )
+
+    def test_the_ping_row_sits_under_the_console_row(self):
+        lines = self.rows(ANSWERED_CHECK)
+        console = next(i for i, line in enumerate(lines) if line.startswith("  console"))
+        self.assertTrue(lines[console + 1].strip().startswith("commanded, never confirmed"))
+        self.assertTrue(any(line.startswith("  ping") for line in lines[console : console + 4]))
+
+    def test_an_answer_does_not_claim_it_is_the_console(self):
+        text = banner(check=ANSWERED_CHECK)
+        self.assertIn("not proof it is the DM7", text)
+        self.assertIn("not proof the port is right", text)
+
+    def test_nothing_there_is_a_warning(self):
+        lines = self.rows(console_check(reach.Reach.NOTHING_THERE))
+        self.assertIn(f"  WARNING     {serve.NOTHING_THERE_WARNING}", lines)
+        self.assertTrue(any(CONSOLE in line and "wrong address" in line for line in lines))
+
+    def test_the_other_results_are_not_warnings(self):
+        for kind in (reach.Reach.ANSWERED, reach.Reach.NO_ANSWER, reach.Reach.COULD_NOT_CHECK):
+            with self.subTest(kind=kind):
+                self.assertNotIn("WARNING", banner(check=console_check(kind, detail="x")))
+
+    def test_no_ping_row_without_a_check(self):
+        self.assertNotIn("  ping ", banner())
+
+    def test_every_ping_line_is_ascii_within_the_width_and_never_blank(self):
+        for kind in reach.Reach:
+            check = console_check(kind, detail=reach.PING_FAILED.format(code=64, detail="ping: bad flag"))
+            for line in self.rows(check):
+                line.encode("ascii")
+                self.assertTrue(line.strip())
+                self.assertLessEqual(len(line), serve.BANNER_WIDTH)
+
+
+class TestThePingAtStartup(TestCheckAnswersWithoutStarting):
+    def test_nothing_there_is_a_warning_and_not_a_refusal(self):
+        self.found = console_check(reach.Reach.NOTHING_THERE)
+        code, stdout, _ = self.start(self.good())
+        self.assertEqual(code, 0)
+        self.assertTrue(self.ran)
+        self.assertIn(serve.NOTHING_THERE_WARNING, stdout)
+
+    def test_a_refused_start_never_pings(self):
+        code, _, _ = self.start([*self.CONSOLE])  # no --log
+        self.assertEqual(code, 2)
+        unreadable = self.root / "unreadable.jsonl"
+        unreadable.write_text("{ not json\n" + '{"v": 1}\n', encoding="utf-8")
+        self.start([*self.CONSOLE, "--log", str(unreadable)])
+        self.pinged.assert_not_called()
+
+    def test_a_start_pings_the_console_host_once(self):
+        self.start(self.good())
+        self.assertEqual(self.pinged.call_count, 1)
+        self.assertEqual(self.pinged.call_args.args[0], "192.0.2.1")
+
+    def test_check_pings_too(self):
+        _, started, _ = self.start(self.good())
+        code, checked, _ = self.start([*self.good(), "--check"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.pinged.call_count, 2)
+        self.assertEqual(checked, started)
+        self.assertIn("  ping ", checked)
+
+    def test_the_ping_is_never_made_on_the_event_loop(self):
+        seen: list[str] = []
+
+        def probe(host, tools):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                seen.append("no loop")
+            else:
+                seen.append("on the loop")
+            return self.found
+
+        self.pinged = mock.Mock(side_effect=probe)
+        self.start(self.good())
+        self.assertEqual(seen, ["no loop"])
+
+    def test_the_coroutine_is_given_the_console_check_and_the_tools(self):
+        async def nothing():
+            pass
+
+        coroutine = nothing()
+        self.addCleanup(coroutine.close)
+        self.found = console_check(reach.Reach.NO_ANSWER)
+        with mock.patch("tacet.serve._run", return_value=coroutine) as run:
+            self.start(self.good())
+        self.assertEqual(run.call_args.args[2], self.found)
+        self.assertIsInstance(run.call_args.args[3], reach.Tools)
+
+
 class TestBuildWritesBoxStartedFirst(unittest.TestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()
@@ -1142,6 +1274,69 @@ class TestBuildWritesBoxStartedFirst(unittest.TestCase):
             log.close()
         events = [e.event for e in annotations.read_entries(self.log)]
         self.assertEqual(events, [annotations.BOX_STARTED, annotations.BOX_STARTED])
+
+
+class TestBuildLogsTheConsoleCheck(unittest.TestCase):
+    def test_the_check_is_logged_straight_after_box_started_and_shown_on_the_page(self):
+        with TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "game.jsonl"
+            args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+            app, log, _ = serve.build(args, CLEAN_CODE, console_check=ANSWERED_CHECK)
+            self.assertEqual(app.snapshot()["console"]["reach"], "answered")
+            log.close()
+            events = [e.event for e in annotations.read_entries(log_path)]
+        self.assertEqual(events, [annotations.BOX_STARTED, annotations.CONSOLE_CHECKED])
+
+    def test_the_startup_entry_names_no_previous_result(self):
+        # Nothing was checked before it, so it must not claim something was.
+        with TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "game.jsonl"
+            args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+            _, log, _ = serve.build(args, CLEAN_CODE, console_check=ANSWERED_CHECK)
+            log.close()
+            entry = next(e for e in annotations.read_entries(log_path) if e.event == annotations.CONSOLE_CHECKED)
+        self.assertIsNone(entry.data["previous"])
+
+    def test_a_box_built_without_one_logs_none(self):
+        with TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "game.jsonl"
+            args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+            _, log, _ = serve.build(args, CLEAN_CODE)
+            log.close()
+            events = [e.event for e in annotations.read_entries(log_path)]
+        self.assertEqual(events, [annotations.BOX_STARTED])
+
+
+class TestADeadWatchIsSaidOutLoud(unittest.IsolatedAsyncioTestCase):
+    """#41's rule: a background task that dies is a fault of its own."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        log_path = Path(self._tmp.name) / "game.jsonl"
+        args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+        self.app, self.log, _ = serve.build(args, CLEAN_CODE, console_check=ANSWERED_CHECK)
+        self.addCleanup(self.log.close)
+
+    async def test_a_task_that_died_reports_could_not_check_with_the_reason(self):
+        died = asyncio.get_running_loop().create_future()
+        died.set_exception(RuntimeError("boom"))
+        serve._watch_stopped(self.app, CONSOLE, died)
+        block = self.app.snapshot()["console"]
+        self.assertEqual(block["reach"], "could-not-check")
+        self.assertEqual(block["detail"], reach.CHECK_STOPPED.format(error="RuntimeError: boom"))
+
+    async def test_a_cancelled_task_changes_nothing(self):
+        cancelled = asyncio.get_running_loop().create_future()
+        cancelled.cancel()
+        serve._watch_stopped(self.app, CONSOLE, cancelled)
+        self.assertEqual(self.app.snapshot()["console"]["reach"], "answered")
+
+    async def test_a_task_that_finished_cleanly_changes_nothing(self):
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(None)
+        serve._watch_stopped(self.app, CONSOLE, done)
+        self.assertEqual(self.app.snapshot()["console"]["reach"], "answered")
 
 
 class TestBuildPassesTheFlagsThrough(unittest.TestCase):
