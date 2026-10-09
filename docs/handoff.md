@@ -278,6 +278,11 @@ Worth checking:
   night, check that the hues and icons are legible, that Faded out reads blue
   rather than amber, that the column labels sit on one line at 723px, and
   that the five scoring buttons fit one row.
+- **Swiping between MAIN and MORE (#156).** On the iPad: a swipe in the left
+  panel changes tab both ways; a slid stab on Up on drums never changes tab; a
+  swipe across a MAIN button never fires it; MAIN still scrolls vertically.
+  Does 88px in under 500ms feel deliberate? Those numbers are guesses to tune
+  on the device; report misfires.
 - **#19's question copy fits the 88px prompt slot.** The box boots STANDING
   DOWN, where `band-exits-stands` raises nothing - standing down is already
   true, so there is no question to ask. Tap `band-enters-stands` first (the
