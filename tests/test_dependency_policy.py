@@ -11,7 +11,9 @@ reads the imports and fails.
 
 import ast
 import re
+import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -178,6 +180,53 @@ class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
     def test_no_control_path_module_imports_reach(self):
         for name in CONTROL_PATH:
             self.assertNotIn("reach", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
+
+
+#: The modules allowed to import numpy: offline analysis, never the box (#191).
+NUMPY_MODULES = ("pilot",)
+
+REPO_ROOT = PACKAGE_ROOT.parent.parent
+
+
+class TestNumpyStaysOffTheBox(unittest.TestCase):
+    """numpy serves the post-game pilot check, an optional extra (`.[analysis]`)."""
+
+    def test_only_the_analysis_modules_import_numpy(self):
+        for path in sorted(PACKAGE_ROOT.glob("*.py")):
+            if path.stem in NUMPY_MODULES:
+                continue
+            self.assertNotIn("numpy", _imported_top_level_modules(path), f"tacet.{path.stem} imports numpy")
+
+    def test_every_numpy_module_exists(self):
+        for name in NUMPY_MODULES:
+            self.assertTrue((PACKAGE_ROOT / f"{name}.py").is_file(), f"{name}.py is missing")
+
+    def test_the_box_starts_without_importing_numpy(self):
+        code = "import sys, tacet.serve; sys.exit('numpy' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, "importing tacet.serve pulled in numpy")
+
+    def test_numpy_is_an_extra_not_a_runtime_dependency(self):
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        self.assertFalse([d for d in project["dependencies"] if d.lower().startswith("numpy")])
+        extra = [d for d in project["optional-dependencies"]["analysis"] if d.lower().startswith("numpy")]
+        self.assertEqual(len(extra), 1)
+        self.assertIn("<", extra[0], "pin numpy with an upper bound")
+
+    def test_wav_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "wav.py"):
+            self.assertIn(module, allowed, f"tacet.wav imports {module!r}, which is not in the standard library")
+
+    def test_the_cli_shell_imports_no_third_party_at_module_level(self):
+        tree = ast.parse((PACKAGE_ROOT / "pilot_check.py").read_text(encoding="utf-8"))
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                self.assertIn(node.module.split(".")[0], allowed)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertIn(alias.name.split(".")[0], allowed)
 
 
 if __name__ == "__main__":

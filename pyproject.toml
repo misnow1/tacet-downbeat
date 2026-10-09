@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Michael Snow" }]
 
-# The control path -- tacet.osc, net, dm7, state -- imports nothing but the
+# The control path -- tacet.osc, net, dm7, state, targets -- imports nothing but the
 # standard library. That is the code moving the fader in a press box on a
 # Saturday with nobody available to fix it, and OSC is hand-rolled for exactly
 # that reason. tests/test_dependency_policy.py enforces it.
@@ -22,6 +22,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Offline analysis only (tacet-pilot-check, #191). The box never imports numpy,
+# so a plain `pip install -e .` there stays as small as it was; `make install`
+# includes this. tests/test_dependency_policy.py keeps it that way.
+analysis = [
+  "numpy>=2.2,<3",  # post-game pilot envelope; never on the control path
+]
 dev = [
   "ruff>=0.6",
   "mypy>=1.11",
@@ -34,6 +40,7 @@ dev = [
 tacet-serve = "tacet.serve:main"
 tacet-verify-reaper = "tacet.verify_reaper:main"
 tacet-verify-dm7 = "tacet.verify_dm7:main"
+tacet-pilot-check = "tacet.pilot_check:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tacet"]
