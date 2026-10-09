@@ -298,6 +298,11 @@ It also contains the failure mode. If the box dies mid-fade and parks the DCA at
 an intermediate level, only the band PA is affected. Every pre-fader send to the
 other mixes is untouched, and the operator still has the DCA on the iPad.
 
+A *clean* stop starts no move (#44). It lets a commanded fade land, bounded by
+its own length, and leaves a ride where it is, logged `move-abandoned`. It never
+raises the fader. A crash parks the DCA as before, and the next boot reads the
+level unknown, so the box does not act on the old belief.
+
 #### OSC is write-only
 
 **This corrects an earlier assumption in this document.** V1.1.0 defines only
@@ -543,6 +548,33 @@ while that is happening, which makes it exactly the silent degradation this
 document forbids elsewhere. Hence the keepalive in §5.5: liveness has to be
 something the page observes arriving, not something it infers from a socket that
 has not told it otherwise.
+
+**Presence at the console's address** is checked by an ICMP ping plus the
+kernel's own ARP entry for it, never by OSC (#73). The protocol is write-only
+(§5.3), so nothing the box can send proves the DM7 is there, that the port is
+right, or that a packet was taken; an OSC message to the console is exactly
+what "faders only" rules out, and a get sits one token from a scene recall. A
+ping that is answered proves only that something is at the address. A ping
+that is not, with the neighbour entry still unresolved, proves nothing has
+answered ARP: wrong address, adapter or VLAN, cable out, console off. A
+resolved entry after no reply is *not* "something is there" - an expired macOS
+entry keeps its MAC - so that is only "did not answer ping". Result words never
+claim more. It is a warning and a page chip, never an interlock: arm is never
+delayed or refused by it (principle 5, #89), and it is never a precondition for
+a fader move.
+
+The same ping is a keepalive. macOS drops an idle ARP entry after 20 minutes
+(`net.link.ether.inet.max_age`) and then holds the next packet for a fresh ARP
+exchange, retrying only when it has a new packet to send. A snap open is one
+packet, so a lost exchange would leave it sitting in the hold queue with
+`commanded` reading open. A ping every 4 minutes, for the box's whole life and
+not only while armed (an operator open from STANDING DOWN, #89, must not meet a
+cold entry after halftime), keeps the entry warm. While the last result is nothing-there or could-not-check it looks again every 30 s so a fixed cable clears the warning promptly; no-answer is not bad, because the DM7 may simply ignore ping. Linux uses a stale entry
+immediately, so the check matters there and the keepalive does not. The
+keepalive is never a fader write: re-sending the commanded level would yank the
+fader back after a StageMix move (#12). It runs the system `ping` as a child
+process off the event loop, is never started during a fader move or while
+another check runs, and is killed and reaped on a timeout or a cancel.
 
 802.11ah / HaLow is a reasonable redundant path — sub-GHz penetrates bodies far
 better, and the payload is a few hundred bytes per second. Redundant path, not

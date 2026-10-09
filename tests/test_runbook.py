@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, app, config, disk, provenance, reaper, serve, state, web
+from tacet import annotations, app, config, disk, provenance, reach, reaper, serve, state, web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -93,7 +93,8 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             path="/checkout",
             error=None,
         )
-        self.lines = serve.startup_lines(serve.parser().parse_args(argv), None, code=clean)
+        answered = reach.Check(reach.Reach.ANSWERED, reach.Trigger.STARTUP, "10.0.0.5", 1.0, rtt_ms=0.4)
+        self.lines = serve.startup_lines(serve.parser().parse_args(argv), None, code=clean, console_check=answered)
         self.gameday = RUNBOOK.read_text(encoding="utf-8")
         self.script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
 
@@ -119,6 +120,22 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         self.assertIn(dirty, self.gameday)
         self.assertIn(dirty, self.troubleshooting)
         self.assertIn(unknown, self.troubleshooting)
+
+    def test_the_runbook_quotes_every_ping_row(self) -> None:
+        # #73: the words after the `ping` label in the banner.
+        for words in (reach.ANSWERED, reach.NO_ANSWER, reach.NOTHING_THERE, reach.COULD_NOT_CHECK):
+            with self.subTest(words):
+                self.assertIn(words, self.box)
+                self.assertIn(words, self.troubleshooting)
+
+    def test_the_runbook_documents_the_nothing_there_warning(self) -> None:
+        self.assertIn(serve.NOTHING_THERE_WARNING, self.troubleshooting)
+
+    def test_the_runbook_quotes_the_console_chip_words(self) -> None:
+        for name in ("CONSOLE_NOTHING_THERE", "CONSOLE_NO_ANSWER", "CONSOLE_NOT_CHECKED"):
+            with self.subTest(name):
+                self.assertIn(self._chip_words(name), self.troubleshooting)
+        self.assertIn(self._chip_words("CONSOLE_NOTHING_THERE"), self.gameday)
 
     def test_the_fix_on_the_day_no_longer_promises_157(self) -> None:
         self.assertNotIn("#157 will make", self.gameday)

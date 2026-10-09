@@ -1,4 +1,5 @@
 marker	SYS|box-started
+marker	SYS|console-checked
 marker	SYS|recording-started
 marker	SYS|recording-requested
 marker	SYS|recording-found
@@ -47,6 +48,7 @@ region	GAME|timeout
 marker	FDR|commanded
 marker	FDR|move-failed
 marker	FDR|move-landed
+marker	FDR|move-abandoned
 marker	FDR|stale-tap
 marker	FDR|up-ready
 marker	FDR|up-whistle

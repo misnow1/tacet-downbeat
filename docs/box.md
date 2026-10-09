@@ -132,6 +132,9 @@ Reaper, and where the log and queue are going:
 --------------------------------------------------------------------------
   console     10.0.0.5:49900   DCA 3
               commanded, never confirmed - the DM7's OSC is write-only
+  ping        answered ping (0.4 ms)
+              something is at this address; not proof it is the DM7
+              and not proof the port is right
   fade        2.0s close, fast open, 1.5s ride-in
   target      0.0 dB   presets 0.0 / -3.0 / -6.0   cap 0.0 dB
   reaper      127.0.0.1   send 8000   feedback 9000
@@ -154,8 +157,22 @@ the same path, and the banner repeats it under step 2 of its own checklist so
 the two can be compared without scrolling.
 
 Everything in the banner is what the box was *told*, not what it has confirmed.
-Nothing has been sent to the console at this point, and the console could not
-answer if it had been.
+Nothing has been sent to the console's OSC port at this point, and the console
+could not answer if it had been. One ping has gone to its *address* (#73), and
+the `ping` row says what came back. That is presence at the address, never the
+DM7, the port or a delivered fader move:
+
+| `ping` row | What it means |
+|---|---|
+| `answered ping (0.4 ms)` | Something at that address replied. Not proof it is the DM7 or that the port is right |
+| `did not answer ping` | No reply, but the box's ARP entry for the address is resolved or could not be read. The console may ignore ping, or be gone. Fader moves are still sent |
+| `nothing at this address (no ARP reply)` | No reply, and nothing answered ARP either: wrong address, wrong adapter or VLAN, cable out, console off. Also prints a `WARNING` row; the box starts anyway |
+| `could not check: <why>` | ping is missing, did not finish, or the platform is unknown. Nothing is known |
+
+The ping is `ping -c 1` from the system, with no privilege and no OSC, and a
+read of the neighbour (ARP) table when it gets no reply. The box repeats it at
+every arm and every 4 minutes for as long as it runs (every 30 seconds while the last result was `nothing at this address` or `could not check`), which also keeps the
+laptop's ARP entry for the console warm; see design.md 5.7.
 
 The `code` row is the one thing the box *did* check: it asked git, once, before
 anything binds, read-only, with a 5 second limit (#157). It reads
@@ -209,8 +226,11 @@ tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl --check
 It prints what a real start would print and exits instead of binding: the
 banner and exit code 0 if the box would start, or the same refusal and the same
 non-zero code it would stop with. `WARNING` rows are not refusals, so they still
-exit 0. Nothing is bound or sent, the log and queue are neither created nor
-opened, and a torn end is reported but not repaired. Do it the night before, and
+exit 0. Nothing is bound, nothing is sent to the console's OSC port or to
+Reaper, the log and queue are neither created nor opened, and a torn end is
+reported but not repaired. It does send one ping to the console's address, so
+away from the stadium its `ping` row reads `nothing at this address (no ARP
+reply)` with a `WARNING`, which is expected there. Do it the night before, and
 after any edit to `tacet.toml`.
 
 `--check` is a flag only. A `check` key in the file is refused like any other
@@ -240,9 +260,19 @@ readings tell you two different things:
 - **A figure climbing past about 40**, with a red dot and a red banner, means
   the link is down and what is on screen is stale.
 
-It says nothing about the console. Nothing can - OSC is write-only, and a packet
-sent into a black hole succeeds (design.md 5.3). `Console unreachable` appears
-only when the box's own send fails.
+It says nothing about whether the console took a fader move. Nothing can - OSC
+is write-only, and a packet sent into a black hole succeeds (design.md 5.3).
+`Console unreachable` appears only when the box's own send fails.
+
+**The console chip, in the strip** says what the last ping at the console's
+address found (#73), and shows only when something is wrong; no chip is the
+healthy state. A red `Nothing answered at the console address at the last check` means nothing answered
+ARP either: fader moves may not be reaching anything, so check the cable and
+the console IP. The operator has the fader. A dim `Console did not answer ping`
+means no reply but the address may still be the console, which may ignore ping;
+fader moves are still sent, unconfirmed. `Could not check the console` carries
+its reason. A tap reads the whole sentence, and the chip clears itself on the
+next answer, so a fixed cable clears it within 30 seconds.
 
 **An amber `Unreviewed code running` chip in the strip** means the box is running
 uncommitted changes, so the log's commit does not describe what ran (#157). It
@@ -326,9 +356,24 @@ does and does not do and waits five seconds; the second one does it. Wait longer
 than that and the next press warns again rather than stopping, so a stray Ctrl-C
 early in a game cannot pair up with an unrelated one later.
 
-It never fades on the way out - the operator is left in control, and the console
-keeps whatever level it was last commanded. **Stopping the box does not stop the
-recording**; Reaper is still rolling and is stopped in Reaper.
+It starts no fader move on the way out (#44), and the operator is left in
+control. A fade already under way is let land, for no longer than the fade itself
+plus half a second; a ride (up-slow, Ready, a target change) is stopped where
+it is and logged `move-abandoned`. After that the console keeps whatever level it
+was last commanded. The terminal says which, in its last `fader:` line, since
+the page is gone by then.
+
+- A Ctrl-C while a fade is landing leaves it where it is, also logged
+  `move-abandoned`.
+- SIGTERM (`kill`, a logout, a service manager) stops at once, the same way, with
+  no confirmation.
+- The next start always reads the level `unknown` (#107), so **Close now** or an
+  open is the first fader tap after any restart.
+- A crash or `kill -9` still parks a move part-way. The damage is contained to
+  the band PA, and the next start reads the level unknown.
+
+**Stopping the box does not stop the recording**; Reaper is still rolling and is
+stopped in Reaper.
 
 ---
 
