@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-10-06.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
+**Last updated 2026-10-08.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -86,20 +86,21 @@ come first; the layout change lands early so the pre-game runthrough (about
 
 | # | Issue | Why here |
 |---|---|---|
-| 1 | [#149](https://github.com/misnow1/tacet-downbeat/issues/149) Commit the metering research note | Housekeeping, already written; untracked since soundcheck |
-| 2 | [#155](https://github.com/misnow1/tacet-downbeat/issues/155) MAIN: scoring first, quarters off, timeout wording, colour and icons | The sea of grey cost cue time; muscle memory needs the runthrough |
+| ~~1~~ | ~~[#149](https://github.com/misnow1/tacet-downbeat/issues/149) Commit the metering research note~~ | Done |
+| ~~2~~ | ~~[#155](https://github.com/misnow1/tacet-downbeat/issues/155) MAIN: scoring first, quarters off, timeout wording, colour and icons~~ | Done, with Safety added. Muscle memory still needs the runthrough |
 | ~~3~~ | ~~[#154](https://github.com/misnow1/tacet-downbeat/issues/154) Describe a fade once, animate it, fading colour~~ | Done, absorbing #51. `fader.move` describes a fade or ride once and the page animates it, so a fade costs three page messages; the button that started it wears the fading colour until the box says it landed; the button list is sent once per socket |
 | ~~4~~ | ~~[#153](https://github.com/misnow1/tacet-downbeat/issues/153) Target set while open: stored, not moved~~ | Done. While the fader is up a target tap leaves a note under the segments saying it stored and did not move, and the chip adds `(next open)`; a tap while closed says nothing and the log's `stored_because` records why |
 | ~~5~~ | ~~[#128](https://github.com/misnow1/tacet-downbeat/issues/128) Retarget ride~~ | Done. A target tap while the fader is up rides there over `fader.retarget_ride_seconds` (default 1.0); a stale or unknown-level tap refuses the ride, closed or fading it stores only |
-| 6 | ~~[#163](https://github.com/misnow1/tacet-downbeat/issues/163) Say why the record button is grey~~ (done); ~~[#172](https://github.com/misnow1/tacet-downbeat/issues/172) ask Reaper for its transport state~~ (done); ~~[#158](https://github.com/misnow1/tacet-downbeat/issues/158) write the anchor when Reaper starts recording~~ (done) | The button greyed out silently at games 2 and 3, so neither has a page-started take; Game 3 has no anchor and its markers cannot regenerate |
+| ~~6~~ | ~~[#163](https://github.com/misnow1/tacet-downbeat/issues/163) Say why the record button is grey~~ (done); ~~[#172](https://github.com/misnow1/tacet-downbeat/issues/172) ask Reaper for its transport state~~ (done); ~~[#158](https://github.com/misnow1/tacet-downbeat/issues/158) write the anchor when Reaper starts recording~~ (done) | Done. The button is live on a parked Reaper and says why when grey; the box asks Reaper for its state; the anchor is Reaper's confirmation, whoever started the take. Game 3's timeline is intact from its playhead stamps (#180); only `markers.py` needs #159's synthetic anchor |
 | ~~7~~ | ~~[#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag~~ | Done. A `box-started` entry first in every run, a `code` banner row, and an amber chip on the page while the tree is dirty |
-| 8 | [#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue | Before the runthrough, so it runs from the updated runbook |
+| ~~8~~ | ~~[#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue~~ | Done, with #166 (Reaper OSC behaviour, the mirror toggle) |
+| ~~9~~ | ~~[#44](https://github.com/misnow1/tacet-downbeat/issues/44) Stopping the box mid-fade leaves the fader at an arbitrary level~~ | Done. A confirmed stop starts no move, lets a fade land and leaves a ride where it is, and SIGTERM is handled |
+| ~~10~~ | ~~[#73](https://github.com/misnow1/tacet-downbeat/issues/73) Check the console answers at startup and at arm~~ | Done. A ping at startup, at every arm and every 4 minutes, a `ping` banner row and a console chip only when something is wrong; whether the DM7 answers ping is still to be measured at the runthrough |
 
 Nice for Game 4: ~~[#156](https://github.com/misnow1/tacet-downbeat/issues/156)
-(swipe, never from the fader column)~~ (done), #44 and ~~#73~~ (done: a ping at
-startup, at every arm and every 4 minutes, a `ping` banner row and a console chip
-only when something is wrong; whether the DM7 answers ping is still to be
-measured at the runthrough).
+(swipe, never from the fader column)~~ (done) and
+[#135](https://github.com/misnow1/tacet-downbeat/issues/135) (the `fader.target`
+rename, unblocked by #128).
 
 Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159)
 (Game 3 sidecar and pilot analysis, after #133). Game 5 or later:
@@ -107,8 +108,9 @@ Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159
 may only remove trust; needs a design.md amendment) and RTD (#95), unless the
 booth sniff happens the Friday before Game 4.
 
-The Game 4 milestone also holds: #17, #21, #42, #43, #46, #47, #48, #49,
-#66, #133, #135. Whatever does not land moves to Game 5.
+Moved to Game 5 on 2026-10-05 (#182), as they will not land for the
+2026-10-17 game: #17, #21, #42, #43 (partly addressed by #158), #46, #47, #48,
+#49, #66 (live markers lag the stamps by 0.18 s; #180), #133.
 
 ## Keeping this current
 

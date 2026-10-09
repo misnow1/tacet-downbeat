@@ -1,13 +1,18 @@
+import argparse
 import asyncio
 import dataclasses
 import io
+import os
+import signal
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
-from tacet import annotations, disk, dm7, provenance, reach, serve, targets
+from tacet import annotations, disk, dm7, moves, provenance, reach, serve, state, targets
+from tacet import app as tacet_app
+from tests.test_app import ClosableFakeSender
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 CLEAN_CODE = provenance.Provenance(
@@ -71,13 +76,247 @@ class TestStopWarning(unittest.TestCase):
         # sample, and stopping the box looks like stopping everything.
         self.assertIn("does not stop the recording", serve.STOP_WARNING)
 
-    def test_it_says_the_fader_does_not_move(self):
-        # The other one. Nothing fades on the way out; the console keeps its
-        # last commanded level and the operator has the iPad.
-        self.assertIn("does not move the fader", serve.STOP_WARNING)
+    def test_it_says_the_box_starts_no_move_on_the_way_out(self):
+        # The other one. The box starts nothing on the way out: a fade already
+        # under way is let land, a ride stops where it is, and the operator has
+        # the iPad (#44).
+        self.assertIn("starts no fader move", serve.STOP_WARNING)
+        self.assertIn("let land", serve.STOP_WARNING)
+        self.assertIn("stops where it is", serve.STOP_WARNING)
 
     def test_it_names_the_window_it_is_describing(self):
         self.assertIn(f"{serve.STOP_CONFIRM_SECONDS:.0f}s", serve.STOP_WARNING)
+
+
+class TestStopSignals(unittest.TestCase):
+    """What a SIGINT or SIGTERM means, given what came before (#44). Pure."""
+
+    def test_the_first_ctrl_c_warns(self):
+        self.assertIs(serve.StopSignals().interrupt(100.0), serve.SignalAction.WARN)
+
+    def test_a_confirming_ctrl_c_stops(self):
+        signals = serve.StopSignals()
+        signals.interrupt(100.0)
+        self.assertIs(signals.interrupt(101.0), serve.SignalAction.STOP)
+
+    def test_sigterm_stops_at_once_without_confirmation(self):
+        self.assertIs(serve.StopSignals().terminate(), serve.SignalAction.STOP)
+
+    def test_ctrl_c_while_stopping_abandons_rather_than_warns(self):
+        signals = serve.StopSignals()
+        signals.interrupt(100.0)
+        signals.interrupt(101.0)
+        self.assertIs(signals.interrupt(102.0), serve.SignalAction.ABANDON)
+
+    def test_sigterm_while_stopping_abandons(self):
+        signals = serve.StopSignals()
+        signals.terminate()
+        self.assertIs(signals.terminate(), serve.SignalAction.ABANDON)
+        self.assertIs(signals.interrupt(1.0), serve.SignalAction.ABANDON)
+
+    def test_a_warn_after_the_window_does_not_pair_with_a_stale_one(self):
+        signals = serve.StopSignals()
+        signals.interrupt(100.0)
+        late = 100.0 + serve.STOP_CONFIRM_SECONDS + 1.0
+        self.assertIs(signals.interrupt(late), serve.SignalAction.WARN)
+        self.assertIs(signals.interrupt(late + 1.0), serve.SignalAction.STOP)
+
+
+class TestStopLines(unittest.TestCase):
+    """What the terminal says about the fader on the way out (#44)."""
+
+    MARGIN = 0.5
+
+    @staticmethod
+    def move(kind=moves.MoveKind.FADE, *, end=dm7.MINUS_INF):
+        return moves.MoveDescription(
+            seq=1,
+            kind=kind,
+            by=None,
+            start=dm7.UNITY,
+            end=end,
+            seconds=2.0,
+            started_at=10.0,
+            floor=dm7.DEFAULT_FADE_FLOOR,
+            taper=None,
+        )
+
+    def lines(self):
+        fade = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=dm7.MINUS_INF, abandoned=None)
+        ride = tacet_app.Stopped(
+            kind=moves.MoveKind.RIDE,
+            end=dm7.UNITY,
+            level=-1500,
+            abandoned=tacet_app.AbandonedBecause.RIDE,
+        )
+        late = tacet_app.Stopped(
+            kind=moves.MoveKind.FADE,
+            end=dm7.MINUS_INF,
+            level=-1500,
+            abandoned=tacet_app.AbandonedBecause.LATE,
+        )
+        failed = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=-1500, abandoned=None)
+        nothing = tacet_app.Stopped(kind=None, end=None, level=dm7.UNITY, abandoned=None)
+        return [
+            serve.stopping_line(self.move(), now=10.5, margin=self.MARGIN),
+            serve.stopping_line(None, now=10.5, margin=self.MARGIN),
+            *(serve.stopped_line(s) for s in (fade, ride, late, failed, nothing)),
+            serve.STOPPING,
+            serve.ABANDONING,
+        ]
+
+    def test_stopping_with_a_fade_landing_says_how_long_and_how_to_leave_it(self):
+        line = serve.stopping_line(self.move(), now=10.5, margin=self.MARGIN)
+        self.assertIn("letting the fade land", line)
+        self.assertIn("2.0s at most", line)
+        self.assertIn("Ctrl-C again to leave the fader where it is", line)
+
+    def test_a_fade_past_its_deadline_says_zero_not_negative(self):
+        line = serve.stopping_line(self.move(), now=99.0, margin=self.MARGIN)
+        self.assertIn("0.0s at most", line)
+
+    def test_stopping_with_nothing_landing_just_says_stopping(self):
+        self.assertEqual(serve.stopping_line(None, now=10.5, margin=self.MARGIN), serve.STOPPING)
+
+    def test_a_landed_fade_says_where(self):
+        stopped = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=dm7.MINUS_INF, abandoned=None)
+        self.assertEqual(serve.stopped_line(stopped), "fader: the fade landed at -inf")
+
+    def test_an_abandoned_ride_says_where_it_stopped_and_where_it_was_going(self):
+        stopped = tacet_app.Stopped(
+            kind=moves.MoveKind.RIDE, end=dm7.UNITY, level=-1500, abandoned=tacet_app.AbandonedBecause.RIDE
+        )
+        line = serve.stopped_line(stopped)
+        self.assertIn("the ride was stopped where it was, at -15.0 dB, short of 0.0 dB", line)
+        self.assertIn("The next start reads the level as unknown.", line)
+
+    def test_an_abandoned_fade_says_it_did_not_close(self):
+        stopped = tacet_app.Stopped(
+            kind=moves.MoveKind.FADE,
+            end=dm7.MINUS_INF,
+            level=-1500,
+            abandoned=tacet_app.AbandonedBecause.LATE,
+        )
+        line = serve.stopped_line(stopped)
+        self.assertIn("the fade was stopped where it was, at -15.0 dB, short of -inf", line)
+
+    def test_a_failed_fade_points_at_the_log(self):
+        stopped = tacet_app.Stopped(kind=moves.MoveKind.FADE, end=dm7.MINUS_INF, level=-1500, abandoned=None)
+        line = serve.stopped_line(stopped)
+        self.assertIn("the fade did not land", line)
+        self.assertIn("move-failed", line)
+
+    def test_nothing_moving_names_the_last_commanded_level(self):
+        stopped = tacet_app.Stopped(kind=None, end=None, level=dm7.UNITY, abandoned=None)
+        self.assertEqual(serve.stopped_line(stopped), "fader: nothing was moving; last commanded 0.0 dB")
+
+    def test_the_lines_are_ascii(self):
+        for line in self.lines():
+            self.assertTrue(line.isascii(), line)
+        self.assertTrue(serve.STOP_WARNING.isascii())
+
+
+class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
+    """`_run` with a real signal (#44). Every `os.kill` here is guarded by a
+    check that the handler is installed: unhandled, SIGTERM ends the process,
+    and pytest with it."""
+
+    CONSOLE_HOST = "192.0.2.1"
+    #: An unsupported platform, so every console check is could-not-check and
+    #: no ping is ever spawned (#73).
+    NO_TOOLS = reach.Tools(platform=None, ping=None, arp=None)
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.sender = ClosableFakeSender()
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.SIG_DFL)
+        self.addCleanup(signal.signal, signal.SIGINT, signal.default_int_handler)
+        # The terminal lines, for the whole run.
+        self.out = io.StringIO()
+        patcher = mock.patch("sys.stdout", self.out)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def args(self):
+        return argparse.Namespace(
+            console_host=self.CONSOLE_HOST,
+            reaper_host=None,
+            listen="127.0.0.1",
+            http_port=0,
+            reaper_feedback_port=0,
+        )
+
+    def build_app(self, *, fade, slow_open=5.0):
+        log = annotations.AnnotationLog(self.root / "game.jsonl").open()
+        console = dm7.Dm7Client(self.CONSOLE_HOST, dca=3, sender=self.sender, tick_hz=200.0)
+        app = tacet_app.App(
+            console=console,
+            log=log,
+            fade_seconds=fade,
+            slow_open_seconds=slow_open,
+            machine=state.Machine(level_known=True),
+        )
+        self.console = console
+        self.log = log
+        closer = mock.patch.object(log, "close", wraps=log.close)
+        self.log_close = closer.start()
+        self.addCleanup(closer.stop)
+        return app, log
+
+    async def running(self, app, log, signum):
+        """Start `_run`, and return its task once `signum` is handled. Never
+        returns, and never lets the caller send, when it is not."""
+        with mock.patch("tacet.serve.build", return_value=(app, log, None)):
+            before = signal.getsignal(signum)
+            task = asyncio.ensure_future(serve._run(self.args(), CLEAN_CODE, tools=self.NO_TOOLS))
+            for _ in range(500):
+                if signal.getsignal(signum) is not before:
+                    return task
+                await asyncio.sleep(0.01)
+        task.cancel()
+        raise AssertionError("the signal handler was never installed; nothing was sent")
+
+    def events(self):
+        return [e.event for e in annotations.read_entries(self.root / "game.jsonl")]
+
+    async def test_sigterm_mid_fade_lets_the_fade_land_and_closes_everything(self):
+        app, log = self.build_app(fade=1.0)
+        task = await self.running(app, log, signal.SIGTERM)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, 5)
+        self.assertEqual(self.sender.levels()[-1], dm7.MINUS_INF)
+        events = self.events()
+        self.assertIn(tacet_app.MOVE_LANDED, events)
+        self.assertNotIn(tacet_app.MOVE_ABANDONED, events)
+        self.assertTrue(self.sender.closed)
+        self.log_close.assert_called_once()
+        self.assertIn("fader: the fade landed at -inf", self.out.getvalue())
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+    async def test_two_ctrl_c_mid_ride_leave_the_ride_where_it_was(self):
+        app, log = self.build_app(fade=0.3)
+        task = await self.running(app, log, signal.SIGINT)
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGINT)
+        await asyncio.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGINT)
+        await asyncio.wait_for(task, 5)
+        level = self.sender.levels()[-1]
+        self.assertTrue(dm7.MINUS_INF < level < dm7.UNITY)
+        events = self.events()
+        self.assertIn(tacet_app.MOVE_ABANDONED, events)
+        self.assertNotIn(tacet_app.MOVE_LANDED, events)
+        self.assertTrue(self.sender.closed)
+        self.log_close.assert_called_once()
+        self.assertIn("the ride was stopped where it was", self.out.getvalue())
 
 
 FULL = [
@@ -1018,6 +1257,16 @@ class TestBuildWritesBoxStartedFirst(unittest.TestCase):
         first = next(iter(annotations.read_entries(self.log)))
         self.assertEqual(first.event, annotations.BOX_STARTED)
         self.assertEqual(first.data, DIRTY_CODE.as_data())
+
+    def test_a_box_built_after_a_stop_mid_move_reads_the_level_unknown(self):
+        # The boot-side recovery #44 relies on (#107): whatever the last run
+        # left on the fader, a new box does not believe it knows the level.
+        _, log, _ = serve.build(self.args, CLEAN_CODE)
+        log.record(tacet_app.MOVE_ABANDONED, data={"level": -150, "target": 0, "kind": "ride", "because": "ride"})
+        log.close()
+        app, log, _ = serve.build(self.args, CLEAN_CODE)
+        log.close()
+        self.assertIs(app.snapshot()["fader"]["level_known"], False)
 
     def test_a_restart_on_the_same_log_writes_another(self):
         for _ in range(2):

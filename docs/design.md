@@ -298,6 +298,11 @@ It also contains the failure mode. If the box dies mid-fade and parks the DCA at
 an intermediate level, only the band PA is affected. Every pre-fader send to the
 other mixes is untouched, and the operator still has the DCA on the iPad.
 
+A *clean* stop starts no move (#44). It lets a commanded fade land, bounded by
+its own length, and leaves a ride where it is, logged `move-abandoned`. It never
+raises the fader. A crash parks the DCA as before, and the next boot reads the
+level unknown, so the box does not act on the old belief.
+
 #### OSC is write-only
 
 **This corrects an earlier assumption in this document.** V1.1.0 defines only

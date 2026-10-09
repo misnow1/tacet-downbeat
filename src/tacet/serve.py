@@ -41,6 +41,11 @@ The box refuses to start without room for a whole game's recording (#53): set
 `capture.audio_path` and `capture.channels`, or pass `--no-disk-check`. See
 `tacet.disk`.
 
+A confirmed stop - two Ctrl-C, or one SIGTERM - starts no fader move (#44). A
+fade already under way is let land, for no longer than its own length; a ride is
+left where it had got to and logged `move-abandoned`. A further Ctrl-C or
+SIGTERM while a fade lands leaves it where it is too.
+
 The banner's `code` row says what commit and branch is running, and whether the
 tree is dirty (#157). The log's first entry of every run, `box-started`, records
 the same. git is asked once, here, before the event loop exists.
@@ -58,6 +63,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import enum
 import signal
 import sys
 import textwrap
@@ -66,7 +72,7 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, provenance, reach, reaper, taps, targets, web
+from . import config, disk, dm7, mirror, moves, provenance, reach, reaper, taps, targets, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -79,7 +85,7 @@ from .annotations import (
     set_aside_path,
 )
 from .annotations import Entry as AnnotationEntry
-from .app import App
+from .app import STOP_LANDING_MARGIN_SECONDS, App, Stopped
 
 #: How long a Ctrl-C stays armed, waiting for the one that confirms it.
 #:
@@ -94,7 +100,9 @@ STOP_WARNING = f"""
 Stopping the box does not stop the recording. Reaper keeps rolling and is
 stopped in Reaper, deliberately (design.md 5.9).
 
-It does not move the fader either. The console keeps whatever level it was last
+It starts no fader move. A fade already under way is let land first, which
+takes no longer than the fade itself; a ride (up-slow, Ready, a target change)
+stops where it is. After that the console keeps whatever level it was last
 commanded, and the operator has the iPad.
 
 Press Ctrl-C again within {STOP_CONFIRM_SECONDS:.0f}s to stop.
@@ -107,6 +115,79 @@ def confirms_stop(pressed_at: float, armed_at: float | None, *, window: float = 
     Pure, so the rule is testable without a signal, a clock or a subprocess.
     """
     return armed_at is not None and pressed_at - armed_at <= window
+
+
+class SignalAction(enum.StrEnum):
+    WARN = "warn"  # first Ctrl-C: print STOP_WARNING
+    STOP = "stop"  # confirmed: stop
+    ABANDON = "abandon"  # already stopping: leave a landing fade where it is
+
+
+class StopSignals:
+    """What a SIGINT or SIGTERM means, given what came before (#44). Pure: no
+    signal, no loop, no clock; the caller passes `now`."""
+
+    def __init__(self, *, window: float = STOP_CONFIRM_SECONDS) -> None:
+        self._window = window
+        self._armed: float | None = None
+        self._stopping = False
+
+    def interrupt(self, now: float) -> SignalAction:
+        """A Ctrl-C: warns, then stops on the confirming press, then abandons."""
+        if self._stopping:
+            return SignalAction.ABANDON
+        if confirms_stop(now, self._armed, window=self._window):
+            self._stopping = True
+            return SignalAction.STOP
+        self._armed = now
+        return SignalAction.WARN
+
+    def terminate(self) -> SignalAction:
+        """A SIGTERM comes from the OS or a process manager, deliberately, and
+        nobody is there to confirm it: it stops at once."""
+        if self._stopping:
+            return SignalAction.ABANDON
+        self._stopping = True
+        return SignalAction.STOP
+
+
+#: What the terminal says when the stop is confirmed with nothing landing, and
+#: when a further signal leaves a landing fade where it is.
+STOPPING = "stopping"
+ABANDONING = "leaving the fader where it is"
+
+
+def _db_text(level: int) -> str:
+    """A console level for the terminal: -inf, or dB to one decimal."""
+    if level == dm7.MINUS_INF:
+        return "-inf"
+    return f"{dm7.to_db(level):.1f} dB"
+
+
+def stopping_line(landing: moves.MoveDescription | None, *, now: float, margin: float) -> str:
+    """What the terminal says when the stop is confirmed (#44). Pure."""
+    if landing is None:
+        return STOPPING
+    seconds = max(0.0, landing.ends_at + margin - now)
+    return f"{STOPPING} - letting the fade land, {seconds:.1f}s at most. Ctrl-C again to leave the fader where it is."
+
+
+def stopped_line(stopped: Stopped) -> str:
+    """What the terminal says about the fader once the stop has finished. The
+    page is gone by then. Pure."""
+    if stopped.kind is None or stopped.end is None:
+        return f"fader: nothing was moving; last commanded {_db_text(stopped.level)}"
+    if stopped.abandoned is not None:
+        return (
+            f"fader: the {stopped.kind.value} was stopped where it was, at {_db_text(stopped.level)}, "
+            f"short of {_db_text(stopped.end)}. The next start reads the level as unknown."
+        )
+    if stopped.level == stopped.end:
+        return f"fader: the {stopped.kind.value} landed at {_db_text(stopped.end)}"
+    return (
+        f"fader: the {stopped.kind.value} did not land; last commanded {_db_text(stopped.level)} "
+        "- see move-failed in the log"
+    )
 
 
 class _Feedback(asyncio.DatagramProtocol):
@@ -223,19 +304,24 @@ async def _run(
     # because both files were fsynced per line. They are written on a thread now
     # (#41), which makes closing the log - it waits for that thread - matter more.
     stop = asyncio.Event()
-    armed: float | None = None
+    abandon = asyncio.Event()
+    signals = StopSignals()
 
-    def on_interrupt() -> None:
-        nonlocal armed
-        pressed = loop.time()
-        if confirms_stop(pressed, armed):
-            print("stopping")
+    def on_signal(action: SignalAction) -> None:
+        # An ordinary loop callback (add_signal_handler), so it may call into
+        # the App, which cancels a ride and writes the log.
+        if action is SignalAction.WARN:
+            print(STOP_WARNING)
+        elif action is SignalAction.STOP:
+            landing = app.begin_stop()
+            print(stopping_line(landing, now=app.now(), margin=STOP_LANDING_MARGIN_SECONDS))
             stop.set()
         else:
-            armed = pressed
-            print(STOP_WARNING)
+            print(ABANDONING)
+            abandon.set()
 
-    loop.add_signal_handler(signal.SIGINT, on_interrupt)
+    loop.add_signal_handler(signal.SIGINT, lambda: on_signal(signals.interrupt(loop.time())))
+    loop.add_signal_handler(signal.SIGTERM, lambda: on_signal(signals.terminate()))
 
     watch_task: asyncio.Future[None] = asyncio.ensure_future(watch.run())
     watch_task.add_done_callback(lambda task: _watch_stopped(app, args.console_host, task))
@@ -243,22 +329,38 @@ async def _run(
     try:
         await stop.wait()
     finally:
-        # Leave the operator in control: never fade on the way out.
-        loop.remove_signal_handler(signal.SIGINT)
-        # First, so no child ping outlives the box.
+        # First, so no child ping outlives the box (#73). The watch skips its
+        # pings while the fader moves, and a landing fade runs in its own task,
+        # so cancelling it here does not hold the fade up.
         watch_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await watch_task
-        # Nested, so a cleanup that fails cannot skip the ones after it. That is
-        # exactly what the interrupt used to do.
+        # The box starts no move on the way out (#44). A ride was left where it
+        # was when the stop was confirmed; a fade is let land, after the page
+        # has hung up so no tap can start a move behind it. Nested, so a
+        # cleanup that fails cannot skip the ones after it.
         try:
-            await runner.cleanup()
+            try:
+                await runner.cleanup()
+            finally:
+                stopped = await app.finish_stop(abandon=abandon)
+                print(stopped_line(stopped))
         finally:
-            if transport is not None:
-                transport.close()
-            log.close()
-            if queue is not None:
-                queue.close()
+            # Handlers are removed last, after the synchronous closes: a Ctrl-C
+            # while the fade lands is the operator saying to leave it, and one
+            # during a close must not raise KeyboardInterrupt mid-close.
+            try:
+                app.close_console()
+            finally:
+                try:
+                    if transport is not None:
+                        transport.close()
+                    log.close()
+                    if queue is not None:
+                        queue.close()
+                finally:
+                    loop.remove_signal_handler(signal.SIGTERM)
+                    loop.remove_signal_handler(signal.SIGINT)
 
 
 #: Width of the startup banner's rules. Wide enough for a long path plus its

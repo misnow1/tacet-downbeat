@@ -361,6 +361,12 @@ VOCABULARY: tuple[EventType, ...] = (
     # Written by the box when a fade or ride-in sends its last step. Those run
     # on after their `commanded` entry, whose `delivered` is therefore null.
     _instant("move-landed", "Fader move landed", Category.FADER, button=False),
+    # Written by the box when it stops with a move still running and leaves the
+    # fader where that move had got to (#44): a ride is never finished on the way
+    # out, and a fade that does not land in time, or that the operator says to
+    # leave, is not either. `level` is the last level sent; `target` where it was
+    # going; `because` is ride, late or interrupted.
+    _instant("move-abandoned", "Fader move abandoned (box stopping)", Category.FADER, button=False),
     # Written by the box when a fader tap arrived too late to execute (#16). The
     # fader buttons in the grid log their own entry instead, marked stale.
     _instant("stale-tap", "Fader tap arrived late, not executed", Category.FADER, button=False),

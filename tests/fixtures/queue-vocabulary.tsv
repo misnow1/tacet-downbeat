@@ -62,6 +62,7 @@ GAME|timeout	end	timeout-60
 FDR|commanded	-	-
 FDR|move-failed	-	-
 FDR|move-landed	-	-
+FDR|move-abandoned	-	-
 FDR|stale-tap	-	-
 FDR|up-ready	-	-
 FDR|up-whistle	-	-
