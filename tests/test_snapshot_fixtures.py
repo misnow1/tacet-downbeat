@@ -65,11 +65,17 @@ class TestSnapshotFixtures(unittest.TestCase):
                 expected = "nothing-there" if path.name == "snapshot-faults.json" else "answered"
                 self.assertEqual(found["reach"], expected)
 
+    def test_no_fixture_fader_block_carries_a_target(self):
+        for path, text in self.snapshots_only().items():
+            with self.subTest(fixture=path.name):
+                fader = json.loads(text)["fader"]
+                self.assertEqual([k for k in fader if "target" in k], [])
+
     def test_each_state_is_the_state_it_is_named_for(self):
         states = {path.name: json.loads(text) for path, text in self.snapshots_only().items()}
         self.assertEqual(states["snapshot-standing-down.json"]["state"], "standing-down")
         self.assertEqual(states["snapshot-open-recording.json"]["recording"]["liveness"], "live")
-        self.assertEqual(states["snapshot-releasing.json"]["fader"]["target"], -32768)
+        self.assertIsNone(states["snapshot-releasing.json"]["fader"]["move"]["to_db"])
         # Reaper never heard from: the page with Reaper closed (#163).
         self.assertEqual(states["snapshot-standing-down.json"]["recording"]["refusal"], reaper.RECORD_REFUSED_SILENT)
         parked = states["snapshot-parked-unreported.json"]["recording"]
