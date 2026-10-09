@@ -2091,11 +2091,10 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
     `confirmed` stays false whatever this says.
     """
 
-    async def test_nothing_is_moving_so_there_is_no_target(self):
+    async def test_nothing_is_moving_so_there_is_no_move(self):
         app = self.build()
         fader = app.snapshot()["fader"]
-        self.assertIsNone(fader["target"])
-        self.assertIsNone(fader["target_db"])
+        self.assertIsNone(fader["move"])
 
     async def test_a_close_shows_where_it_is_heading(self):
         app = self.build(fade=0.4)
@@ -2103,18 +2102,18 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
         await app.annotate("up-drums")
         await app.annotate("out")
         fader = app.snapshot()["fader"]
-        self.assertEqual(fader["target"], dm7.MINUS_INF)
+        self.assertEqual(fader["move"]["kind"], "fade")
         # -inf has no JSON spelling; the page renders null as "-oo dB".
-        self.assertIsNone(fader["target_db"])
+        self.assertIsNone(fader["move"]["to_db"])
         await app.wait_for_fade()
 
-    async def test_the_target_is_gone_once_the_fade_finishes(self):
+    async def test_the_move_is_gone_once_the_fade_finishes(self):
         app = self.build(fade=0.05)
         await app.arm()
         await app.annotate("up-drums")
         await app.annotate("out")
         await app.wait_for_fade()
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
 
     async def test_the_expectation_is_never_dressed_up_as_confirmation(self):
         app = self.build(fade=0.4)
@@ -2163,7 +2162,7 @@ class TestTheExpectedFaderStateIsVisible(AppTestCase):
         await app.annotate("out")
         await app.annotate("up-whistle")
         self.assertIsNone(app._move)
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
 
 
 class TestUpSlowRidesIn(AppTestCase):
@@ -2226,9 +2225,9 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.arm()
         await app.annotate("up-slow")
         fader = app.snapshot()["fader"]
-        self.assertEqual(fader["target"], dm7.UNITY)
+        self.assertEqual(fader["move"]["to_db"], dm7.to_db(dm7.UNITY))
         await app.wait_for_fade()
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
 
     async def test_a_ride_in_notifies_a_bounded_number_of_times(self):
         notifies = []
@@ -2263,7 +2262,7 @@ class TestUpSlowRidesIn(AppTestCase):
         # After the superseded ride-in has had its turn to clean up, not before:
         # that cleanup is what used to clear the close's target (#34).
         await asyncio.sleep(SUPERSEDED_WAKES)
-        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        self.assertIsNone(app.snapshot()["fader"]["move"]["to_db"])
         await app.wait_for_fade()
         self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
 
@@ -2279,7 +2278,7 @@ class TestUpSlowRidesIn(AppTestCase):
         await app.annotate("up-whistle")
         # At unity when the tap returns: the snap is awaited like any other.
         self.assertEqual(app._console.commanded_level, dm7.UNITY)
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
         await asyncio.sleep(SUPERSEDED_WAKES)
         await app.wait_for_fade()
 
@@ -2378,9 +2377,9 @@ class TestUpReadyRidesToTheHoldLevel(AppTestCase):
         app._ready_ride_seconds = 0.4
         await app.arm()
         await app.annotate("up-ready")
-        self.assertEqual(app.snapshot()["fader"]["target"], self.hold_level(app))
+        self.assertEqual(app.snapshot()["fader"]["move"]["to_db"], dm7.to_db(self.hold_level(app)))
         await app.wait_for_fade()
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
 
     async def test_a_trigger_commits_to_target_fast_from_wherever_it_got_to(self):
         app = self.build()
@@ -2429,7 +2428,7 @@ class TestUpReadyRidesToTheHoldLevel(AppTestCase):
         await asyncio.sleep(UNDER_WAY)
         await app.annotate("out")
         await asyncio.sleep(SUPERSEDED_WAKES)
-        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        self.assertIsNone(app.snapshot()["fader"]["move"]["to_db"])
         await app.wait_for_fade()
         self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
 
@@ -2698,7 +2697,7 @@ class TestFaderPositionTrust(AppTestCase):
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
         await asyncio.sleep(SUPERSEDED_WAKES)
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
         self.assertEqual(app.machine.state, state.State.IDLE)
 
     async def test_close_now_from_a_pending_stand_down_lands_standing_down(self):
@@ -2870,11 +2869,11 @@ class TestTheStandingTarget(AppTestCase):
     """#9: where an open goes is a setting the operator can change, and
     changing it moves nothing.
 
-    Two things are called a target and they are not the same. `snapshot()
-    ["target"]` is the standing setting: the level the next open goes to.
-    `snapshot()["fader"]["target"]` is where a move already in flight is
-    heading. A ride-in that started before the setting changed keeps going to
-    the old level, so the two differ, and the tests below say which is which.
+    `snapshot()["target"]` is the standing setting - the level the next open
+    goes to - and the only thing in the snapshot called a target. Where a move
+    in flight is going is `snapshot()["fader"]["move"]["to_db"]`; the two differ
+    during READY's ride to its hold level (#135 removed the fader block's own
+    `target`).
     """
 
     def sent(self):
@@ -3001,27 +3000,32 @@ class TestTheStandingTarget(AppTestCase):
         self.assertEqual(self.console.commanded_level, -2100)
         self.assertEqual(app.machine.state, state.State.READY)
 
-    async def test_fader_target_is_where_a_move_is_going_and_target_level_is_the_standing_setting(self):
-        # The naming trap, pinned: while READY rides to its hold level the two
-        # disagree, and no target tap is needed for that. (A target tap mid-ride
-        # now retargets the ride, #128, so it can no longer make them differ.)
+    async def test_a_move_in_flight_can_head_somewhere_other_than_the_standing_target(self):
+        # While READY rides to its hold level the two disagree, and no target
+        # tap is needed for that. (A target tap mid-ride now retargets the
+        # ride, #128, so it can no longer make them differ.)
         app = self.build()
         app._ready_ride_seconds = 0.4
         await app.arm()
         await app.annotate("up-ready")
         snap = app.snapshot()
-        self.assertNotEqual(snap["fader"]["target"], snap["target"]["level"])
-        self.assertEqual(snap["fader"]["target"], -1500)
-        self.assertEqual(snap["target"]["level"], 0)
+        self.assertNotEqual(snap["fader"]["move"]["to_db"], snap["target"]["db"])
+        self.assertEqual(snap["fader"]["move"]["to_db"], -15.0)
+        self.assertEqual(snap["target"]["db"], 0.0)
         await app.wait_for_fade()
 
-    async def test_the_standing_setting_is_not_inside_the_fader_block(self):
-        snap = self.build().snapshot()
-        self.assertIn("presets_db", snap["target"])
-        self.assertNotIn("presets_db", snap["fader"])
-        # Nothing in flight: `fader.target` is null while `target.level` is set.
-        self.assertIsNone(snap["fader"]["target"])
-        self.assertIsNotNone(snap["target"]["level"])
+    async def test_the_fader_block_carries_no_target_of_its_own(self):
+        app = self.build()
+        idle = app.snapshot()
+        app._ready_ride_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-ready")
+        riding = app.snapshot()
+        for snap in (idle, riding):
+            self.assertEqual([k for k in snap["fader"] if "target" in k], [])
+            self.assertNotIn("presets_db", snap["fader"])
+        self.assertEqual([k for k in riding["fader"]["move"] if "target" in k], [])
+        await app.wait_for_fade()
 
     async def test_a_target_change_while_releasing_stores_only_and_the_fade_still_ends_at_minus_infinity(self):
         app = self.build(fade=0.2)
@@ -3033,7 +3037,7 @@ class TestTheStandingTarget(AppTestCase):
 
         await app.set_target(-3.0)
 
-        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        self.assertIsNone(app.snapshot()["fader"]["move"]["to_db"])
         self.assertEqual(len(self.commanded_entries()), entries_before)
         await app.wait_for_fade()
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
@@ -3623,7 +3627,6 @@ class TestAMoveIsDescribedOnce(AppTestCase):
         self.assertEqual(move["kind"], "fade")
         self.assertEqual(move["seq"], 1)
         self.assertTrue(fader["moving"])
-        self.assertEqual(fader["target"], dm7.MINUS_INF)
         app._cancel_move()
 
     async def test_up_slow_and_ready_are_described_as_rides_on_the_taper(self):
@@ -3778,7 +3781,6 @@ class TestASupersededMove(AppTestCase):
         await app.annotate("up-slow")
         await asyncio.sleep(SUPERSEDED_WAKES)
         fader = app.snapshot()["fader"]
-        self.assertEqual(fader["target"], dm7.UNITY)
         self.assertEqual(fader["move"]["kind"], "ride")
         self.assertEqual(fader["move"]["to_db"], 0.0)
         self.assertEqual(fader["move"]["seq"], 2)
@@ -3793,7 +3795,7 @@ class TestASupersededMove(AppTestCase):
         await app.annotate("out")
         await asyncio.sleep(SUPERSEDED_WAKES)
         fader = app.snapshot()["fader"]
-        self.assertEqual(fader["target"], dm7.MINUS_INF)
+        self.assertIsNone(fader["move"]["to_db"])
         self.assertEqual(fader["move"]["kind"], "fade")
         self.assertEqual(fader["move"]["seq"], 2)
         app._cancel_move()
@@ -3810,7 +3812,7 @@ class TestASupersededMove(AppTestCase):
         await asyncio.sleep(SUPERSEDED_WAKES)
         self.assertEqual(app.machine.state, state.State.RELEASING)
         self.assertTrue(self.console.is_ramping)
-        self.assertEqual(app.snapshot()["fader"]["target"], dm7.MINUS_INF)
+        self.assertIsNone(app.snapshot()["fader"]["move"]["to_db"])
         app._cancel_move()
 
     async def test_a_replaced_fade_that_returns_anyway_does_not_complete(self):
@@ -3836,7 +3838,7 @@ class TestASupersededMove(AppTestCase):
         await app.wait_for_fade()
         self.assertEqual(app.machine.state, state.State.IDLE)
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
-        self.assertIsNone(app.snapshot()["fader"]["target"])
+        self.assertIsNone(app.snapshot()["fader"]["move"])
 
 
 class TestEveryEntryATapProducesCarriesItsTiming(AppTestCase):

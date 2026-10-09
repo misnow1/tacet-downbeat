@@ -695,7 +695,7 @@ class TestTheTargetRoute(WebTestCase):
         # While closed (standing down): nothing is up to ride.
         before = (await (await self.client.get("/api/state")).json())["fader"]
         payload = await (await self.post({"db": -3.0})).json()
-        for key in ("commanded", "level_known", "target", "moving"):
+        for key in ("commanded", "level_known", "move", "moving"):
             self.assertEqual(payload["fader"][key], before[key])
 
     async def test_a_body_without_db_is_a_400_naming_the_field(self):

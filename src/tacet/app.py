@@ -707,7 +707,10 @@ class App:
             failed = True
         # A fade is asynchronous, so `level` is where the fader was when the
         # command was issued. `target` is where it is going, which is the
-        # unambiguous half when reading a log back.
+        # unambiguous half when reading a log back. Still `target` here and in
+        # `_move_end`, though the snapshot's fader block has none since #135:
+        # recorded logs carry it, design.md's Phase 1 labels read it, and in the
+        # log nothing else is called a target (`target-set` says `level`).
         target = self._fader_target(command)
         self._record(
             COMMANDED,
@@ -768,7 +771,9 @@ class App:
         self._move_landed(target)
 
     def _move_end(self, target: int) -> dict[str, Any]:
-        """Where a move ended up against where it was going, for the log."""
+        """Where a move ended up against where it was going, for the log.
+
+        `target` as in `commanded`; see the note there (#135)."""
         return {
             "level": self._console.commanded_level,
             "db": _finite(dm7.to_db(self._console.commanded_level)),
@@ -1444,9 +1449,10 @@ class App:
                 "since": self._duty_since,
             },
             # The STANDING target: the level the next open goes to, set from MORE
-            # (#9). Not `fader.target`, which is where a move in flight is
-            # heading and is null when nothing is moving - the two differ while
-            # a ride that began before a change is still running. Commanded, like
+            # (#9). Where a move in flight is heading is `fader.move`'s `to_db`,
+            # which differs from this during READY's ride to its hold level; any
+            # other ride is retargeted when this changes (#128). The fader block
+            # carries no target of its own (#135). Commanded, like
             # everything here, and never read back from the console. `stored` is
             # the note for the last tap that only stored, while the fader is up
             # (#153): fixed text that changes only on a tap or a move, so it
@@ -1487,12 +1493,6 @@ class App:
                 "sent_at": move.started_at if move else self._console.last_sent_at,
                 "healthy": self._console.healthy,
                 "error": self._console.last_error,
-                # Where a move in flight is heading, or None when nothing is
-                # moving. Still expectation, not confirmation: it is where the
-                # box intends to put the fader, which is the most the write-only
-                # protocol can ever support. Not the standing target (#135).
-                "target": None if move is None else move.end,
-                "target_db": None if move is None else _finite(dm7.to_db(move.end)),
                 # From the description, not `console.is_ramping`: that reads
                 # false in the first snapshot of a move and would flip once the
                 # ramp task started, churning the snapshot.

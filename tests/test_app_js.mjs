@@ -494,8 +494,6 @@ check(
     level_known: true,
     commanded: -300,
     db: -3.0,
-    target: -32768,
-    target_db: null,
     moving: true,
     move: moveFrom("fade", -3.0, null, 2.0, { by: "out" }),
   }).get("level").textContent,
@@ -512,8 +510,6 @@ check(
     level_known: true,
     commanded: -6000,
     db: -60.0,
-    target: 0,
-    target_db: 0.0,
     moving: true,
     move: moveFrom("ride", -60.0, 0.0, 1.5, { by: "up-slow" }),
   }).get("level").textContent,
@@ -2229,10 +2225,10 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 // -- the standing target level (#9) ------------------------------------------
 //
-// Two things are called a target. `snapshot.target` is the STANDING setting -
-// the level the next open goes to, chosen on MORE > Target level and shown in
-// the strip. `snapshot.fader.target` is where a move already in flight is
-// heading. The tests below say which they mean.
+// `snapshot.target` is the STANDING setting - the level the next open goes to,
+// chosen on MORE > Target level and shown in the strip - and the only thing in a
+// snapshot called a target. Where a move in flight is heading is
+// `fader.move.to_db`.
 
 // The standing-down fixture with the standing target changed, and optionally
 // the fader. `overlay` refuses a key the box does not send.
@@ -2314,8 +2310,6 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
     level_known: true,
     commanded: -1000,
     db: -10,
-    target: 0,
-    target_db: 0,
     moving: true,
     move: moveFrom("ride", -10, 0, 1.5, { by: "up-slow" }),
   };
@@ -2327,7 +2321,7 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
   context.render(targetSnapshot({ db: 0, level: 0 }, ride));
   check("ride: no note when the ride is to the standing target", nodes.get("target-level").textContent, "target 0 dB");
 
-  const idle = { level_known: true, commanded: 0, db: 0, target: null, target_db: null, moving: false, move: null };
+  const idle = { level_known: true, commanded: 0, db: 0, moving: false, move: null };
   context.render(targetSnapshot({ db: -6, level: -600 }, idle));
   check("nothing moving: no note", nodes.get("target-level").textContent, "target -6 dB");
 
@@ -2339,8 +2333,6 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
     level_known: true,
     commanded: -32768,
     db: null,
-    target: -1500,
-    target_db: -15,
     moving: true,
     move: moveFrom("ride", null, -15, 4.0, { by: "up-ready" }),
   };
@@ -2352,8 +2344,6 @@ const presetSegments = (created) => created.filter((node) => node.tag === "butto
     level_known: true,
     commanded: -1000,
     db: -10,
-    target: -32768,
-    target_db: null,
     moving: true,
     move: moveFrom("fade", -10, null, 2.0, { by: "out" }),
   };
@@ -2904,8 +2894,6 @@ function landedSnapshot(from, laterBy) {
     moving: false,
     commanded: -32768,
     db: null,
-    target: null,
-    target_db: null,
     sent_at: snap.at,
   };
   return snap;
