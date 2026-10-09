@@ -76,6 +76,9 @@ KINDS = (KIND_FADE, KIND_READY, KIND_UP_SLOW, KIND_RETARGET)
 
 _NEG_INF = float("-inf")
 _TIME_FORMAT = "%H:%M:%S"
+#: Times print to the hundredth, truncated (never rounded up into the next
+#: second), so 22:41:52.994 reads 22:41:52.99, which is how Reaper shows it.
+_MICROSECONDS_PER_HUNDREDTH = 10_000
 
 
 class PilotCheckError(RuntimeError):
@@ -102,10 +105,12 @@ class Finding(StrEnum):
     MISMATCH = "pilot disagrees with the box's belief"
     UNCOVERED = "the pilot does not cover it"
     UNSTAMPED = "no project position was logged for it"
+    AFTER_TAKE = "after the take ended"
+    MALFORMED = "its level or target is not a console level"
 
 
 _FLAGS = (Finding.BLAST, Finding.DROPOUT, Finding.MISMATCH)
-_UNCHECKED = (Finding.UNCOVERED, Finding.UNSTAMPED)
+_UNCHECKED = (Finding.UNCOVERED, Finding.UNSTAMPED, Finding.AFTER_TAKE, Finding.MALFORMED)
 
 
 @dataclass(frozen=True)
@@ -142,6 +147,11 @@ class Take:
     anchor: Anchor
     entries: tuple[Entry, ...]
     ended_by: Entry | None
+    #: Entries after `ended_by`: written in this log but not in this take, and
+    #: so not checked. Their ramps are reported as unchecked, never dropped.
+    cut_off: tuple[Entry, ...] = ()
+    #: Entries before the take began (an earlier take, a rehearsal): context only.
+    earlier: tuple[Entry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -313,12 +323,16 @@ def take_of(entries: Sequence[Entry], anchor: Anchor) -> Take:
         extra = markers.derive(entries, anchor.entry).extra_anchors
         ended_by = extra[0] if extra else None
         inside = [e for e in entries if e.seq > first]
+        earlier = [e for e in entries if e.seq < first]
     else:
         ended_by = next((e for e in entries if _wall(e) > anchor.wall and ann.is_anchor(e)), None)
         inside = [e for e in entries if _wall(e) >= anchor.wall]
+        earlier = [e for e in entries if _wall(e) < anchor.wall]
+    cut_off: list[Entry] = []
     if ended_by is not None:
+        cut_off = [e for e in inside if e.seq > ended_by.seq]
         inside = [e for e in inside if e.seq < ended_by.seq]
-    return Take(anchor=anchor, entries=tuple(inside), ended_by=ended_by)
+    return Take(anchor=anchor, entries=tuple(inside), ended_by=ended_by, cut_off=tuple(cut_off), earlier=tuple(earlier))
 
 
 def _is_ride_in(entry: Entry) -> bool:
@@ -467,7 +481,7 @@ def check_ramp(envelope: Envelope, ramp: Ramp, calibration: Calibration) -> Ramp
         return RampCheck(ramp, None, None, (Finding.UNSTAMPED,))
     split = stamp + RAMP_BEFORE_WINDOW[1]
     before_window = envelope.window(stamp + RAMP_BEFORE_WINDOW[0], split)
-    after_window = envelope.window(split, stamp + RAMP_AFTER_SECONDS)
+    after_window = envelope.window(split, split + RAMP_AFTER_SECONDS)
     if before_window is None or after_window is None:
         return RampCheck(ramp, None, None, (Finding.UNCOVERED,))
     before = float(np.median(_as_dca(before_window, calibration)))
@@ -484,27 +498,56 @@ def check_ramp(envelope: Envelope, ramp: Ramp, calibration: Calibration) -> Ramp
     return RampCheck(ramp, before, shown, tuple(findings))
 
 
+def _unchecked(entry: Entry, finding: Finding) -> RampCheck:
+    ramp = Ramp(entry=entry, believed_db=math.nan, target_db=math.nan, direction=Direction.LEVEL)
+    return RampCheck(ramp, None, None, (finding,))
+
+
+def _unchecked_after(entry: Entry) -> RampCheck:
+    try:
+        ramp = ramp_of(entry)
+    except PilotCheckError:
+        return _unchecked(entry, Finding.MALFORMED)
+    return RampCheck(ramp, None, None, (Finding.AFTER_TAKE,))
+
+
+def _check_entry(envelope: Envelope, entry: Entry, calibration: Calibration) -> RampCheck:
+    """One ramp. An entry that cannot be read as a ramp is an unchecked row, not
+    a reason to throw the whole report away."""
+    try:
+        ramp = ramp_of(entry)
+    except PilotCheckError:
+        return _unchecked(entry, Finding.MALFORMED)
+    return check_ramp(envelope, ramp, calibration)
+
+
 def check(envelope: Envelope, take: Take, layout: wav.WavLayout) -> Report:
     calibration = calibrate(envelope, take)
-    checks = tuple(check_ramp(envelope, ramp_of(e), calibration) for e in take.entries if is_ramp(e))
-    return Report(take=take, layout=layout, calibration=calibration, checks=checks)
+    checks = [_check_entry(envelope, e, calibration) for e in take.entries if is_ramp(e)]
+    checks += [_unchecked_after(e) for e in take.cut_off if is_ramp(e)]
+    return Report(take=take, layout=layout, calibration=calibration, checks=tuple(checks))
 
 
 # -- report -----------------------------------------------------------------
 
 
 def _db(value: float | None) -> str:
-    if value is None:
+    if value is None or math.isnan(value):
         return "-"
     return "-inf" if math.isinf(value) else f"{value:+.1f}"
 
 
+def _format_time(when: datetime) -> str:
+    hundredths = when.microsecond // _MICROSECONDS_PER_HUNDREDTH
+    return f"{when.strftime(_TIME_FORMAT)}.{hundredths:02d}"
+
+
 def _clock(entry: Entry, tz: tzinfo | None) -> str:
-    return _wall(entry).astimezone(tz).strftime(_TIME_FORMAT)
+    return _format_time(_wall(entry).astimezone(tz))
 
 
 def _utc_clock(entry: Entry) -> str:
-    return _wall(entry).astimezone(UTC).strftime(_TIME_FORMAT)
+    return _format_time(_wall(entry).astimezone(UTC))
 
 
 def _what(entry: Entry) -> str:
@@ -549,10 +592,10 @@ def _calibration_lines(calibration: Calibration, tz: tzinfo | None, take: Take) 
     by_seq = {e.seq: e for e in take.entries}
 
     def at(item: tuple[int, float]) -> str:
-        return f"{item[1]:+.1f} dB (seq {item[0]}, {_clock(by_seq[item[0]], tz)})"
+        return f"{item[1]:+.2f} dB (seq {item[0]}, {_clock(by_seq[item[0]], tz)})"
 
     lines = [
-        f"calibration: pilot = DCA {calibration.offset_db:+.1f} dB, from {calibration.count} snap opens from silence",
+        f"calibration: pilot = DCA {calibration.offset_db:+.2f} dB, from {calibration.count} snap opens from silence",
         f"  lowest {at(calibration.lowest)}, highest {at(calibration.highest)}",
     ]
     if calibration.silent_opens:
@@ -589,15 +632,31 @@ def _verdict(report: Report) -> str:
     return f"VERDICT: all {len(report.checks)} ramps checked, none flagged"
 
 
+def _take_end_lines(take: Take, tz: tzinfo | None) -> list[str]:
+    if take.ended_by is None:
+        return []
+    after = sum(1 for e in take.cut_off if is_ramp(e))
+    ended = take.ended_by
+    return [
+        f"TAKE ENDED by seq {ended.seq} ({ended.event}) at {_clock(ended, tz)} local; "
+        f"{after} ramps after it are unchecked"
+    ]
+
+
 def render(report: Report, *, tz: tzinfo | None, source: str | None = None) -> str:
     """The report as plain ASCII text."""
     layout = report.layout
     lines = [] if source is None else [f"pilot file: {source}"]
+    end = layout.start_seconds + layout.duration_seconds
     lines.append(
-        f"pilot covers project s {layout.start_seconds:.2f} to {layout.start_seconds + layout.duration_seconds:.2f}"
+        f"pilot covers project {layout.start_seconds:.2f} s to {end:.2f} s"
         + (" (TRUNCATED: the file ends early)" if layout.truncated else "")
     )
-    lines.append(f"take: {report.take.anchor.description}; {len(report.take.entries)} entries")
+    take = report.take
+    lines.append(f"take: {take.anchor.description}; {len(take.entries)} entries")
+    before = sum(1 for e in take.earlier if is_ramp(e))
+    lines.append(f"before the anchor (an earlier take, left out): {before} ramps")
+    lines.extend(_take_end_lines(take, tz))
     lines.extend(_calibration_lines(report.calibration, tz, report.take))
     counts = report.counts_by_kind
     lines.append("ramps: " + ", ".join(f"{counts[k]} {k}" for k in KINDS))

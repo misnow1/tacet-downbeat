@@ -1644,6 +1644,24 @@ class TestThePlayheadIsStamped(AppTestCase):
         self.assertTrue(commanded)
         self.assertEqual(commanded[-1].project_seconds, 42.0)
 
+    async def test_commanded_entries_carry_the_keys_the_pilot_check_reads(self):
+        from tacet import pilot
+
+        app = self.build()
+        await app.arm()
+        await app.annotate("up-drums")
+        commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+        self.assertTrue(commanded)
+        for key in (
+            pilot.DATA_COMMAND,
+            pilot.DATA_DETAIL,
+            pilot.DATA_LEVEL,
+            pilot.DATA_TARGET,
+            pilot.DATA_TARGET_DB,
+            pilot.DATA_DELIVERED,
+        ):
+            self.assertIn(key, commanded[-1].data)
+
     async def test_no_recorder_means_no_stamp(self):
         self.build()  # sets up the console and the log
         app = tacet_app.App(console=self.console, log=self.log, recorder=None)

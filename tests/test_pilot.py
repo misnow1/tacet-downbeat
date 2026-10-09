@@ -5,12 +5,21 @@ from pathlib import Path
 
 import numpy as np
 
+from tacet import annotations as ann
 from tacet import app, dm7, markers, pilot, state, wav
 from tacet.annotations import Entry
 
 from .pilot_wav import Canvas, commanded, paint_envelope, pcm24, plain, tone, wav_bytes
 
 CLOSED = dm7.MINUS_INF
+DATA_KEYS = (
+    pilot.DATA_COMMAND,
+    pilot.DATA_DETAIL,
+    pilot.DATA_LEVEL,
+    pilot.DATA_TARGET,
+    pilot.DATA_TARGET_DB,
+    pilot.DATA_DELIVERED,
+)
 #: Pilot dBFS minus DCA dB, as Game 3 measured it.
 OFFSET = -12.0
 T = 10.0
@@ -79,17 +88,13 @@ class TestConstants(unittest.TestCase):
     def test_commanded_event_is_the_one_the_box_writes(self):
         self.assertEqual(pilot.COMMANDED_EVENT, app.COMMANDED)
 
-    def test_the_data_keys_are_the_ones_the_box_writes(self):
-        data = commanded(1, wall(), 1.0, "fade", "out", 0, CLOSED).data
-        for key in (
-            pilot.DATA_COMMAND,
-            pilot.DATA_DETAIL,
-            pilot.DATA_LEVEL,
-            pilot.DATA_TARGET,
-            pilot.DATA_TARGET_DB,
-            pilot.DATA_DELIVERED,
-        ):
-            self.assertIn(key, data)
+    def test_the_data_keys_are_the_ones_the_box_wrote_in_game_2(self):
+        log = Path(__file__).parent / "fixtures" / "log-v1.jsonl"
+        commanded_entries = [e for e in ann.read_entries(log) if e.event == pilot.COMMANDED_EVENT]
+        self.assertTrue(commanded_entries)
+        for entry in commanded_entries:
+            for key in DATA_KEYS:
+                self.assertIn(key, entry.data, f"seq {entry.seq}")
 
     def test_ramp_commands_are_fader_commands(self):
         commands = {c.value for c in state.FaderCommand}
@@ -210,13 +215,24 @@ class TestTake(unittest.TestCase):
     def test_take_ends_at_a_second_recording(self):
         entries = [
             Entry(**{**e.as_dict(), "wall": wall(minute)})
-            for e, minute in [(fade(1, 1.0), 40), (plain(2, "", "recording-started"), 50), (fade(3, 1.0), 55)]
+            for e, minute in [
+                (fade(1, 1.0), 40),
+                (fade(2, 2.0), 45),
+                (plain(3, "", "recording-found", ps=9.0), 50),
+                (fade(4, 3.0), 55),
+            ]
         ]
         start = datetime(2026, 10, 2, 22, 30, tzinfo=UTC)
-        take = pilot.take_of(entries, pilot.resolve_anchor(entries[:1] + entries[2:], start))
-        self.assertEqual([e.seq for e in take.entries], [1])
+        take = pilot.take_of(entries, pilot.Anchor(wall=start, entry=None, description="supplied"))
         assert take.ended_by is not None
-        self.assertEqual(take.ended_by.seq, 2)
+        self.assertEqual(take.ended_by.seq, 3)
+        self.assertEqual([e.seq for e in take.entries], [1, 2])
+        self.assertEqual([e.seq for e in take.cut_off], [4])
+
+    def test_entries_before_the_take_are_kept_as_context(self):
+        entries = [fade(1, 6.7), plain(2, wall(1), "recording-started"), fade(3, 3.0)]
+        take = pilot.take_of(entries, pilot.resolve_anchor(entries, None))
+        self.assertEqual([e.seq for e in take.earlier], [1])
 
     def test_a_consistent_recording_found_does_not_end_the_take(self):
         started = plain(1, wall(1), "recording-started")
@@ -324,6 +340,14 @@ class TestCheckRamp(unittest.TestCase):
         result = check_one(canvas, fade(59, T, level=units(-6)))
         self.assertEqual(result.findings, (pilot.Finding.MISMATCH,))
         self.assertAlmostEqual(result.before_db or 0.0, -2.5, places=1)
+
+    def test_a_blast_at_the_slowest_game_3_lag_is_flagged(self):
+        for lag in (pilot.GAME_3_LAG_RANGE[1], 0.41):
+            with self.subTest(lag=lag):
+                canvas = Canvas(30.0)
+                canvas.ramp(T + lag, T + lag + 0.02, -80.0, p(-0.8))
+                canvas.hold(T + lag + 0.02, T + 3.0, p(-0.8))
+                self.assertIn(pilot.Finding.BLAST, check_one(canvas, fade(1, T, level=0)).findings)
 
     def test_clean_fade_is_not_flagged_at_game_3_lags(self):
         for lag in (0.04, 0.09, 0.23):
@@ -486,6 +510,47 @@ class TestGame3Verdict(Game3):
         self.assertEqual(counts["fade"], 4 + 3 + 1 + 1 + 3)
 
 
+class TestUncheckedRows(Game3):
+    def test_ramps_after_the_take_ended_are_unchecked(self):
+        self.calibration_open(0.0)
+        self.clean_fade()
+        end = plain(2000, wall(30), "recording-found", ps=5.0)
+        after = fade(2001, T)
+        entries = [*self.entries, end, after]
+        start = datetime(2026, 10, 2, tzinfo=UTC)
+        entries = [
+            Entry(**{**e.as_dict(), "wall": wall(minute)})
+            for e, minute in zip(entries, range(len(entries)), strict=True)
+        ]
+        take = pilot.take_of(entries, pilot.Anchor(wall=start, entry=None, description="supplied"))
+        report = pilot.check(self.canvas.envelope(), take, LAYOUT)
+        self.assertEqual([c.ramp.entry.seq for c in report.unchecked], [2001])
+        self.assertEqual(report.unchecked[0].findings, (pilot.Finding.AFTER_TAKE,))
+        text = pilot.render(report, tz=UTC)
+        self.assertIn("TAKE ENDED by seq 2000 (recording-found)", text)
+        self.assertIn("1 ramps after it are unchecked", text)
+        self.assertIn("could not be checked", text.splitlines()[-1])
+
+    def test_a_ramp_that_is_not_a_console_level_is_an_unchecked_row(self):
+        self.calibration_open(0.0)
+        good = fade(500, T)
+        bad = Entry(**{**good.as_dict(), "seq": 501, "data": {**good.data, "level": None}})
+        report = pilot.check(self.canvas.envelope(), take_of([*self.entries, bad]), LAYOUT)
+        row = next(c for c in report.unchecked if c.ramp.entry.seq == 501)
+        self.assertEqual(row.findings, (pilot.Finding.MALFORMED,))
+        text = pilot.render(report, tz=UTC)
+        line = next(x for x in text.splitlines() if x.startswith("501 "))
+        self.assertIn(pilot.Finding.MALFORMED.value, line)
+
+    def test_header_counts_ramps_before_the_anchor(self):
+        entries = [fade(1, 6.7), fade(2, 7.0), plain(3, wall(1), "recording-started")]
+        take = pilot.take_of(entries, pilot.resolve_anchor(entries, None))
+        self.calibration_open(0.0)
+        take = pilot.Take(take.anchor, tuple(self.entries), None, (), take.earlier)
+        text = pilot.render(pilot.check(self.canvas.envelope(), take, LAYOUT), tz=UTC)
+        self.assertIn("before the anchor (an earlier take, left out): 2 ramps", text)
+
+
 class TestRender(Game3):
     EASTERN = timezone(timedelta(hours=-4))
 
@@ -506,8 +571,14 @@ class TestRender(Game3):
     def test_flagged_row_shows_local_and_utc(self):
         text = pilot.render(self.report(), tz=self.EASTERN)
         row = next(line for line in text.splitlines() if line.startswith("33 "))
-        self.assertIn("18:15:00", row)
-        self.assertIn("22:15:00", row)
+        self.assertIn("18:15:00.00", row)
+        self.assertIn("22:15:00.00", row)
+
+    def test_times_are_truncated_to_the_hundredth(self):
+        self.report()
+        entry = Entry(**{**fade(59, 1.0).as_dict(), "wall": "2026-10-02T22:41:52.996000+00:00"})
+        self.assertEqual(pilot._clock(entry, self.EASTERN), "18:41:52.99")
+        self.assertEqual(pilot._utc_clock(entry), "22:41:52.99")
 
     def test_minus_infinity_renders_as_text(self):
         text = pilot.render(self.report(), tz=self.EASTERN)
@@ -526,7 +597,7 @@ class TestRender(Game3):
         text = pilot.render(self.report(unchecked=True), tz=self.EASTERN, source="pilot.wav")
         text.encode("ascii")
         self.assertIn("pilot file: pilot.wav", text)
-        self.assertIn("pilot = DCA -12.0 dB", text)
+        self.assertIn("pilot = DCA -12.00 dB", text)
 
 
 if __name__ == "__main__":

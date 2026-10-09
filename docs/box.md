@@ -367,7 +367,8 @@ so a step over the game shows) and how many ramps of each kind there were. Each
 flagged or unchecked ramp gets a row: sequence number, local and UTC time,
 project seconds, what the box believed, the pilot's median just before it (in
 DCA dB, `-inf` for closed), the peak (falling ramps) or minimum (rising) just
-after, and why. The last line is the verdict. "Unchecked" means the pilot does
+after, and why. A take that ended early (a second recording in the log) is named in the header,
+and the ramps after it are listed as unchecked. The last line is the verdict. "Unchecked" means the pilot does
 not cover the ramp or the entry has no project position; that is a gap, not a
 pass.
 
@@ -377,7 +378,9 @@ snap open to calibrate from, numpy missing, bad arguments.
 
 **Install.** It needs numpy, an optional extra kept off the box's control path:
 `make install` includes it; with a plain `pip install -e .` run
-`pip install -e '.[analysis]'`.
+`pip install -e '.[analysis]'`. A box installed before this change has no
+`tacet-pilot-check` command until `make install` is run once more after pulling;
+`python -m tacet.pilot_check` is the same tool run as a module.
 
 **Known gaps.** The Game 3 pilot is not a clean sine (a peak of -9.15 dBFS
 against a -12 dBFS sine-equivalent level, with 1-2 dB spikes about every 1.3 s

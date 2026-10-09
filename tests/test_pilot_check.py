@@ -61,6 +61,22 @@ class TestPilotCheck(unittest.TestCase):
         self.assertEqual(run.code, pilot_check.EXIT_FLAGGED)
         self.assertIn("could not be checked", run.out.getvalue())
 
+    def test_a_take_that_ended_early_exits_1(self):
+        entries = log_entries()
+        later = commanded(5, WALL.format(minute=4), 4.0, "fade", "out", 0, dm7.MINUS_INF)
+        second = plain(4, WALL.format(minute=3), "recording-started")
+        run = Run([*entries, second, later])
+        self.assertEqual(run.code, pilot_check.EXIT_FLAGGED)
+        self.assertIn("TAKE ENDED by seq 4", run.out.getvalue())
+        self.assertIn("could not be checked", run.out.getvalue())
+
+    def test_a_malformed_ramp_is_a_row_and_exit_1(self):
+        entries = log_entries()
+        bad = Entry(**{**entries[-1].as_dict(), "seq": 9, "data": {**entries[-1].data, "target": "x"}})
+        run = Run([*entries, bad])
+        self.assertEqual(run.code, pilot_check.EXIT_FLAGGED)
+        self.assertIn("not a console level", run.out.getvalue())
+
     def test_log_without_anchor_exits_2_and_names_take_start(self):
         run = Run(log_entries(anchored=False))
         self.assertEqual(run.code, pilot_check.EXIT_REFUSED)
