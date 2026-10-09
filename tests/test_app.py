@@ -10,7 +10,7 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, osc, prompts, reaper, state, taps, targets, web
+from tacet import dm7, mirror, moves, osc, prompts, reaper, state, taps, targets, web
 from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply, rolling_with_refresh
@@ -4773,6 +4773,289 @@ class TestTheBoxSaysWhatCodeItRuns(AppTestCase):
         app.log_box_started()
         self.log.flush()
         self.assertFalse(app.snapshot()["log"]["healthy"])
+
+
+class TestStopDeadline(unittest.TestCase):
+    """How long a stopping box waits for the move in flight (#44). Pure."""
+
+    @staticmethod
+    def move(kind: moves.MoveKind, *, started_at: float = 10.0, seconds: float = 2.0) -> moves.MoveDescription:
+        return moves.MoveDescription(
+            seq=1,
+            kind=kind,
+            by=None,
+            start=dm7.UNITY,
+            end=dm7.MINUS_INF,
+            seconds=seconds,
+            started_at=started_at,
+            floor=dm7.DEFAULT_FADE_FLOOR,
+            taper=None,
+        )
+
+    def test_a_fade_is_given_its_own_schedule_plus_the_margin(self):
+        move = self.move(moves.MoveKind.FADE)
+        self.assertEqual(move.ends_at, 12.0)
+        self.assertEqual(tacet_app.stop_deadline(move, margin=0.5), 12.5)
+
+    def test_a_ride_is_given_no_time_to_finish(self):
+        self.assertIsNone(tacet_app.stop_deadline(self.move(moves.MoveKind.RIDE), margin=0.5))
+
+    def test_nothing_moving_needs_no_wait(self):
+        self.assertIsNone(tacet_app.stop_deadline(None, margin=0.5))
+
+    def test_the_margin_is_short_next_to_a_fade(self):
+        self.assertGreater(tacet_app.STOP_LANDING_MARGIN_SECONDS, 0)
+        self.assertLess(tacet_app.STOP_LANDING_MARGIN_SECONDS, dm7.DEFAULT_FADE_SECONDS)
+
+
+class ClosableFakeSender(FakeSender):
+    def __init__(self):
+        super().__init__()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestStoppingTheBox(AppTestCase):
+    """The box starts no move on the way out (#44). A fade under way lands, a
+    ride stops where it is, and nothing is sent that the move had not planned."""
+
+    def moved(self, key):
+        return [e for e in self.entries() if e.event == key]
+
+    async def fade_in_flight(self, app):
+        await app.arm()
+        await app.trigger()
+        await app.release()
+
+    async def test_stopping_during_a_fade_lets_it_land(self):
+        app = self.build(fade=1.0)
+        await self.fade_in_flight(app)
+        await asyncio.sleep(UNDER_WAY)
+        landing = app.begin_stop()
+        self.assertIsNotNone(landing)
+        self.assertEqual(landing.kind, moves.MoveKind.FADE)
+        result = await app.finish_stop(abandon=asyncio.Event())
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        self.assertIn(tacet_app.MOVE_LANDED, self.keys())
+        self.assertNotIn(tacet_app.MOVE_ABANDONED, self.keys())
+        self.assertIsNone(result.abandoned)
+        self.assertEqual(result.kind, moves.MoveKind.FADE)
+
+    async def test_a_fade_landing_on_the_way_out_sends_only_the_steps_it_had_planned(self) -> None:
+        app = self.build(fade=1.0, steady=True)
+        await app.arm()
+        await app.trigger()
+        start = self.console.commanded_level
+        released = len(self.console_sender.packets)
+        await app.release()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        stopped_at = len(self.console_sender.packets)
+        app.begin_stop()
+        await app.finish_stop(abandon=asyncio.Event())
+        # The drive sends only the newest of the steps sharing an instant (a
+        # close's floor and its -inf, #40), so the plan is the newest level per
+        # offset. Counted from before the release: any extra packet anywhere in
+        # the stop path, a re-send or a new -inf, breaks the equality.
+        by_offset: dict[float, int] = {}
+        for offset, level in dm7.ramp_steps(start, dm7.MINUS_INF, 1.0, tick_hz=200.0):
+            by_offset[offset] = level
+        self.assertEqual(self.console_sender.levels()[released:], list(by_offset.values()))
+        self.assertLess(released, stopped_at)
+        self.assertLess(stopped_at, len(self.console_sender.packets))
+
+    async def test_every_packet_sent_while_stopping_is_a_fader_level_write(self):
+        address = "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3"
+        self.assertEqual(dm7.fader_address(3), address)
+        for case in ("fade", "ride"):
+            with self.subTest(case):
+                sender = FakeSender()
+                app = self.build(console_sender=sender, fade=0.3, steady=True)
+                app._slow_open_seconds = 5.0
+                await app.arm()
+                if case == "fade":
+                    await app.trigger()
+                    await app.release()
+                else:
+                    await app.annotate("up-slow")
+                for _ in range(3):
+                    await asyncio.sleep(0)
+                before = len(sender.packets)
+                app.begin_stop()
+                await app.finish_stop(abandon=asyncio.Event())
+                for packet in sender.packets[before:]:
+                    message = osc.decode_packet(packet)
+                    assert isinstance(message, osc.Message)
+                    self.assertEqual(message.address, address)
+                    self.assertEqual(len(message.args), 1)
+                    self.assertIsInstance(message.args[0], int)
+                self.assertNotIn(b"Fader/On", b"".join(sender.packets))
+                app.close_console()
+
+    async def test_no_ride_is_finished_on_the_way_out(self):
+        async def up_slow(app):
+            await app.arm()
+            await app.annotate("up-slow")
+
+        async def up_ready(app):
+            await app.arm()
+            await app.annotate("up-ready")
+
+        async def retarget(app):
+            await app.arm()
+            await app.trigger()
+            await app.set_target(-6.0)
+
+        for name, begin in (("up-slow", up_slow), ("up-ready", up_ready), ("retarget", retarget)):
+            with self.subTest(name):
+                self.console_sender.packets.clear()
+                app = self.build()
+                app._slow_open_seconds = 5.0
+                app._ready_ride_seconds = 5.0
+                app._retarget_ride_seconds = 5.0
+                await begin(app)
+                await asyncio.sleep(UNDER_WAY)
+                end = app._move.end
+                start = app._move.start
+                self.assertIsNone(app.begin_stop())
+                count = len(self.console_sender.packets)
+                await asyncio.sleep(SUPERSEDED_WAKES)
+                self.assertEqual(len(self.console_sender.packets), count)
+                level = self.console.commanded_level
+                self.assertTrue(min(start, end) < level < max(start, end))
+                abandoned = self.moved(tacet_app.MOVE_ABANDONED)[-1]
+                self.assertEqual(abandoned.data["kind"], "ride")
+                self.assertEqual(abandoned.data["because"], "ride")
+                self.assertEqual(abandoned.data["level"], level)
+                self.assertEqual(abandoned.data["target"], end)
+                self.assertNotIn(tacet_app.MOVE_LANDED, self.keys())
+                result = await app.finish_stop(abandon=asyncio.Event())
+                self.assertEqual(result.abandoned, tacet_app.AbandonedBecause.RIDE)
+                self.assertEqual(result.level, level)
+                self.assertEqual(len(self.console_sender.packets), count)
+
+    async def test_stopping_with_nothing_moving_sends_nothing(self):
+        for name in ("idle", "open"):
+            with self.subTest(name):
+                self.console_sender.packets.clear()
+                app = self.build()
+                await app.arm()
+                if name == "open":
+                    await app.trigger()
+                packets = len(self.console_sender.packets)
+                entries = len(self.entries())
+                self.assertIsNone(app.begin_stop())
+                result = await app.finish_stop(abandon=asyncio.Event())
+                self.assertEqual(len(self.console_sender.packets), packets)
+                self.assertEqual(len(self.entries()), entries)
+                self.assertIsNone(result.kind)
+                self.assertIsNone(result.abandoned)
+                self.assertEqual(result.level, self.console.commanded_level)
+
+    async def test_a_fade_that_misses_its_deadline_is_abandoned(self):
+        now = [100.0]
+        app = self.build(fade=10.0, monotonic=lambda: now[0])
+        await self.fade_in_flight(app)
+        await asyncio.sleep(UNDER_WAY)
+        app.begin_stop()
+        now[0] = app._move.ends_at + tacet_app.STOP_LANDING_MARGIN_SECONDS + 1.0
+        result = await asyncio.wait_for(app.finish_stop(abandon=asyncio.Event()), 1.0)
+        self.assertEqual(result.abandoned, tacet_app.AbandonedBecause.LATE)
+        count = len(self.console_sender.packets)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(len(self.console_sender.packets), count)
+        self.assertNotEqual(self.console.commanded_level, dm7.MINUS_INF)
+        abandoned = self.moved(tacet_app.MOVE_ABANDONED)
+        self.assertEqual(abandoned[-1].data["because"], "late")
+        self.assertEqual(abandoned[-1].data["kind"], "fade")
+
+    async def test_another_stop_signal_leaves_a_landing_fade_where_it_is(self):
+        app = self.build(fade=10.0)
+        await self.fade_in_flight(app)
+        abandon = asyncio.Event()
+        app.begin_stop()
+        task = asyncio.ensure_future(app.finish_stop(abandon=abandon))
+        await asyncio.sleep(UNDER_WAY)
+        abandon.set()
+        result = await asyncio.wait_for(task, 1.0)
+        self.assertEqual(result.abandoned, tacet_app.AbandonedBecause.INTERRUPTED)
+        count = len(self.console_sender.packets)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(len(self.console_sender.packets), count)
+        self.assertEqual(self.moved(tacet_app.MOVE_ABANDONED)[-1].data["because"], "interrupted")
+
+    async def test_a_cancelled_stop_still_logs_the_fade_it_abandoned(self):
+        app = self.build(fade=10.0)
+        await self.fade_in_flight(app)
+        app.begin_stop()
+        task = asyncio.ensure_future(app.finish_stop(abandon=asyncio.Event()))
+        await asyncio.sleep(UNDER_WAY)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        count = len(self.console_sender.packets)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(len(self.console_sender.packets), count)
+        self.assertEqual(self.moved(tacet_app.MOVE_ABANDONED)[-1].data["because"], "interrupted")
+
+    async def test_a_fade_that_fails_while_landing_is_a_failure_not_an_abandonment(self):
+        sender = FlakySender()
+        app = self.build(console_sender=sender, fade=1.0, steady=True)
+        await app.arm()
+        await app.trigger()
+        await app.release()
+        sender.fail_after = len(sender.packets) + 2
+        app.begin_stop()
+        result = await app.finish_stop(abandon=asyncio.Event())
+        self.assertIn(tacet_app.MOVE_FAILED, self.keys())
+        self.assertNotIn(tacet_app.MOVE_ABANDONED, self.keys())
+        self.assertIsNone(result.abandoned)
+        self.assertNotEqual(result.level, result.end)
+
+    async def test_a_landing_fade_still_completes_a_pending_stand_down(self):
+        app = self.build(fade=0.3)
+        await app.arm()
+        await app.trigger()
+        await app.stand_down()
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        app.begin_stop()
+        await app.finish_stop(abandon=asyncio.Event())
+        self.assertIn(tacet_app.STOOD_DOWN, self.keys())
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+
+    async def test_a_ride_started_after_begin_stop_is_abandoned_by_finish_stop(self):
+        app = self.build()
+        app._slow_open_seconds = 5.0
+        await app.arm()
+        self.assertIsNone(app.begin_stop())
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        result = await app.finish_stop(abandon=asyncio.Event())
+        self.assertEqual(result.abandoned, tacet_app.AbandonedBecause.RIDE)
+        count = len(self.console_sender.packets)
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(len(self.console_sender.packets), count)
+        self.assertEqual(self.moved(tacet_app.MOVE_ABANDONED)[-1].data["because"], "ride")
+
+    async def test_a_fade_that_lands_before_finish_stop_is_reported_as_landed(self):
+        app = self.build(fade=0.2)
+        await self.fade_in_flight(app)
+        self.assertIsNotNone(app.begin_stop())
+        await app.wait_for_fade()
+        result = await app.finish_stop(abandon=asyncio.Event())
+        self.assertEqual(result.kind, moves.MoveKind.FADE)
+        self.assertEqual(result.level, dm7.MINUS_INF)
+        self.assertIsNone(result.abandoned)
+
+    async def test_close_console_closes_the_sender(self):
+        sender = ClosableFakeSender()
+        app = self.build(console_sender=sender)
+        app.close_console()
+        self.assertTrue(sender.closed)
+        self.assertFalse(self.console.is_ramping)
 
 
 if __name__ == "__main__":

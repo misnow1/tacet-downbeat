@@ -4,7 +4,7 @@ What to build next, in order, and why. The issues hold the detail and the
 decisions; this page only holds the order, which otherwise lives in nobody's
 head but the last conversation's.
 
-**Last updated 2026-10-05.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
+**Last updated 2026-10-08.** Game 3 has been played and debriefed (`game-3.md`); the Game 4 order below comes from that review, and the paragraph that follows is the history up to Game 3. #13 is done: see its entry below. #5 is built (the pinned fader column, the fixed
 status strip and prompt slot, MAIN/MORE), right after #6 landed and gave it
 every button the column needed to know about. #89, #14 and #6 were already
 done. #12 closed too, but a post-merge review (2026-09-17) found it shipped
@@ -94,7 +94,7 @@ come first; the layout change lands early so the pre-game runthrough (about
 | ~~6~~ | ~~[#163](https://github.com/misnow1/tacet-downbeat/issues/163) Say why the record button is grey~~ (done); ~~[#172](https://github.com/misnow1/tacet-downbeat/issues/172) ask Reaper for its transport state~~ (done); ~~[#158](https://github.com/misnow1/tacet-downbeat/issues/158) write the anchor when Reaper starts recording~~ (done) | Done. The button is live on a parked Reaper and says why when grey; the box asks Reaper for its state; the anchor is Reaper's confirmation, whoever started the take. Game 3's timeline is intact from its playhead stamps (#180); only `markers.py` needs #159's synthetic anchor |
 | ~~7~~ | ~~[#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag~~ | Done. A `box-started` entry first in every run, a `code` banner row, and an amber chip on the page while the tree is dirty |
 | ~~8~~ | ~~[#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue~~ | Done, with #166 (Reaper OSC behaviour, the mirror toggle) |
-| 9 | [#44](https://github.com/misnow1/tacet-downbeat/issues/44) Stopping the box mid-fade leaves the fader at an arbitrary level | Console-side safety; being planned (2026-10-05) |
+| ~~9~~ | ~~[#44](https://github.com/misnow1/tacet-downbeat/issues/44) Stopping the box mid-fade leaves the fader at an arbitrary level~~ | Done. A confirmed stop starts no move, lets a fade land and leaves a ride where it is, and SIGTERM is handled |
 | 10 | [#73](https://github.com/misnow1/tacet-downbeat/issues/73) Check the console answers at startup and at arm | Console-side safety; being planned (2026-10-05) |
 
 Nice for Game 4: ~~[#156](https://github.com/misnow1/tacet-downbeat/issues/156)

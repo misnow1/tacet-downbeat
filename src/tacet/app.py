@@ -23,6 +23,7 @@ import enum
 import math
 import time
 from collections.abc import Callable, Coroutine, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from . import annotations as ann
@@ -59,6 +60,13 @@ COMMANDED = "commanded"
 #: the newer `commanded` entry records where the fader had got to (#50).
 MOVE_LANDED = "move-landed"
 MOVE_FAILED = "move-failed"
+#: A move the box left where it had got to because the box was stopping (#44).
+MOVE_ABANDONED = "move-abandoned"
+
+#: How much longer than its own schedule a fade in flight is given to land when
+#: the box stops (#44). The drive skips stale steps after a stall (#40), so a
+#: healthy fade finishes at its own `ends_at`; this only absorbs loop jitter.
+STOP_LANDING_MARGIN_SECONDS = 0.5
 #: A fader command that arrived too late to execute (#16).
 STALE_TAP = "stale-tap"
 #: `HANDED_OFF` is written for every accepted hand-off, including one made
@@ -82,6 +90,41 @@ STILL_MINE = "still-mine"
 #: took, never for a refused one, and it moves nothing: the entry is the only
 #: record of which level an open was meant to go to.
 TARGET_SET = "target-set"
+
+
+class AbandonedBecause(enum.StrEnum):
+    """Why the box, stopping, left a move where it had got to (#44)."""
+
+    #: A ride: the box never raises the fader after it has been told to stop.
+    RIDE = "ride"
+    #: A fade that had not landed by its deadline.
+    LATE = "late"
+    #: Another Ctrl-C or SIGTERM while the fade was landing, or the stop itself cancelled.
+    INTERRUPTED = "interrupted"
+
+
+@dataclass(frozen=True)
+class Stopped:
+    """What the last move did on the way out (#44). The terminal says it; the
+    log already has it."""
+
+    kind: moves.MoveKind | None  # None: nothing was moving
+    end: int | None  # where it was going; None when nothing was
+    level: int  # last commanded, console units
+    abandoned: AbandonedBecause | None  # None: it landed, failed, or nothing moved
+
+
+def stop_deadline(move: moves.MoveDescription | None, *, margin: float) -> float | None:
+    """When the box, stopping, stops waiting for the move in flight (#44). Pure.
+
+    A fade is let land, on its own schedule plus `margin`: the operator asked for
+    the close, and a half-finished one is neither open nor closed. A ride, or
+    nothing, gets None. A ride is never finished on the way out, since raising
+    the fader after being told to stop is a move nobody is watching.
+    """
+    if move is None or move.kind is not moves.MoveKind.FADE:
+        return None
+    return move.ends_at + margin
 
 
 class StoredOnly(enum.StrEnum):
@@ -281,6 +324,11 @@ class App:
         #: accepted tap replacing it, by any fader move, and by a state change.
         self._stored: tuple[int, StoredOnly] | None = None
         self._monotonic = monotonic
+        #: What `begin_stop` did to a ride, so `finish_stop` can still report it.
+        self._stopped: Stopped | None = None
+        #: The fade `begin_stop` left to land, so a fade that lands before
+        #: `finish_stop` looks is still reported as one.
+        self._landing: moves.MoveDescription | None = None
         self._stale_tap_seconds = stale_tap_seconds
         #: The last fader tap refused as stale, until the next command. Shown
         #: loudly: the operator tapped, nothing happened, and they have to
@@ -856,6 +904,90 @@ class App:
             return
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+    # -- stopping ---------------------------------------------------------
+
+    def begin_stop(self) -> moves.MoveDescription | None:
+        """The stop is confirmed (#44). Called from the signal handler, which
+        asyncio runs as an ordinary loop callback, so this may cancel and log.
+
+        A ride in flight is abandoned where it is, at once, not when the server
+        has finished hanging up. Returns the fade still landing, or None. Sends
+        nothing.
+        """
+        move = self._move
+        if move is None or self._move_task is None or self._move_task.done():
+            return None
+        if move.kind is moves.MoveKind.RIDE:
+            self._abandon_move(AbandonedBecause.RIDE)
+            return None
+        self._landing = move
+        return move
+
+    async def finish_stop(self, *, abandon: asyncio.Event, margin: float = STOP_LANDING_MARGIN_SECONDS) -> Stopped:
+        """The last thing before the console closes, after the page has hung up.
+
+        Abandons any ride (one could have started between `begin_stop` and the
+        server stopping), then waits for a fade until `stop_deadline` or until
+        `abandon` is set, whichever is first, and abandons it if it has not
+        landed. Never starts a move. If cancelled while waiting, abandons the
+        fade, logs it, and re-raises.
+
+        The state machine is not stepped on an abandonment: the process is
+        ending, and the next boot starts with the level unknown (#107).
+        """
+        task = self._move_task
+        move = self._move
+        if task is None or task.done() or move is None:
+            level = self._console.commanded_level
+            if self._stopped is not None:
+                return self._stopped
+            if self._landing is not None:
+                return Stopped(kind=self._landing.kind, end=self._landing.end, level=level, abandoned=None)
+            return Stopped(kind=None, end=None, level=level, abandoned=None)
+        deadline = stop_deadline(move, margin=margin)
+        if deadline is None:
+            return self._abandon_move(AbandonedBecause.RIDE)
+        timeout = max(0.0, deadline - self._monotonic())
+        waiter = asyncio.ensure_future(abandon.wait())
+        try:
+            await asyncio.wait({task, waiter}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            if not task.done():
+                self._abandon_move(AbandonedBecause.INTERRUPTED)
+            raise
+        finally:
+            waiter.cancel()
+        if task.done():
+            # The fade's own path has already written move-landed or
+            # move-failed and run FADE_COMPLETE.
+            return Stopped(kind=move.kind, end=move.end, level=self._console.commanded_level, abandoned=None)
+        return self._abandon_move(AbandonedBecause.INTERRUPTED if abandon.is_set() else AbandonedBecause.LATE)
+
+    def close_console(self) -> None:
+        """Close the console's socket. After `finish_stop`: nothing is sent after this."""
+        self._console.close()
+
+    def _abandon_move(self, because: AbandonedBecause) -> Stopped:
+        """Leave the move in flight where it has got to, and say so (#44).
+
+        Cancelled synchronously, the app task and the console's drive both, so
+        no further packet goes out: the drive is suspended at a sleep, and
+        `send_level` itself never yields. Recorded after the cancel, so `level`
+        is the last level really sent.
+        """
+        move = self._move
+        assert move is not None
+        self._cancel_move()
+        self._console.cancel_ramp()
+        self._record(
+            MOVE_ABANDONED,
+            data={**self._move_end(move.end), "kind": move.kind.value, "because": because.value},
+            project_seconds=self._playhead(),
+        )
+        self._stopped = Stopped(kind=move.kind, end=move.end, level=self._console.commanded_level, abandoned=because)
+        self._notify()
+        return self._stopped
 
     # -- annotation -------------------------------------------------------
 
