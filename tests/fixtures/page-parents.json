@@ -1,0 +1,17 @@
+{
+  "left": null,
+  "fader-column": null,
+  "tab-main": "left",
+  "tab-more": "left",
+  "tab-more-vocabulary": "tab-more",
+  "btn-handoff": "tab-more",
+  "handoff-confirm": "tab-more",
+  "btn-handoff-yes": "handoff-confirm",
+  "btn-handoff-no": "handoff-confirm",
+  "fader-top": "fader-column",
+  "fader-bottom": "fader-column",
+  "readout": "fader-column",
+  "belief": "readout",
+  "btn-close-now": "belief",
+  "btn-report-ready": "belief"
+}

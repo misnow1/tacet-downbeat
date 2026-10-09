@@ -95,9 +95,10 @@ come first; the layout change lands early so the pre-game runthrough (about
 | ~~7~~ | ~~[#157](https://github.com/misnow1/tacet-downbeat/issues/157) Log the running commit and dirty flag~~ | Done. A `box-started` entry first in every run, a `code` banner row, and an amber chip on the page while the tree is dirty |
 | 8 | [#151](https://github.com/misnow1/tacet-downbeat/issues/151), [#150](https://github.com/misnow1/tacet-downbeat/issues/150), [#152](https://github.com/misnow1/tacet-downbeat/issues/152) Docs: gameday checks, this review, the conductor's cue | Before the runthrough, so it runs from the updated runbook |
 
-Nice for Game 4: [#156](https://github.com/misnow1/tacet-downbeat/issues/156)
-(swipe, never from the fader column) and #73. #44 landed: a confirmed stop starts
-no move, lets a fade land and leaves a ride where it is, and SIGTERM is handled.
+Nice for Game 4: ~~[#156](https://github.com/misnow1/tacet-downbeat/issues/156)
+(swipe, never from the fader column)~~ (done) and #73. #44 landed: a confirmed
+stop starts no move, lets a fade land and leaves a ride where it is, and SIGTERM
+is handled.
 
 Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159)
 (Game 3 sidecar and pilot analysis, after #133). Game 5 or later:
