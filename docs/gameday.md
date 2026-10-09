@@ -66,6 +66,15 @@ StageMix**, so annotation continues. Assume the page's wifi link in the bowl is
 unreliable - it was at game 2. With both adapters wired, game 3's link held all
 game: median 23 ms from tap to box.
 
+**The box pings the console's address** once at startup, at every arm, and
+every 4 minutes for as long as it runs, armed or not (#73), or every 30 seconds while the last check found nothing there or could not run, so a cable put back clears the warning quickly. That keeps the
+laptop's ARP entry for the console from going cold across a long halftime
+(macOS forgets an idle one after 20 minutes, and the first fader move after it
+then waits on a fresh ARP exchange). It is a ping, never an OSC message, and it
+proves only that something is at the address: not that it is the DM7, not that
+the port is right, not that a fader move was taken. The fader is still
+"commanded, never confirmed".
+
 **Check anything multicast the week before, not on the day.** A switch port
 that snoops IGMP passes a multicast group only to a port that has joined it,
 and a passive capture never joins. Game 3's in-game capture of the console's
@@ -128,7 +137,9 @@ before game day.** If it has been updated anyway, re-run `verify_dm7`
 
 Check the config before leaving for the stadium: `tacet-serve --log
 ~/games/<YYYY-MM-DD>.jsonl --check` prints the banner or the refusal and starts
-nothing. See [box.md](box.md#checking-without-starting).
+nothing. It does send one ping to the console's address, so away from the
+stadium its `ping` row reads `nothing at this address (no ARP reply)`, which is
+expected there. See [box.md](box.md#checking-without-starting).
 
 ---
 
@@ -182,7 +193,10 @@ tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl
 ```
 
 A fresh `--log` every game, named for the date. Read the `code` row: a normal
-game says `main @ <commit>` and no WARNING. Read the banner's `queue` line
+game says `main @ <commit>` and no WARNING. Read the `ping` row under the
+console: `answered ping` is right. `nothing at this address (no ARP reply)` is a
+WARNING that the console IP is wrong, the cable is out or the console is off -
+fix it before kickoff; the box still runs. Read the banner's `queue` line
 against the path the ReaScript printed in step 2: **they must be the same
 path**, or everything looks healthy and nothing mirrors. A `WARNING` row or a
 refusal: [troubleshooting.md](troubleshooting.md#the-terminal).
@@ -217,6 +231,7 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 | Recording | `stopped`, tagged **confirmed**, with Start recording live (Reaper open, its audio device running): the box asks Reaper for its state when it first hears it. `unknown` tagged **not yet reported** means Reaper did not answer; Start recording is still live within five seconds. **no feedback** with the button grey means Reaper is not open, or its OSC device is not sending to the box: the line under the panel says so |
 | Top of the screen | Nothing. No banner is the healthy state |
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
+| Console chip, in the strip | Nothing. `Nothing answered at the console address at the last check` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
@@ -438,6 +453,17 @@ is a single write, because a 2 s fade would start from a level the box cannot
 trust. It cuts the band PA at once, so once the box knows the level use
 **Faded out**. **Stand down** is never refused either.
 
+**After a move in the DM7 app, the next tap is one that says where the fader
+is.** The box never sees an app move - the console cannot tell it - so it still
+believes its last command. **If you closed the DCA in the app, tap Close now,
+never Faded out.** Faded out ramps from that belief, and its first step puts the
+fader back there: at game 3 (seq 33, #159) a DCA already closed in the app
+jumped to 0 dB and then faded. Close now cuts nothing the app has not already
+cut, and leaves the box knowing the level. The same goes for any app move,
+raised or lowered: follow it with **Close now**, **Up on whistle** or **Up on
+drums**, which are absolute, and not with **Faded out**, **Score reversed**,
+**Up slow** or **Ready (band likely)**, which all ramp.
+
 **If you take the fader to StageMix**, tap **StageMix has it** in MORE first
 and confirm. The Yes / No confirmation appears directly under the button, in
 MORE; leaving MORE (by tap or swipe) before you answer cancels it and sends
@@ -486,8 +512,10 @@ recording nor the log depends on the page or the markers working.
 1. **Stop the recording in Reaper**, deliberately, and **keep the files** at
    the prompt ([why](reaper.md#one-recording-one-log-started-early)).
 2. Save the project.
-3. Stop `tacet-serve` with **Ctrl-C twice**. It never fades on the way out, and
-   stopping the box does not stop the recording.
+3. Stop `tacet-serve` with **Ctrl-C twice**. It starts no fader move on the way
+   out: a fade already under way is let land (no longer than the fade), and a
+   ride (up-slow, Ready, a target change) is stopped where it is. The terminal's last `fader:` line says
+   which. Stopping the box does not stop the recording.
 4. **Save the console file** (the DM7 show file) and put it with the
    recordings, with a line in the game notes on what changed in the mix and
    why. It is the only record of how the band PA was actually processed; at
@@ -524,4 +552,6 @@ lost again.
 | Main PA Output Dante out | `50` | Resolved at the 2026-09-30 runthrough (#145) |
 | Hype PA group numbers | `__ / __` | Band Group / everything else, both into Matrix 8. 17/18 or 37/38 - read them off the console and put them on the routing sheet (#145) |
 | Other existing Dante routes | `__________` | Any route nobody remembers, found while chasing the two above |
+| Console answers ping | `yes / no` | From the control VLAN: `ping -c 3 192.168.20.121`. If no, the `Console did not answer ping` note will be on all game, and that is its normal state, not a fault (#73). Until measured, treat the note as unexplained |
+| Console ARP reply time | `__ ms` | `sudo arp -d 192.168.20.121`, then `sudo tcpdump -i <control VLAN interface> arp` while tapping Close now. Says whether the 4-minute ping is worth microseconds or milliseconds (#73) |
 | Ring-out date | `__________` | Stands empty. The measurement `fader.max_target_db` comes from. The headroom is recorded (a hair over +3 dB) but the date it was measured is not; fill it in so the next person knows how old the number is, and re-ring if the rig has changed since |

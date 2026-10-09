@@ -205,6 +205,12 @@ CONFIRMED_BY_REAPER = "reaper"
 #: `tacet.app` before anything is served. Named once, like `ANCHOR_EVENT`.
 BOX_STARTED = "box-started"
 
+#: The box saying whether anything answered a ping at the console's address
+#: (#73). Written by `tacet.app`: startup and every arm always, a keepalive only
+#: when the result changed. Never a claim about the DM7, the port or a delivered
+#: move.
+CONSOLE_CHECKED = "console-checked"
+
 #: The three taps the box answers with a question (#19): the band entering the
 #: stands asks whether to arm, the band leaving them - or the halftime exodus
 #: starting - asks whether to stand down. Named once, like `ANCHOR_EVENT`, so
@@ -223,6 +229,10 @@ VOCABULARY: tuple[EventType, ...] = (
     # is running (#157). A restart mid-game leaves a SYS|box-started marker
     # where it happened.
     _instant(BOX_STARTED, "Box started", Category.SESSION, button=False),
+    # Written by the box. Startup and arm always; a keepalive only when the
+    # result changes, because it becomes a Reaper marker and one every four
+    # minutes saying "still answered" is clutter (#73).
+    _instant(CONSOLE_CHECKED, "Console address checked", Category.SESSION, button=False),
     _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),
     _instant(RECORD_REQUEST_EVENT, "Recording requested", Category.SESSION, button=False),
     _instant(FOUND_EVENT, "Recording found rolling", Category.SESSION, button=False),
@@ -351,6 +361,12 @@ VOCABULARY: tuple[EventType, ...] = (
     # Written by the box when a fade or ride-in sends its last step. Those run
     # on after their `commanded` entry, whose `delivered` is therefore null.
     _instant("move-landed", "Fader move landed", Category.FADER, button=False),
+    # Written by the box when it stops with a move still running and leaves the
+    # fader where that move had got to (#44): a ride is never finished on the way
+    # out, and a fade that does not land in time, or that the operator says to
+    # leave, is not either. `level` is the last level sent; `target` where it was
+    # going; `because` is ride, late or interrupted.
+    _instant("move-abandoned", "Fader move abandoned (box stopping)", Category.FADER, button=False),
     # Written by the box when a fader tap arrived too late to execute (#16). The
     # fader buttons in the grid log their own entry instead, marked stale.
     _instant("stale-tap", "Fader tap arrived late, not executed", Category.FADER, button=False),
