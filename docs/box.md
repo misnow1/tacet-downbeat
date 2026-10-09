@@ -332,6 +332,62 @@ recording**; Reaper is still rolling and is stopped in Reaper.
 
 ---
 
+## After the game: the pilot check
+
+`tacet-pilot-check` lays the box's log beside the `Pilot Reference` recording
+(the DCA reference channel, a tone the console scales with the fader) and flags
+any **ramp that started from a belief the pilot contradicts**: a fade that
+jumped the fader up at its first moment (the Game 3 blast, seq 33), a rise that
+dropped, or a belief the pilot simply disagrees with by more than 1.5 dB. It
+checks ramps only - `fade`, `ready`, `up-slow` and retarget rides - because a
+snap open and a close-now do not ramp from belief. It never touches the box or
+the console.
+
+```
+tacet-pilot-check GAME.jsonl "Reaper Media/<game>/Media/<Pilot Reference>.wav"
+```
+
+A log with no recording anchor needs the wall time the recording started, with
+a timezone. Game 3's log has none (#180), so:
+
+```
+tacet-pilot-check 20261002-pitt.jsonl "26-Pilot Reference-261002_1750.wav" \
+    --take-start 2026-10-02T21:50:42.45Z
+```
+
+`--take-start` only selects the entries written during the take; each entry's
+own `project_seconds` places it on the audio. It is refused if the log already
+has an anchor, and a naive time (no `Z` or offset) is rejected. The WAV is
+placed on the project timeline by its BWF time reference, so a file without a
+`bext` chunk is refused.
+
+**Reading it.** The header gives the calibration (`pilot = DCA -12.0 dB`,
+measured on the take's own snap opens from silence, with the lowest and highest
+so a step over the game shows) and how many ramps of each kind there were. Each
+flagged or unchecked ramp gets a row: sequence number, local and UTC time,
+project seconds, what the box believed, the pilot's median just before it (in
+DCA dB, `-inf` for closed), the peak (falling ramps) or minimum (rising) just
+after, and why. The last line is the verdict. "Unchecked" means the pilot does
+not cover the ramp or the entry has no project position; that is a gap, not a
+pass.
+
+**Exit codes.** `0` every ramp checked, none flagged. `1` something flagged or
+unchecked. `2` it could not run: no anchor (or two), unreadable log or WAV, no
+snap open to calibrate from, numpy missing, bad arguments.
+
+**Install.** It needs numpy, an optional extra kept off the box's control path:
+`make install` includes it; with a plain `pip install -e .` run
+`pip install -e '.[analysis]'`.
+
+**Known gaps.** The Game 3 pilot is not a clean sine (a peak of -9.15 dBFS
+against a -12 dBFS sine-equivalent level, with 1-2 dB spikes about every 1.3 s
+in the 10 ms envelope). That is fine for a 1.5 dB tolerance and not for a 0.6 dB
+measurement. A game split across several WAV files is not supported yet. With
+`--take-start`, a second recording anchor in the log ends the take, which is
+conservative.
+
+---
+
 ## Not yet proven
 
 Honest state of things, so nothing here reads as more settled than it is.

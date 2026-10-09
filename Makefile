@@ -12,7 +12,7 @@ venv:  ## Create the virtualenv (pyenv supplies the interpreter)
 
 install: venv  ## Install the project and its dev tooling
 	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -e ".[dev]"
+	$(PY) -m pip install -e ".[dev,analysis]"
 
 lint:  ## Ruff lint
 	$(VENV)/bin/ruff check .

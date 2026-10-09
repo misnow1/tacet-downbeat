@@ -502,6 +502,10 @@ recording nor the log depends on the page or the markers working.
    folder renames safely; leave the `.RPP`'s own name and the Reaper queue file
    alone. Keep the laptop copy until the NAS copy has opened in Reaper once.
 
+6. **Run the pilot check** on the laptop copy: `tacet-pilot-check <log> "<Pilot
+   Reference wav>"`. Exit 1 means copy the flagged rows into the game notes
+   ([how to read it](box.md#after-the-game-the-pilot-check)).
+
 Four streams have to end up on the NAS together (design.md 9): the DVS
 multitrack, the DCA reference (a pilot tone, not the band PA), the RTD capture,
 and the annotation log.
