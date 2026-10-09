@@ -438,6 +438,17 @@ is a single write, because a 2 s fade would start from a level the box cannot
 trust. It cuts the band PA at once, so once the box knows the level use
 **Faded out**. **Stand down** is never refused either.
 
+**After a move in the DM7 app, the next tap is one that says where the fader
+is.** The box never sees an app move - the console cannot tell it - so it still
+believes its last command. **If you closed the DCA in the app, tap Close now,
+never Faded out.** Faded out ramps from that belief, and its first step puts the
+fader back there: at game 3 (seq 33, #190) a DCA already closed in the app
+jumped to 0 dB and then faded. Close now cuts nothing the app has not already
+cut, and leaves the box knowing the level. The same goes for any app move,
+raised or lowered: follow it with **Close now**, **Up on whistle** or **Up on
+drums**, which are absolute, and not with **Faded out**, **Score reversed**,
+**Up slow, missed the start** or **Ready (band likely)**, which all ramp.
+
 **If you take the fader to StageMix**, tap **StageMix has it** in MORE first
 and confirm. The Yes / No confirmation appears directly under the button, in
 MORE; leaving MORE (by tap or swipe) before you answer cancels it and sends
