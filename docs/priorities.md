@@ -97,8 +97,8 @@ come first; the layout change lands early so the pre-game runthrough (about
 | 9 | [#44](https://github.com/misnow1/tacet-downbeat/issues/44) Stopping the box mid-fade leaves the fader at an arbitrary level | Console-side safety; being planned (2026-10-05) |
 | 10 | [#73](https://github.com/misnow1/tacet-downbeat/issues/73) Check the console answers at startup and at arm | Console-side safety; being planned (2026-10-05) |
 
-Nice for Game 4: [#156](https://github.com/misnow1/tacet-downbeat/issues/156)
-(swipe, never from the fader column) and
+Nice for Game 4: ~~[#156](https://github.com/misnow1/tacet-downbeat/issues/156)
+(swipe, never from the fader column)~~ (done) and
 [#135](https://github.com/misnow1/tacet-downbeat/issues/135) (the `fader.target`
 rename, unblocked by #128).
 
