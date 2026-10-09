@@ -143,6 +143,25 @@ expected there. See [box.md](box.md#checking-without-starting).
 
 ---
 
+## The box: update before the game
+
+In the days before each game, and before the runthrough so the runthrough runs
+the code the game will, bring the box up to date. Not on the day: a failed
+install then leaves no time, and [A fix on the day](#a-fix-on-the-day) is the
+exception path. In the box's main checkout (not a worktree):
+
+```
+git switch main
+git pull --ff-only  # the main checkout carries no local commits; this refuses if it does
+make install        # new dependencies and commands (#193 added tacet-pilot-check)
+make check          # green, or the game does not run this commit
+```
+
+At startup the banner's `code` row should read `main @ <that commit>` with no
+`uncommitted changes`; see [box.md](box.md#starting-it).
+
+---
+
 ## Starting up, in order
 
 Order matters in two places: the mirror script before the box, and the queue

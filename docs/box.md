@@ -19,6 +19,8 @@ cp tacet.toml.example tacet.toml
 $EDITOR tacet.toml  # console IP, DCA, queue path -- the site values in gameday.md
 ```
 
+Before each game, update it: [gameday.md](gameday.md#the-box-update-before-the-game).
+
 ---
 
 ## tacet.toml
@@ -424,7 +426,8 @@ snap open to calibrate from, numpy missing, bad arguments.
 **Install.** It needs numpy, an optional extra kept off the box's control path:
 `make install` includes it; with a plain `pip install -e .` run
 `pip install -e '.[analysis]'`. A box installed before this change has no
-`tacet-pilot-check` command until `make install` is run once more after pulling;
+`tacet-pilot-check` command until `make install` is run once more after pulling
+([gameday.md](gameday.md#the-box-update-before-the-game));
 `python -m tacet.pilot_check` is the same tool run as a module.
 
 **Known gaps.** The Game 3 pilot is not a clean sine (a peak of -9.15 dBFS
