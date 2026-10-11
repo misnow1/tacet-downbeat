@@ -99,8 +99,9 @@ come first; the layout change lands early so the pre-game runthrough (about
 
 Nice for Game 4: ~~[#156](https://github.com/misnow1/tacet-downbeat/issues/156)
 (swipe, never from the fader column)~~ (done) and
-[#135](https://github.com/misnow1/tacet-downbeat/issues/135) (the `fader.target`
-rename, unblocked by #128).
+~~[#135](https://github.com/misnow1/tacet-downbeat/issues/135) (the `fader.target`
+rename, unblocked by #128)~~ (done: removed rather than renamed;
+`fader.move.to_db` carries it).
 
 Not gating any game: [#159](https://github.com/misnow1/tacet-downbeat/issues/159)
 (Game 3 sidecar and pilot analysis, after #133). Game 5 or later:

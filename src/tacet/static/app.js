@@ -303,30 +303,30 @@ function renderButtons(buttons, orphans) {
 
 // -- the standing target level (#9) ---------------------------------------------
 //
-// Two things in a snapshot are called a target, and they are not the same.
-// `snapshot.target` is the STANDING setting: the level the next open goes to and
-// the READY hold is measured from. It is what this section shows (the chip in
-// the strip) and changes (the segments in MORE > Target level). A tap stores
-// the value always, and rides the fader there while it is up (#128). When it
-// only stored while the fader is up the box says so and why
-// (`snapshot.target.stored`), the page words that under the segments, and the
-// box clears it (a later tap, a fader move, a state change). While the fader is
-// closed the box sends null: storing is what the operator expects there, so
-// there is no note (#153). The segments are greyed in place while the level is
-// unknown and the fader is up, because a ride from an unknown level would be a
-// guess (#107), and the selected one wears the fading colour until the box says
-// the ride landed (#154's landed-only rule; `fadingKey` ends only on a snapshot
-// without `fader.move`). `snapshot.fader.target` is where a move
-// already in flight is heading, null when nothing is moving; the fader readout
-// below draws that as the arrow in "-10.00 dB -> 0.00 dB" (from `fader.move`
-// since #154, which carries the same destination). A move in flight can
-// head somewhere other than the standing target: a ride that began before a
-// change keeps going to its old destination, and Ready's own ride goes to its
-// hold level (target - hold_below_db), never to the target. While that lasts
-// the two disagree, and the chip says "(next open)" rather than let the readout
-// and the chip seem to contradict each other. That is deliberate for Ready even
-// when nothing was changed. A fade's destination is -inf, which is not a
-// competing target, so it adds nothing to the chip.
+// `snapshot.target` is the STANDING setting, and the only thing in a snapshot
+// called a target: the level the next open goes to and the READY hold is
+// measured from. It is what this section shows (the chip in the strip) and
+// changes (the segments in MORE > Target level). A tap stores the value always,
+// and rides the fader there while it is up (#128). When it only stored while
+// the fader is up the box says so and why (`snapshot.target.stored`), the page
+// words that under the segments, and the box clears it (a later tap, a fader
+// move, a state change). While the fader is closed the box sends null: storing
+// is what the operator expects there, so there is no note (#153). The segments
+// are greyed in place while the level is unknown and the fader is up, because a
+// ride from an unknown level would be a guess (#107), and the selected one wears
+// the fading colour until the box says the ride landed (#154's landed-only rule;
+// `fadingKey` ends only on a snapshot without `fader.move`). Where a move
+// already in flight is heading is `fader.move.to_db` (#154; null for a fade's
+// -inf), and the fader readout below draws it as the arrow in "-10.00 dB ->
+// 0.00 dB". Until #135 the fader block carried it again as `fader.target`,
+// which was easy to mistake for this. A move in flight can head somewhere other
+// than the standing target: Ready's own ride goes to its hold level (target -
+// hold_below_db), never to the target, and a target tap retargets any other
+// ride (#128). While that lasts the two disagree, and the chip says "(next
+// open)" rather than let the readout and the chip seem to contradict each
+// other. That is deliberate for Ready even when nothing was changed. A fade's
+// destination is -inf, which is not a competing target, so it adds nothing to
+// the chip.
 //
 // Taps here leave the operator on MORE (#109) like every other tap in it. The
 // selected segment is painted from the snapshot on every render and never
@@ -419,7 +419,9 @@ function renderTargetControl(target, fader, stateName) {
 
 function paintTarget(target, fader, stateName) {
   // A ride to somewhere other than the standing target, and not a fade.
-  const ridingElsewhere = fader.target !== null && fader.target_db !== null && fader.target !== target.level;
+  // A fade's to_db is null (-inf), which is not a competing target.
+  const move = fader.move;
+  const ridingElsewhere = Boolean(move) && move.to_db !== null && move.to_db !== target.db;
   const stored = target.stored || null;
   const nextOpenOnly = ridingElsewhere || (stored !== null && STORED_ATTENTION.has(stored.because));
   const chip = $("target-level");

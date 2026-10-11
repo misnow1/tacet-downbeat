@@ -231,9 +231,7 @@
       "to_db": -3.0
     },
     "moving": true,
-    "sent_at": 5000.02,
-    "target": -300,
-    "target_db": -3.0
+    "sent_at": 5000.02
   },
   "log": {
     "error": null,

@@ -218,9 +218,7 @@
     "level_known": false,
     "move": null,
     "moving": false,
-    "sent_at": null,
-    "target": null,
-    "target_db": null
+    "sent_at": null
   },
   "log": {
     "error": null,
