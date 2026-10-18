@@ -182,6 +182,37 @@ class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
             self.assertNotIn("reach", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
+class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
+    """`tacet.rtd` is not control path, but the live reader (#95) will import it.
+
+    It is pure: bytes in, fields out. No socket, no file, no clock, and nothing
+    outside the standard library, so the live reader can use it without
+    reopening the dependency question. `pcap` and `rtd_replay` are the offline
+    shell around it and are stdlib only for the same reason.
+    """
+
+    #: Ways a decoder would acquire I/O or a clock.
+    RTD_FORBIDDEN = frozenset(
+        {"socket", "asyncio", "selectors", "os", "pathlib", "io", "time", "datetime", "subprocess"}
+    )
+
+    def test_rtd_pcap_and_replay_import_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for name in ("rtd", "pcap", "rtd_replay"):
+            for module in _imported_top_level_modules(PACKAGE_ROOT / f"{name}.py"):
+                self.assertIn(module, allowed, f"tacet.{name} imports {module!r}, which is not in the standard library")
+
+    def test_rtd_does_no_io_and_keeps_no_clock(self):
+        imported = _imported_top_level_modules(PACKAGE_ROOT / "rtd.py")
+        self.assertEqual(imported & self.RTD_FORBIDDEN, set())
+
+    def test_rtd_imports_no_other_tacet_module(self):
+        self.assertEqual(_imported_tacet_modules(PACKAGE_ROOT / "rtd.py"), set())
+
+    def test_rtd_is_not_on_the_control_path(self):
+        self.assertNotIn("rtd", CONTROL_PATH)
+
+
 #: The modules allowed to import numpy: offline analysis, never the box (#191).
 NUMPY_MODULES = ("pilot",)
 
