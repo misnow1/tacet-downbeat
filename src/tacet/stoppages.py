@@ -8,9 +8,8 @@ A stoppage is the time the play clock is not counting down. Game 4 showed that
 this is not one value: an injury timeout reads as the clock reset to 40 and
 held, a stoppage after a change of possession (15:47) as 40 held and then 25
 held, and the away timeout and halftime as a countdown that froze at 25 by
-ticking 26 -> 25 with no reset. So
-any value counts, and what ends the hold is the same everywhere: the clock
-counting down again, which is ready-for-play.
+ticking 26 -> 25 with no reset. So any value counts, and what ends the hold is
+the same everywhere: the clock counting down again, which is ready-for-play.
 
 After every play the board resets to 40 and waits, up to 14.5 s in game 4,
 before it ticks. That is ordinary and is shorter than `MIN_HOLD_SECONDS`.

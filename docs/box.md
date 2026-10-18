@@ -517,8 +517,9 @@ tacet-timeouts GAME.jsonl GAME.pcap --write    # append the proposals to the sid
 least 20 s. Game 4 showed that it is not only 25: an injury timeout is the clock
 reset to 40 and held, a stoppage after a change of possession (15:47) is 40
 held and then 25 held, and the away timeout and halftime are a countdown that
-froze at 25 by ticking 26 to 25 with no reset. After a play the board resets to 40 and waits, up to 14.5 s in game 4,
-before it ticks; that is ordinary and is under the 20 s. A hold starts at the
+froze at 25 by ticking 26 to 25 with no reset. After a play the board resets
+to 40 and waits, up to 14.5 s in game 4, before it ticks; that is ordinary and
+is under the 20 s. A hold starts at the
 end-of-play reset (or admin set) when there is one, and at the last tick when
 the countdown just froze; it ends at the first tick, which is ready-for-play, at
 most one tick late. The main clock is not read: it stops for every incomplete
