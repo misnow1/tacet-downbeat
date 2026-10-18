@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -9,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from tacet import rtd, rtd_replay
+from tacet.datagram import Datagram, Skip
 
 from . import pcap_capture as cap
 from . import rtd_frames as real
@@ -20,7 +22,7 @@ OTHER_PORT = 9999
 
 
 def datagram(time: float, payload: bytes, *, source: str = SOURCE_30, port: int = rtd_replay.DEFAULT_PORT):
-    return rtd_replay.Datagram(time, source, port, port, payload)
+    return Datagram(time, source, port, port, payload)
 
 
 def feed_all(items, **kwargs) -> tuple[rtd_replay.Replay, list[rtd_replay.Event]]:
@@ -142,9 +144,9 @@ class TestEvents(unittest.TestCase):
         self.assertEqual((replay.summary.other_port, replay.summary.rtd_datagrams), (1, 0))
 
     def test_skips_counted_by_reason(self):
-        replay, events = feed_all([rtd_replay.Skip.NOT_IPV4, rtd_replay.Skip.NOT_IPV4, rtd_replay.Skip.FRAGMENT])
+        replay, events = feed_all([Skip.NOT_IPV4, Skip.NOT_IPV4, Skip.FRAGMENT])
         self.assertEqual(events, [])
-        self.assertEqual(replay.summary.skipped, {rtd_replay.Skip.NOT_IPV4: 2, rtd_replay.Skip.FRAGMENT: 1})
+        self.assertEqual(replay.summary.skipped, {Skip.NOT_IPV4: 2, Skip.FRAGMENT: 1})
         self.assertEqual(replay.summary.packets, 3)
 
     def test_other_frame_types_are_counted_not_applied(self):
@@ -172,7 +174,7 @@ class TestSummary(unittest.TestCase):
             datagram(START, real.PREGAME_FULL, source=SOURCE_30),
             datagram(START + 60, real.TIME_OF_DAY, source=SOURCE_26),
             datagram(START + 61, real.frame(39, "x", checksum=b"00"), source=SOURCE_26),
-            rtd_replay.Skip.NOT_IPV4,
+            Skip.NOT_IPV4,
         ]
         replay, _ = feed_all(items)
         text = rtd_replay.render_summary(replay.summary, replay.display.snapshot(), "game.pcap")
@@ -335,6 +337,23 @@ class TestCommand(unittest.TestCase):
             path.write_bytes(clean_capture(real.TIME_OF_DAY))
             code = rtd_replay.main([str(path)], out=ClosedPipe(), err=io.StringIO())
         self.assertEqual(code, rtd_replay.EXIT_CLEAN)
+
+    def test_runs_as_a_module(self):
+        # Run as -m the module is __main__, and a second copy of it is imported as
+        # tacet.rtd_replay. The ARP frame is what shows a Skip from the wrong copy.
+        arp = cap.ethernet(b"\x00" * 28, ethertype=cap.ETHERTYPE_ARP)
+        records = [cap.record(START, cap.rtd_packet(real.TIME_OF_DAY)), cap.record(START + 1, arp)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "game.pcap"
+            path.write_bytes(cap.pcap_bytes(records))
+            result = subprocess.run(
+                [sys.executable, "-m", "tacet.rtd_replay", str(path), "--summary"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("not-ipv4 1", result.stdout)
 
     def test_console_script_is_declared(self):
         project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))

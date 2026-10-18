@@ -198,13 +198,21 @@ class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
 
     def test_rtd_and_replay_import_only_the_standard_library(self):
         allowed = sys.stdlib_module_names | {"tacet"}
-        for name in ("rtd", "rtd_replay"):
+        for name in ("rtd", "rtd_replay", "datagram"):
             for module in _imported_top_level_modules(PACKAGE_ROOT / f"{name}.py"):
                 self.assertIn(module, allowed, f"tacet.{name} imports {module!r}, which is not in the standard library")
 
     def test_rtd_does_no_io_and_keeps_no_clock(self):
         imported = _imported_top_level_modules(PACKAGE_ROOT / "rtd.py")
         self.assertEqual(imported & self.RTD_FORBIDDEN, set())
+
+    def test_datagram_does_no_io_and_keeps_no_clock(self):
+        imported = _imported_top_level_modules(PACKAGE_ROOT / "datagram.py")
+        self.assertEqual(imported & self.RTD_FORBIDDEN, set())
+
+    def test_pcap_does_not_import_the_replay(self):
+        # The replay may run as __main__; importing it back makes a second copy and a second Skip.
+        self.assertNotIn("rtd_replay", _imported_tacet_modules(PACKAGE_ROOT / "pcap.py"))
 
     def test_rtd_imports_no_other_tacet_module(self):
         self.assertEqual(_imported_tacet_modules(PACKAGE_ROOT / "rtd.py"), set())

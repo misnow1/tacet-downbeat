@@ -2,7 +2,7 @@ import io
 import unittest
 
 from tacet import pcap
-from tacet.rtd_replay import Datagram, Skip
+from tacet.datagram import Datagram, Skip
 
 from . import pcap_capture as cap
 from . import rtd_frames as real
@@ -56,6 +56,11 @@ class TestDecodeFrame(unittest.TestCase):
 
     def test_malformed_short_frame_skipped(self):
         self.assertIs(decode(b"\x00" * 13), Skip.MALFORMED)
+
+    def test_a_short_mpls_frame_is_malformed_not_an_exception(self):
+        # dpkt raises IndexError on this one, not UnpackError.
+        data = bytes.fromhex("ffffffffffff92ed636c905a884745000a96f51f600040118371c0a8001effffffff")
+        self.assertIs(decode(data), Skip.MALFORMED)
 
     def test_an_ip_header_cut_short_counts_as_not_ipv4(self):
         # dpkt hands back the bytes undecoded, which this adapter cannot tell from a

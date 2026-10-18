@@ -29,7 +29,7 @@ import dpkt.sll
 import dpkt.sll2
 import dpkt.udp
 
-from .rtd_replay import Datagram, Skip
+from .datagram import Datagram, Skip
 
 #: The top bits of the link type field carry FCS information, not the link type.
 LINKTYPE_MASK = 0xFFFF
@@ -57,7 +57,8 @@ def decode_frame(linktype: int, time: float, frame: bytes) -> Datagram | Skip:
     """The UDP datagram in one captured frame, or why there is not one."""
     try:
         link = _LINK_DECODERS[linktype](frame)
-    except (dpkt.UnpackError, KeyError):
+    except (dpkt.UnpackError, KeyError, IndexError):
+        # dpkt indexes into an empty buffer on some short frames (an MPLS ethertype with no body).
         return Skip.MALFORMED
     ip = link.data
     # An IPv4 header dpkt could not parse arrives as raw bytes and is counted here too.

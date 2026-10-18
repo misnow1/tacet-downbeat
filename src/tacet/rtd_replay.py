@@ -30,7 +30,6 @@ Gap detection lives here and not in `tacet.rtd`, which keeps no clock.
 from __future__ import annotations
 
 import argparse
-import enum
 import json
 import os
 import sys
@@ -42,6 +41,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import rtd
+from .datagram import Datagram, Skip
 
 DPKT_MODULE = "dpkt"
 DPKT_HINT = "tacet-rtd needs dpkt: pip install -e '.[analysis]'"
@@ -61,27 +61,6 @@ SECONDS_DECIMALS = 3
 INDENT = "  "
 NONE_WORD = "none"
 NEVER_WRITTEN = "never written"
-
-
-class Skip(enum.Enum):
-    """Why a captured frame yielded no datagram.
-
-    NOT_IPV4 also covers an IPv4 header that could not be parsed.
-    """
-
-    NOT_IPV4 = "not-ipv4"
-    NOT_UDP = "not-udp"
-    FRAGMENT = "fragment"
-    MALFORMED = "malformed"
-
-
-@dataclass(frozen=True)
-class Datagram:
-    time: float
-    source: str
-    source_port: int
-    dest_port: int
-    payload: bytes
 
 
 @dataclass(frozen=True)
