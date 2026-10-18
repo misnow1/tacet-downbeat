@@ -408,6 +408,10 @@ class TestRender(unittest.TestCase):
         self.assertIn("1 already in", self.text(again))
         self.assertNotIn("--write", self.text(again))
 
+    def test_the_header_names_the_zone_it_prints_in(self):
+        report = build(span(1, 2, "timeout", 12, 200), hold(10, 80))
+        self.assertIn("(UTC)", self.text(report))
+
     def test_times_are_in_the_zone_given(self):
         from datetime import timedelta, timezone
 

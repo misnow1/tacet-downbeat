@@ -472,7 +472,7 @@ def _header(report: Report, tz: tzinfo | None) -> list[str]:
     open_spans = sum(1 for t in taps.timeouts if t.end is None)
     first, last = summary.first_time, summary.last_time
     window = NOT_APPLICABLE if first is None or last is None else _span_text(first, last, tz)
-    zone = NOT_APPLICABLE if first is None else datetime.fromtimestamp(first, tz).tzname()
+    zone = NOT_APPLICABLE if first is None else datetime.fromtimestamp(first, tz).astimezone(tz).tzname()
     lines = [
         f"log: {_ascii(report.log.name)}",
         f"{INDENT}{_plural(len(taps.timeouts), 'timeout span')}, {open_spans} open, "
