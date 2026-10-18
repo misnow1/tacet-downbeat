@@ -165,6 +165,16 @@ class TestRejected(unittest.TestCase):
         self.assertIn("project_seconds", self.rejects(self.add_line().replace('"r"', '"r", "project_seconds": NaN')))
         self.assertIn("data", self.rejects(self.add_line(data=[])))
 
+    def test_a_supersede_cannot_be_built_with_nothing_to_put_in_place(self):
+        with self.assertRaises(CorrectionsError):
+            supersede(wall=None)
+
+    def test_an_add_cannot_be_built_against_the_span_rules(self):
+        with self.assertRaises(CorrectionsError):
+            add_end(phase=None)
+        with self.assertRaises(CorrectionsError):
+            add_end(event="touchdown")
+
     def test_each_class_refuses_the_other_action(self):
         with self.assertRaises(CorrectionsError):
             Supersede.from_json(add_end().to_json())

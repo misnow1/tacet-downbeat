@@ -6,8 +6,9 @@ every rule here is tested with events built by hand.
 
 A stoppage is the time the play clock is not counting down. Game 4 showed that
 this is not one value: an injury timeout reads as the clock reset to 40 and
-held, a team timeout as 40 held and then 25 held, and the away timeout and
-halftime as a countdown that froze at 25 by ticking 26 -> 25 with no reset. So
+held, a stoppage after a change of possession (15:47) as 40 held and then 25
+held, and the away timeout and halftime as a countdown that froze at 25 by
+ticking 26 -> 25 with no reset. So
 any value counts, and what ends the hold is the same everywhere: the clock
 counting down again, which is ready-for-play.
 
@@ -20,7 +21,7 @@ says nothing about a timeout.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -54,6 +55,10 @@ class Doubt(StrEnum):
     #: A gap in the capture touches the hold, so it may have begun or ended unseen.
     INTERRUPTED = "interrupted"
     TOO_LONG = "too-long"
+
+
+#: The fields that count a team's timeouts left; the `_COPY` fields are ignored.
+TIMEOUT_FIELDS: Mapping[rtd.Field, Team] = {rtd.HOME_TIMEOUTS: Team.HOME, rtd.GUEST_TIMEOUTS: Team.GUEST}
 
 
 @dataclass(frozen=True)
@@ -91,8 +96,8 @@ class Scan:
     open_hold_since: float | None
 
 
-def play_clock_seconds(raw: str | None) -> int | None:
-    """The play clock's number, or None for a blank or anything that is not a count."""
+def count_of(raw: str | None) -> int | None:
+    """A play clock or timeouts-left value as a number, or None for a blank or anything that is not a count."""
     if raw is None:
         return None
     text = raw.strip()
@@ -100,15 +105,14 @@ def play_clock_seconds(raw: str | None) -> int | None:
 
 
 def _is_tick(old: str | None, new: str) -> bool:
-    before, after = play_clock_seconds(old), play_clock_seconds(new)
+    before, after = count_of(old), count_of(new)
     return before is not None and after is not None and after == before - COUNTDOWN_STEP
 
 
 def _team_of(change: rtd.FieldChange) -> Team | None:
     """Which team's timeouts-left this changes, if it went down between two numbers."""
-    teams = {rtd.HOME_TIMEOUTS: Team.HOME, rtd.GUEST_TIMEOUTS: Team.GUEST}
-    team = teams.get(change.field)
-    before, after = play_clock_seconds(change.old), play_clock_seconds(change.new)
+    team = TIMEOUT_FIELDS.get(change.field)
+    before, after = count_of(change.old), count_of(change.new)
     if team is None or before is None or after is None or after >= before:
         return None
     return team

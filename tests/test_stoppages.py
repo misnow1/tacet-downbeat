@@ -39,11 +39,11 @@ class TestPlayClockText(unittest.TestCase):
         self.assertIn(clock_text(39).encode("ascii"), real.PLAY_CLOCK_39)
 
     def test_numbers_blanks_and_junk(self):
-        self.assertEqual(stoppages.play_clock_seconds("   39   "), 39)
-        self.assertEqual(stoppages.play_clock_seconds("    0   "), 0)
-        self.assertIsNone(stoppages.play_clock_seconds("        "))
-        self.assertIsNone(stoppages.play_clock_seconds("   --   "))
-        self.assertIsNone(stoppages.play_clock_seconds(None))
+        self.assertEqual(stoppages.count_of("   39   "), 39)
+        self.assertEqual(stoppages.count_of("    0   "), 0)
+        self.assertIsNone(stoppages.count_of("        "))
+        self.assertIsNone(stoppages.count_of("   --   "))
+        self.assertIsNone(stoppages.count_of(None))
 
 
 class TestTheHoldRule(unittest.TestCase):

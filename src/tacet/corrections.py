@@ -68,6 +68,9 @@ SIDECAR_SUFFIX = ".corrections.jsonl"
 ACTION_SUPERSEDE = "supersede"
 ACTION_ADD = "add"
 ACTIONS = (ACTION_SUPERSEDE, ACTION_ADD)
+#: The parts of an entry a supersede can replace, as `targets` names them.
+PART_WALL = "wall"
+PART_EVENT = "event"
 
 _ENCODING = "utf-8"
 _LINE_TERMINATOR = "\n"
@@ -91,6 +94,9 @@ class Supersede:
     wall: str | None = None
     event: str | None = None
     evidence: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        _check_supersede(self.as_dict())
 
     def as_dict(self) -> dict[str, Any]:
         return _present(
@@ -128,6 +134,9 @@ class Add:
     project_seconds: float | None = None
     data: Mapping[str, Any] | None = None
     evidence: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        _check_add(self.as_dict())
 
     def as_dict(self) -> dict[str, Any]:
         return _present(
@@ -273,7 +282,10 @@ def _check_supersede(raw: dict[str, Any]) -> None:
 
 
 def _check_add(raw: dict[str, Any]) -> None:
-    is_span = ann.EVENTS[raw["event"]].kind is ann.Kind.SPAN
+    known = ann.EVENTS.get(raw["event"])
+    if known is None:
+        raise CorrectionsError(f"{raw['event']!r} is not in the event vocabulary")
+    is_span = known.kind is ann.Kind.SPAN
     for name in ("phase", "span_id"):
         if is_span and name not in raw:
             raise CorrectionsError(f"{raw['event']!r} is a span, so an add needs {name!r}")
@@ -341,9 +353,9 @@ def targets(correction: Correction) -> tuple[Target, ...]:
     """The parts of the log a correction speaks for."""
     if isinstance(correction, Add):
         which: int | str = correction.span_id if correction.span_id is not None else correction.event
-        return (("add", which, correction.phase or correction.wall),)
-    parts = (("wall", correction.wall), ("event", correction.event))
-    return tuple(("supersede", correction.seq, name) for name, value in parts if value is not None)
+        return ((ACTION_ADD, which, correction.phase or correction.wall),)
+    parts = ((PART_WALL, correction.wall), (PART_EVENT, correction.event))
+    return tuple((ACTION_SUPERSEDE, correction.seq, name) for name, value in parts if value is not None)
 
 
 def unrecorded(
