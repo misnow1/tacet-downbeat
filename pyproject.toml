@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Offline analysis only (tacet-pilot-check, #191; tacet-rtd, #210). The box never
+# Offline analysis only (tacet-pilot-check, #191; tacet-rtd, #210; tacet-timeouts, #205). The box never
 # imports numpy or dpkt, so a plain `pip install -e .` there stays as small as
 # it was; `make install` includes this. tests/test_dependency_policy.py keeps it
 # that way.
@@ -44,6 +44,7 @@ tacet-verify-reaper = "tacet.verify_reaper:main"
 tacet-verify-dm7 = "tacet.verify_dm7:main"
 tacet-pilot-check = "tacet.pilot_check:main"
 tacet-rtd = "tacet.rtd_replay:main"
+tacet-timeouts = "tacet.timeouts:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tacet"]
