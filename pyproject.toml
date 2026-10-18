@@ -22,11 +22,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Offline analysis only (tacet-pilot-check, #191). The box never imports numpy,
-# so a plain `pip install -e .` there stays as small as it was; `make install`
+# Offline analysis only (tacet-pilot-check, #191; tacet-rtd, #210). The box never
+# imports numpy or dpkt, so a plain `pip install -e .` there stays as small as it was; `make install`
 # includes this. tests/test_dependency_policy.py keeps it that way.
 analysis = [
   "numpy>=2.2,<3",  # post-game pilot envelope; never on the control path
+  "dpkt>=1.9.8,<2",  # pcap/pcapng reader for tacet-rtd (#210); never on the control path
 ]
 dev = [
   "ruff>=0.6",
@@ -98,6 +99,11 @@ module = "tests.*"
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+# dpkt ships no type information; only tacet.pcap (and its tests) touch it, and pcap converts every value it returns.
+module = ["dpkt", "dpkt.*"]
+ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
 # pytest
