@@ -515,9 +515,9 @@ tacet-timeouts GAME.jsonl GAME.pcap --write    # append the proposals to the sid
 
 **A hold** is the time the play clock is not counting down, at any value, for at
 least 20 s. Game 4 showed that it is not only 25: an injury timeout is the clock
-reset to 40 and held, a team timeout is 40 held and then 25 held, and the away
-timeout and halftime are a countdown that froze at 25 by ticking 26 to 25 with
-no reset. After a play the board resets to 40 and waits, up to 14.5 s in game 4,
+reset to 40 and held, a stoppage after a change of possession (15:47) is 40
+held and then 25 held, and the away timeout and halftime are a countdown that
+froze at 25 by ticking 26 to 25 with no reset. After a play the board resets to 40 and waits, up to 14.5 s in game 4,
 before it ticks; that is ordinary and is under the 20 s. A hold starts at the
 end-of-play reset (or admin set) when there is one, and at the last tick when
 the countdown just froze; it ends at the first tick, which is ready-for-play, at
@@ -600,13 +600,13 @@ required, and an optional `evidence` object that readers carry through untouched
   an instant (`span_id` is the log's own when adding a missing end); and optional
   `project_seconds` (a finite number) and `data` (an object).
 
-Examples, from game 4: an end moved to ready-for-play (seq 637), a generic
-timeout made the away team's, and a missing end added.
+Examples: the first is game 4's seq 637; the other two are illustrative (a
+generic timeout made the away team's, and a missing end added).
 
 ```
 {"action":"supersede","evidence":{"capture":"rtd-game-4-gt.pcap","hold_end":"2026-10-17T22:02:56.995609+00:00","hold_start":"2026-10-17T22:00:06.496680+00:00","superseded_wall":"2026-10-17T22:09:02.595268+00:00"},"reason":"play clock counted down after a 170 s hold; the tapped end was 366 s late","seq":637,"source":"rtd","v":1,"wall":"2026-10-17T22:02:56.995609+00:00"}
-{"action":"supersede","event":"timeout-away","evidence":{"capture":"rtd-game-4-gt.pcap","team":"guest","team_timeout":"2026-10-17T22:28:18.000000+00:00"},"reason":"the scoreboard's guest timeouts left dropped during a 40 s hold","seq":719,"source":"rtd","v":1}
-{"action":"add","event":"timeout","phase":"end","reason":"play clock counted down after a 170 s hold; the span was never ended","source":"rtd","span_id":"timeout-590","v":1,"wall":"2026-10-17T22:02:56.995609+00:00"}
+{"action":"supersede","event":"timeout-away","evidence":{"capture":"rtd-example.pcap","team":"guest","team_timeout":"2026-10-17T20:00:05.000000+00:00"},"reason":"the scoreboard's guest timeouts left dropped during a 40 s hold","seq":900,"source":"rtd","v":1}
+{"action":"add","event":"timeout","phase":"end","reason":"play clock counted down after a 60 s hold; the span was never ended","source":"rtd","span_id":"timeout-901","v":1,"wall":"2026-10-17T20:01:00.000000+00:00"}
 ```
 
 The raw log is never edited. `--write` writes proposals; a person can append their
