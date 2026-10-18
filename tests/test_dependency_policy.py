@@ -182,6 +182,45 @@ class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
             self.assertNotIn("reach", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
+class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
+    """`tacet.rtd` is not control path, but the live reader (#95) will import it.
+
+    It is pure: bytes in, fields out. No socket, no file, no clock, and nothing
+    outside the standard library, so the live reader can use it without
+    reopening the dependency question. `rtd_replay`, the offline shell around it,
+    is stdlib only too: dpkt is imported by `pcap` alone, and only when it runs.
+    """
+
+    #: Ways a decoder would acquire I/O or a clock.
+    RTD_FORBIDDEN = frozenset(
+        {"socket", "asyncio", "selectors", "os", "pathlib", "io", "time", "datetime", "subprocess"}
+    )
+
+    def test_rtd_and_replay_import_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for name in ("rtd", "rtd_replay", "datagram"):
+            for module in _imported_top_level_modules(PACKAGE_ROOT / f"{name}.py"):
+                self.assertIn(module, allowed, f"tacet.{name} imports {module!r}, which is not in the standard library")
+
+    def test_rtd_does_no_io_and_keeps_no_clock(self):
+        imported = _imported_top_level_modules(PACKAGE_ROOT / "rtd.py")
+        self.assertEqual(imported & self.RTD_FORBIDDEN, set())
+
+    def test_datagram_does_no_io_and_keeps_no_clock(self):
+        imported = _imported_top_level_modules(PACKAGE_ROOT / "datagram.py")
+        self.assertEqual(imported & self.RTD_FORBIDDEN, set())
+
+    def test_pcap_does_not_import_the_replay(self):
+        # The replay may run as __main__; importing it back makes a second copy and a second Skip.
+        self.assertNotIn("rtd_replay", _imported_tacet_modules(PACKAGE_ROOT / "pcap.py"))
+
+    def test_rtd_imports_no_other_tacet_module(self):
+        self.assertEqual(_imported_tacet_modules(PACKAGE_ROOT / "rtd.py"), set())
+
+    def test_rtd_is_not_on_the_control_path(self):
+        self.assertNotIn("rtd", CONTROL_PATH)
+
+
 #: The modules allowed to import numpy: offline analysis, never the box (#191).
 NUMPY_MODULES = ("pilot",)
 
@@ -202,9 +241,9 @@ class TestNumpyStaysOffTheBox(unittest.TestCase):
             self.assertTrue((PACKAGE_ROOT / f"{name}.py").is_file(), f"{name}.py is missing")
 
     def test_the_box_starts_without_importing_numpy(self):
-        code = "import sys, tacet.serve; sys.exit('numpy' in sys.modules)"
+        code = "import sys, tacet.serve; sys.exit(any(m in sys.modules for m in ('numpy', 'dpkt')))"
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
-        self.assertEqual(result.returncode, 0, "importing tacet.serve pulled in numpy")
+        self.assertEqual(result.returncode, 0, "importing tacet.serve pulled in numpy or dpkt")
 
     def test_numpy_is_an_extra_not_a_runtime_dependency(self):
         project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
@@ -227,6 +266,40 @@ class TestNumpyStaysOffTheBox(unittest.TestCase):
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     self.assertIn(alias.name.split(".")[0], allowed)
+
+
+#: The modules allowed to import dpkt: reading a capture after the game, never the box (#210).
+DPKT_MODULES = ("pcap",)
+
+
+class TestDpkt(unittest.TestCase):
+    """dpkt serves `tacet-rtd`, an optional extra (`.[analysis]`) like numpy."""
+
+    def test_only_the_capture_reader_imports_dpkt(self):
+        for path in sorted(PACKAGE_ROOT.glob("*.py")):
+            if path.stem in DPKT_MODULES:
+                continue
+            self.assertNotIn("dpkt", _imported_top_level_modules(path), f"tacet.{path.stem} imports dpkt")
+
+    def test_every_dpkt_module_exists(self):
+        for name in DPKT_MODULES:
+            self.assertTrue((PACKAGE_ROOT / f"{name}.py").is_file(), f"{name}.py is missing")
+
+    def test_dpkt_is_an_extra_not_a_runtime_dependency(self):
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        self.assertFalse([d for d in project["dependencies"] if d.lower().startswith("dpkt")])
+        extra = [d for d in project["optional-dependencies"]["analysis"] if d.lower().startswith("dpkt")]
+        self.assertEqual(len(extra), 1)
+        self.assertIn("<", extra[0], "pin dpkt with an upper bound")
+
+    def test_the_replay_imports_without_dpkt(self):
+        code = "import sys, tacet.rtd_replay, tacet.rtd; sys.exit('dpkt' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, "importing tacet.rtd_replay pulled in dpkt")
+
+    def test_no_control_path_module_imports_pcap(self):
+        for name in CONTROL_PATH:
+            self.assertNotIn("pcap", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
 if __name__ == "__main__":

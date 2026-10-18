@@ -439,6 +439,62 @@ conservative.
 
 ---
 
+## After the game: the RTD replay
+
+`tacet-rtd` replays a capture of the scoreboard's RTD stream through the
+decoder (`tacet.rtd`) and prints what the scoreboard said, field by field. It
+reads a file, sends nothing, and is not run on the box during a game.
+
+```
+tacet-rtd GAME.pcap --summary
+tacet-rtd GAME.pcap > game-rtd.jsonl
+```
+
+`python -m tacet.rtd_replay` is the same tool run as a module. By default it
+prints one JSON line per event, each with a `kind`:
+
+- `field`: a field changed (`time`, `source`, `field`, `old`, `new`). `old` is
+  `null` the first time, and a field reads `null` until every one of its cells
+  has been written once, so a blank is not mistaken for "never set".
+- `source`: the sending address changed. The first datagram is a change from
+  `null`. Game 4 moved from `.30` to `.26` to `.31`.
+- `gap`: no RTD datagram for longer than `--gap` seconds (default 5; the time of
+  day is written every second). `time` is the resume, `since` the last datagram
+  before it.
+- `fault`: a frame that did not decode (`checksum`, `malformed`, `truncated`,
+  `garbage`, `beyond-buffer`), with the first 64 bytes of it.
+- `unmapped`: a cell outside every known field changed. The field map is
+  missing something.
+
+`--summary` prints counts, faults by kind, skipped packets by reason, each source
+and gap, and the final value of every field instead. `--port` picks the UDP
+destination port (default 21000).
+
+**Exit codes.** `0` decoded without a fault. `1` a frame faulted, the capture
+ends in the middle of a record, or no RTD datagram was found. `2` it could not
+run: dpkt missing, an unreadable file, a file that is not pcap or pcapng, an
+unsupported link type, bad arguments. Gaps and source changes are facts about
+the capture, not faults.
+
+**Capturing.**
+
+```
+tcpdump -i <interface> -w game.pcap udp port 21000
+```
+
+Classic pcap and pcapng are both read, as Ethernet or as Linux cooked, so
+`tcpdump -i any` on Linux is fine. Any other link type is refused. A pcapng
+with several interfaces is decoded with the first interface's link type.
+
+**Install.** It needs dpkt, an optional extra kept off the box's control path:
+`make install` includes it; with a plain `pip install -e .` run
+`pip install -e '.[analysis]'`. The command without dpkt says so rather than
+printing a traceback. A box installed before this change has no `tacet-rtd`
+command, and no dpkt, until `make install` is run once more after pulling
+([gameday.md](gameday.md#the-box-update-before-the-game)).
+
+---
+
 ## Not yet proven
 
 Honest state of things, so nothing here reads as more settled than it is.
@@ -455,8 +511,9 @@ Honest state of things, so nothing here reads as more settled than it is.
   nothing has measured whether any are dropped. The observed fade was smooth on
   StageMix, whose refresh is slower than the ramp, so a fine stagger would not
   have shown. No reason to think there is one.
-- **RTD.** Not implemented. Game timing is operator-tapped for now. One thing
-  about it is known in advance and will bite on the first attempt: the
+- **RTD.** The decoder exists and replays the Game 4 capture (`tacet-rtd`,
+  above); the live reader is #95, and game timing is operator-tapped for now.
+  One thing about it is known in advance and will bite on the first attempt: the
   scoreboard console **does not send its state when something connects**. It
   sends only changes, so a reader started mid-game shows blanks until each field
   first moves - no score until someone scores. Pressing `STOP` on the scoreboard
