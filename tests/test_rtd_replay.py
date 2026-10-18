@@ -1,12 +1,14 @@
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from tacet import pcap, rtd, rtd_replay
+from tacet import rtd, rtd_replay
 
 from . import pcap_capture as cap
 from . import rtd_frames as real
@@ -18,7 +20,7 @@ OTHER_PORT = 9999
 
 
 def datagram(time: float, payload: bytes, *, source: str = SOURCE_30, port: int = rtd_replay.DEFAULT_PORT):
-    return pcap.Datagram(time, source, port, port, payload)
+    return rtd_replay.Datagram(time, source, port, port, payload)
 
 
 def feed_all(items, **kwargs) -> tuple[rtd_replay.Replay, list[rtd_replay.Event]]:
@@ -140,9 +142,9 @@ class TestEvents(unittest.TestCase):
         self.assertEqual((replay.summary.other_port, replay.summary.rtd_datagrams), (1, 0))
 
     def test_skips_counted_by_reason(self):
-        replay, events = feed_all([pcap.Skip.NOT_IPV4, pcap.Skip.NOT_IPV4, pcap.Skip.FRAGMENT])
+        replay, events = feed_all([rtd_replay.Skip.NOT_IPV4, rtd_replay.Skip.NOT_IPV4, rtd_replay.Skip.FRAGMENT])
         self.assertEqual(events, [])
-        self.assertEqual(replay.summary.skipped, {pcap.Skip.NOT_IPV4: 2, pcap.Skip.FRAGMENT: 1})
+        self.assertEqual(replay.summary.skipped, {rtd_replay.Skip.NOT_IPV4: 2, rtd_replay.Skip.FRAGMENT: 1})
         self.assertEqual(replay.summary.packets, 3)
 
     def test_other_frame_types_are_counted_not_applied(self):
@@ -170,7 +172,7 @@ class TestSummary(unittest.TestCase):
             datagram(START, real.PREGAME_FULL, source=SOURCE_30),
             datagram(START + 60, real.TIME_OF_DAY, source=SOURCE_26),
             datagram(START + 61, real.frame(39, "x", checksum=b"00"), source=SOURCE_26),
-            pcap.Skip.NOT_IPV4,
+            rtd_replay.Skip.NOT_IPV4,
         ]
         replay, _ = feed_all(items)
         text = rtd_replay.render_summary(replay.summary, replay.display.snapshot(), "game.pcap")
@@ -252,16 +254,46 @@ class TestCommand(unittest.TestCase):
         self.assertEqual(run.code, rtd_replay.EXIT_FAULTS)
         self.assertIn("middle of a record", run.err.getvalue())
 
-    def test_pcapng_exits_2(self):
-        run = Run(cap.PCAPNG + b"\x00" * 40)
-        self.assertEqual(run.code, rtd_replay.EXIT_REFUSED)
-        self.assertIn("pcapng is not supported", run.err.getvalue())
-        self.assertTrue(run.err.getvalue().startswith("tacet-rtd: "))
+    def test_pcapng_capture_replays(self):
+        records = [cap.record(START, cap.rtd_packet(real.TIME_OF_DAY))]
+        run = Run(cap.pcapng_bytes(records))
+        self.assertEqual(run.code, rtd_replay.EXIT_CLEAN, run.err.getvalue())
+        self.assertIn('"field": "time_of_day"', run.out.getvalue())
 
-    def test_non_ethernet_capture_exits_2(self):
-        run = Run(cap.pcap_bytes([], linktype=113))
+    def test_linux_cooked_capture_replays(self):
+        ip = cap.ipv4(cap.udp(real.TIME_OF_DAY))
+        capture = cap.pcap_bytes([cap.record(START, cap.sll(ip))], linktype=cap.LINKTYPE_SLL)
+        run = Run(capture)
+        self.assertEqual(run.code, rtd_replay.EXIT_CLEAN, run.err.getvalue())
+        self.assertIn('"field": "time_of_day"', run.out.getvalue())
+
+    def test_unsupported_link_type_exits_2(self):
+        run = Run(cap.pcap_bytes([], linktype=105))
         self.assertEqual(run.code, rtd_replay.EXIT_REFUSED)
-        self.assertIn("-i any", run.err.getvalue())
+        self.assertIn("not supported", run.err.getvalue())
+
+    def test_unreadable_file_exits_2(self):
+        run = Run(b"this is not a capture at all, just text")
+        self.assertEqual(run.code, rtd_replay.EXIT_REFUSED)
+        self.assertIn("not a pcap or pcapng file", run.err.getvalue())
+
+    def test_missing_dpkt_says_how_to_install(self):
+        import importlib
+
+        import tacet
+
+        saved = importlib.import_module("tacet.pcap")
+        del tacet.pcap
+        try:
+            with mock.patch.dict(sys.modules, {"dpkt": None}):
+                sys.modules.pop("tacet.pcap", None)
+                err = io.StringIO()
+                code = rtd_replay.main(["a.pcap"], out=io.StringIO(), err=err)
+        finally:
+            tacet.pcap = saved
+            sys.modules["tacet.pcap"] = saved
+        self.assertEqual(code, rtd_replay.EXIT_REFUSED)
+        self.assertIn(".[analysis]", err.getvalue())
 
     def test_missing_file_exits_2(self):
         err = io.StringIO()

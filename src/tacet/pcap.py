@@ -1,186 +1,133 @@
-"""Read a classic libpcap file and decode the UDP datagrams in it (#210).
+"""Read a pcap or pcapng capture and decode the UDP datagrams in it (#210).
 
-Standard library only, like `tacet.rtd`. The reader takes a handle the caller
-opened, as `wav.read_layout` does, and streams: a game capture is gigabytes.
+This is the only module that imports dpkt, an optional extra (`.[analysis]`)
+kept off the box's control path. dpkt ships no type information, so everything
+that leaves here is converted to a concrete type: nothing untyped escapes.
 
-Only the classic format is read, which is what `tcpdump -w` writes. pcapng is
-refused with a message saying how to get a classic file. Only Ethernet frames
-are read, with or without an 802.1Q tag; a capture taken with `tcpdump -i any`
-is Linux cooked (SLL) and is refused too, because its frames carry no Ethernet
-header to decode.
+Ethernet (with or without 802.1Q) and Linux cooked captures (SLL and SLL2,
+what `tcpdump -i any` writes) are read; any other link type is refused. A
+pcapng file takes its link type from its first interface.
+
+dpkt is quiet about damage, so this adapter has to watch for it. A layer it
+cannot decode becomes raw bytes rather than raising, hence the `isinstance`
+checks. A file cut off inside a record body is yielded short with no flag, hence
+`_ShortReadWatch`; one cut off inside a record header raises, and is caught.
 """
 
 from __future__ import annotations
 
-import enum
 import ipaddress
-import struct
-from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import BinaryIO
+from collections.abc import Callable, Iterator
+from typing import Any, BinaryIO
 
-LINKTYPE_ETHERNET = 1
-#: The top bits of the network field carry FCS information, not the link type.
+import dpkt
+import dpkt.ethernet
+import dpkt.ip
+import dpkt.pcap
+import dpkt.pcapng
+import dpkt.sll
+import dpkt.sll2
+import dpkt.udp
+
+from .rtd_replay import Datagram, Skip
+
+#: The top bits of the link type field carry FCS information, not the link type.
 LINKTYPE_MASK = 0xFFFF
-SUPPORTED_MAJOR = 2
-
-ETHERTYPE_IPV4 = 0x0800
-ETHERTYPE_VLAN = 0x8100
-
-MAGIC_LENGTH = 4
-GLOBAL_HEADER = 24
-RECORD_HEADER = 16
-ETHERNET_HEADER = 14
-VLAN_TAG = 4
-IPV4_MIN_HEADER = 20
-UDP_HEADER = 8
-
-IP_PROTO_UDP = 17
-#: More-fragments flag and fragment offset. The don't-fragment bit (0x4000) is set
-#: on every RTD packet and is not a fragment.
-IP_FRAGMENT_MASK = 0x3FFF
+LINKTYPE_ETHERNET = 1
+#: `tcpdump -i any`, older libpcap.
+LINKTYPE_LINUX_SLL = 113
+#: `tcpdump -i any`, libpcap 1.10 and later.
+LINKTYPE_LINUX_SLL2 = 276
 IPV4_VERSION = 4
-IHL_UNIT = 4
-IHL_MASK = 0x0F
-VERSION_SHIFT = 4
+UDP_HEADER = 8
+NOT_A_CAPTURE = "not a pcap or pcapng file"
 
-USEC = 1_000_000
-NSEC = 1_000_000_000
-
-PCAPNG_MAGIC = b"\x0a\x0d\x0d\x0a"
-PCAPNG_HINT = "pcapng is not supported; capture with tcpdump -w (classic pcap) or convert with editcap -F pcap"
-
-#: The four raw magics, as stored in the file: struct byte order and the divisor for the sub-second field.
-_MAGICS: dict[bytes, tuple[str, int]] = {
-    bytes.fromhex("d4c3b2a1"): ("<", USEC),
-    bytes.fromhex("a1b2c3d4"): (">", USEC),
-    bytes.fromhex("4d3cb2a1"): ("<", NSEC),
-    bytes.fromhex("a1b23c4d"): (">", NSEC),
+_LINK_DECODERS: dict[int, Callable[[bytes], Any]] = {
+    LINKTYPE_ETHERNET: dpkt.ethernet.Ethernet,
+    LINKTYPE_LINUX_SLL: dpkt.sll.SLL,
+    LINKTYPE_LINUX_SLL2: dpkt.sll2.SLL2,
 }
-
-#: After the magic: major, minor, thiszone, sigfigs, snaplen, network.
-_GLOBAL_FIELDS = "HHiIII"
-_RECORD_FIELDS = "IIII"
-_ETHERTYPE = struct.Struct("!H")
-#: version and IHL, TOS, total length, id, flags and fragment offset, TTL, protocol, checksum, source, destination.
-_IPV4 = struct.Struct("!BBHHHBBH4s4s")
-#: source port, destination port, length, checksum.
-_UDP = struct.Struct("!HHHH")
-_ETHERTYPE_AT = ETHERNET_HEADER - _ETHERTYPE.size
 
 
 class PcapFormatError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class Packet:
-    time: float
-    data: bytes
-    #: The capture kept fewer bytes than the packet had (incl_len < orig_len).
-    clipped: bool
+def decode_frame(linktype: int, time: float, frame: bytes) -> Datagram | Skip:
+    """The UDP datagram in one captured frame, or why there is not one."""
+    try:
+        link = _LINK_DECODERS[linktype](frame)
+    except (dpkt.UnpackError, KeyError):
+        return Skip.MALFORMED
+    ip = link.data
+    # An IPv4 header dpkt could not parse arrives as raw bytes and is counted here too.
+    if not isinstance(ip, dpkt.ip.IP) or ip.v != IPV4_VERSION:
+        return Skip.NOT_IPV4
+    if ip.p != dpkt.ip.IP_PROTO_UDP:
+        return Skip.NOT_UDP
+    if ip.mf or ip.offset:
+        return Skip.FRAGMENT
+    udp = ip.data
+    if not isinstance(udp, dpkt.udp.UDP) or udp.ulen < UDP_HEADER:
+        return Skip.MALFORMED
+    return Datagram(
+        time,
+        str(ipaddress.IPv4Address(bytes(ip.src))),
+        int(udp.sport),
+        int(udp.dport),
+        bytes(udp.data[: udp.ulen - UDP_HEADER]),
+    )
 
 
-class PcapReader:
+class _ShortReadWatch:
+    """Passes reads through and notes a read that returned fewer bytes than asked for.
+
+    On a regular file that happens only at the end, so a short read inside a
+    record means the file was cut off. A clean end returns nothing at all.
+    """
+
     def __init__(self, handle: BinaryIO) -> None:
         self._handle = handle
-        header = handle.read(GLOBAL_HEADER)
-        magic = header[:MAGIC_LENGTH]
-        if magic == PCAPNG_MAGIC:
-            raise PcapFormatError(PCAPNG_HINT)
-        if len(header) < MAGIC_LENGTH or magic not in _MAGICS:
-            raise PcapFormatError("not a pcap file")
-        if len(header) < GLOBAL_HEADER:
-            raise PcapFormatError(f"pcap header is shorter than {GLOBAL_HEADER} bytes")
-        self._order, self._divisor = _MAGICS[magic]
-        major, _minor, _zone, _sigfigs, _snaplen, network = struct.unpack(
-            f"{self._order}{_GLOBAL_FIELDS}", header[MAGIC_LENGTH:]
-        )
-        if major != SUPPORTED_MAJOR:
-            raise PcapFormatError(f"pcap version {major} is not supported")
-        self.linktype: int = network
-        #: Set once iteration reaches a record the file ends in the middle of.
+        self.short = False
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._handle.read(size)
+        if 0 < len(data) < size:
+            self.short = True
+        return data
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._handle.seek(offset, whence)
+
+
+class Capture:
+    def __init__(self, handle: BinaryIO) -> None:
+        self._watch = _ShortReadWatch(handle)
+        try:
+            self._reader = dpkt.pcap.UniversalReader(self._watch)
+        except (ValueError, dpkt.UnpackError):
+            raise PcapFormatError(NOT_A_CAPTURE) from None
+        self._watch.short = False
+        self.linktype: int = int(self._reader.datalink()) & LINKTYPE_MASK
+        if self.linktype not in _LINK_DECODERS:
+            raise PcapFormatError(
+                f"link type {self.linktype} is not supported; tacet-rtd reads Ethernet ({LINKTYPE_ETHERNET}) "
+                f"and Linux cooked captures (SLL {LINKTYPE_LINUX_SLL}, SLL2 {LINKTYPE_LINUX_SLL2})"
+            )
+        #: Valid once iteration has finished: the file ended in the middle of a record.
         self.truncated = False
 
-    def __iter__(self) -> Iterator[Packet]:
-        record = struct.Struct(f"{self._order}{_RECORD_FIELDS}")
-        while header := self._handle.read(RECORD_HEADER):
-            if len(header) < RECORD_HEADER:
+    def __iter__(self) -> Iterator[Datagram | Skip]:
+        records = iter(self._reader)
+        while True:
+            try:
+                stamp, frame = next(records)
+            except StopIteration:
+                break
+            except dpkt.UnpackError:
                 self.truncated = True
-                return
-            seconds, fraction, included, original = record.unpack(header)
-            data = self._handle.read(included)
-            if len(data) < included:
-                self.truncated = True
-                return
-            yield Packet(seconds + fraction / self._divisor, data, included < original)
-
-
-class Skip(enum.Enum):
-    NOT_IPV4 = "not-ipv4"
-    NOT_UDP = "not-udp"
-    FRAGMENT = "fragment"
-    MALFORMED = "malformed"
-
-
-@dataclass(frozen=True)
-class Datagram:
-    time: float
-    source: str
-    source_port: int
-    dest_port: int
-    payload: bytes
-
-
-def _ethertype_and_offset(data: bytes) -> tuple[int, int] | None:
-    """The EtherType after any 802.1Q tags, and where the IP header starts."""
-    at = _ETHERTYPE_AT
-    while True:
-        if len(data) < at + _ETHERTYPE.size:
-            return None
-        (ethertype,) = _ETHERTYPE.unpack_from(data, at)
-        at += _ETHERTYPE.size
-        if ethertype != ETHERTYPE_VLAN:
-            return ethertype, at
-        at += VLAN_TAG - _ETHERTYPE.size
-
-
-def decode_ethernet(packet: Packet) -> Datagram | Skip:
-    """The UDP datagram in an Ethernet frame, or why there is not one."""
-    found = _ethertype_and_offset(packet.data)
-    if found is None:
-        return Skip.MALFORMED
-    ethertype, at = found
-    if ethertype != ETHERTYPE_IPV4:
-        return Skip.NOT_IPV4
-    ip = packet.data[at:]
-    if len(ip) < IPV4_MIN_HEADER:
-        return Skip.MALFORMED
-    version_ihl, _tos, _total, _ident, flags_frag, _ttl, proto, _sum, source, _dest = _IPV4.unpack_from(ip)
-    header_length = (version_ihl & IHL_MASK) * IHL_UNIT
-    if version_ihl >> VERSION_SHIFT != IPV4_VERSION or header_length < IPV4_MIN_HEADER or len(ip) < header_length:
-        return Skip.MALFORMED
-    if proto != IP_PROTO_UDP:
-        return Skip.NOT_UDP
-    if flags_frag & IP_FRAGMENT_MASK:
-        return Skip.FRAGMENT
-    udp = ip[header_length:]
-    if len(udp) < UDP_HEADER:
-        return Skip.MALFORMED
-    source_port, dest_port, length, _checksum = _UDP.unpack_from(udp)
-    if length < UDP_HEADER:
-        return Skip.MALFORMED
-    return Datagram(packet.time, str(ipaddress.IPv4Address(source)), source_port, dest_port, udp[UDP_HEADER:length])
-
-
-def _decoded(reader: PcapReader) -> Iterator[Datagram | Skip]:
-    for packet in reader:
-        yield decode_ethernet(packet)
-
-
-def datagrams(reader: PcapReader) -> Iterator[Datagram | Skip]:
-    """Every packet in the capture, decoded or skipped. Refuses a non-Ethernet capture at once."""
-    linktype = reader.linktype & LINKTYPE_MASK
-    if linktype != LINKTYPE_ETHERNET:
-        raise PcapFormatError(f"linktype {linktype} is not Ethernet; capture on a named interface, not -i any")
-    return _decoded(reader)
+                break
+            # pcap gives a float; nanosecond pcap gives a Decimal.
+            yield decode_frame(self.linktype, float(stamp), bytes(frame))
+        if self._watch.short:
+            self.truncated = True

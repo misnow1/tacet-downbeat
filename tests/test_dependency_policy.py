@@ -198,7 +198,7 @@ class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
 
     def test_rtd_pcap_and_replay_import_only_the_standard_library(self):
         allowed = sys.stdlib_module_names | {"tacet"}
-        for name in ("rtd", "pcap", "rtd_replay"):
+        for name in ("rtd", "rtd_replay"):
             for module in _imported_top_level_modules(PACKAGE_ROOT / f"{name}.py"):
                 self.assertIn(module, allowed, f"tacet.{name} imports {module!r}, which is not in the standard library")
 

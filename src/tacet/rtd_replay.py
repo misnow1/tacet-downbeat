@@ -16,9 +16,13 @@ faulted, the file ends mid-record, or no RTD datagram was found. Exit 2: the
 capture could not be read at all. A gap or a source change is a fact about the
 capture, not a fault.
 
-Capture a classic pcap on a named interface: `tcpdump -i <interface> -w
-game.pcap udp port 21000`. pcapng and `-i any` are refused. This tool reads no
-`tacet.toml`: it is not run on the box.
+Capture with `tcpdump -i <interface> -w game.pcap udp port 21000`. Classic pcap
+and pcapng are read, as Ethernet or Linux cooked (`-i any`); another link type
+is refused. This tool reads no `tacet.toml`: it is not run on the box.
+
+The decoder (`tacet.rtd`) is standard library only. Reading the capture needs
+dpkt, from the `analysis` extra, which `tacet.pcap` alone imports; without it the
+command says how to install it.
 
 Gap detection lives here and not in `tacet.rtd`, which keeps no clock.
 """
@@ -26,6 +30,7 @@ Gap detection lives here and not in `tacet.rtd`, which keeps no clock.
 from __future__ import annotations
 
 import argparse
+import enum
 import json
 import os
 import sys
@@ -36,7 +41,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-from . import pcap, rtd
+from . import rtd
+
+DPKT_MODULE = "dpkt"
+DPKT_HINT = "tacet-rtd needs dpkt: pip install -e '.[analysis]'"
 
 #: The UDP port Game 4's All Sport Pro sent to.
 DEFAULT_PORT = 21000
@@ -53,6 +61,27 @@ SECONDS_DECIMALS = 3
 INDENT = "  "
 NONE_WORD = "none"
 NEVER_WRITTEN = "never written"
+
+
+class Skip(enum.Enum):
+    """Why a captured frame yielded no datagram.
+
+    NOT_IPV4 also covers an IPv4 header that could not be parsed.
+    """
+
+    NOT_IPV4 = "not-ipv4"
+    NOT_UDP = "not-udp"
+    FRAGMENT = "fragment"
+    MALFORMED = "malformed"
+
+
+@dataclass(frozen=True)
+class Datagram:
+    time: float
+    source: str
+    source_port: int
+    dest_port: int
+    payload: bytes
 
 
 @dataclass(frozen=True)
@@ -101,7 +130,7 @@ class Summary:
     other_port: int = 0
     frames: int = 0
     writes: int = 0
-    skipped: Counter[pcap.Skip] = field(default_factory=Counter)
+    skipped: Counter[Skip] = field(default_factory=Counter)
     faults: Counter[rtd.Fault] = field(default_factory=Counter)
     other_types: Counter[str] = field(default_factory=Counter)
     #: (first seen, address), in the order they appeared.
@@ -124,9 +153,9 @@ class Replay:
         self.display = rtd.Display()
         self.summary = Summary()
 
-    def feed(self, item: pcap.Datagram | pcap.Skip) -> list[Event]:
+    def feed(self, item: Datagram | Skip) -> list[Event]:
         self.summary.packets += 1
-        if isinstance(item, pcap.Skip):
+        if isinstance(item, Skip):
             self.summary.skipped[item] += 1
             return []
         if item.dest_port != self._port:
@@ -137,7 +166,7 @@ class Replay:
             events += self._frame(item, parsed)
         return events
 
-    def _note_arrival(self, item: pcap.Datagram) -> list[Event]:
+    def _note_arrival(self, item: Datagram) -> list[Event]:
         summary = self.summary
         events: list[Event] = []
         last = summary.last_time
@@ -154,7 +183,7 @@ class Replay:
         summary.last_time = item.time
         return events
 
-    def _frame(self, item: pcap.Datagram, parsed: rtd.Frame | rtd.FrameFault) -> list[Event]:
+    def _frame(self, item: Datagram, parsed: rtd.Frame | rtd.FrameFault) -> list[Event]:
         summary = self.summary
         summary.frames += 1
         if isinstance(parsed, rtd.FrameFault):
@@ -172,7 +201,7 @@ class Replay:
             events.append(UnmappedEvent(item.time, item.source, applied.unmapped))
         return events
 
-    def _fault(self, item: pcap.Datagram, fault: rtd.FrameFault) -> FaultEvent:
+    def _fault(self, item: Datagram, fault: rtd.FrameFault) -> FaultEvent:
         self.summary.faults[fault.fault] += 1
         return FaultEvent(item.time, item.source, fault)
 
@@ -287,7 +316,7 @@ def parser() -> argparse.ArgumentParser:
         prog="tacet-rtd",
         description="Replay a pcap of the scoreboard's RTD stream: field changes as JSONL, or a summary.",
     )
-    p.add_argument("capture", type=Path, help="a classic pcap file (tcpdump -w), not pcapng")
+    p.add_argument("capture", type=Path, help="a pcap or pcapng capture")
     p.add_argument("--summary", action="store_true", help="print the summary instead of one row per event")
     p.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"UDP destination port (default {DEFAULT_PORT})")
     p.add_argument(
@@ -301,14 +330,16 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _replayed(args: argparse.Namespace, out: TextIO) -> Replay:
+    from . import pcap
+
     replay = Replay(port=args.port, gap_seconds=args.gap)
     with args.capture.open("rb") as handle:
-        reader = pcap.PcapReader(handle)
-        for item in pcap.datagrams(reader):
+        capture = pcap.Capture(handle)
+        for item in capture:
             for event in replay.feed(item):
                 if not args.summary:
                     print(event_json(event), file=out)
-        replay.summary.truncated_file = reader.truncated
+        replay.summary.truncated_file = capture.truncated
     return replay
 
 
@@ -316,6 +347,13 @@ def main(argv: list[str] | None = None, *, out: TextIO | None = None, err: TextI
     out = sys.stdout if out is None else out
     err = sys.stderr if err is None else err
     args = parser().parse_args(argv)
+    try:
+        from . import pcap
+    except ModuleNotFoundError as exc:
+        if exc.name != DPKT_MODULE:
+            raise
+        print(DPKT_HINT, file=err)
+        return EXIT_REFUSED
     try:
         replay = _replayed(args, out)
     except BrokenPipeError:

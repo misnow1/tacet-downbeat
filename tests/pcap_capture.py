@@ -1,12 +1,18 @@
-"""Build classic pcap files, and the Ethernet, IPv4 and UDP inside them, for the tests (#210)."""
+"""Build pcap and pcapng files, and the Ethernet, IPv4 and UDP inside them, for the tests (#210).
 
+The classic pcap is packed by hand, so the tests hold dpkt to an independent check and can
+break a file in ways dpkt's own writer would not.
+"""
+
+import io
 import struct
+
+import dpkt
 
 LE_USEC = bytes.fromhex("d4c3b2a1")
 BE_USEC = bytes.fromhex("a1b2c3d4")
 LE_NSEC = bytes.fromhex("4d3cb2a1")
 BE_NSEC = bytes.fromhex("a1b23c4d")
-PCAPNG = bytes.fromhex("0a0d0d0a")
 
 #: The magic tells the byte order; the fraction is microseconds or nanoseconds.
 BYTE_ORDER = {LE_USEC: "<", LE_NSEC: "<", BE_USEC: ">", BE_NSEC: ">"}
@@ -17,6 +23,8 @@ SNAPLEN = 65535
 ETHERTYPE_IPV4 = 0x0800
 ETHERTYPE_VLAN = 0x8100
 ETHERTYPE_ARP = 0x0806
+LINKTYPE_SLL = 113
+LINKTYPE_SLL2 = 276
 PROTO_UDP = 17
 PROTO_TCP = 6
 DONT_FRAGMENT = 0x4000
@@ -88,3 +96,27 @@ def ethernet(payload: bytes, *, vlan: bool = False, ethertype: int = ETHERTYPE_I
 def rtd_packet(payload: bytes, *, src: tuple[int, int, int, int] = (192, 168, 0, 30), dport: int = RTD_PORT) -> bytes:
     """A broadcast RTD datagram as it appears on the wire."""
     return ethernet(ipv4(udp(payload, dport=dport), src=src))
+
+
+ARPHRD_ETHER = 1
+ADDRESS_LENGTH = 6
+#: The link-layer address field is always 8 bytes, padded.
+ADDRESS_FIELD = SOURCE_MAC + b"\x00\x00"
+
+
+def sll(payload: bytes, *, ethertype: int = ETHERTYPE_IPV4) -> bytes:
+    """A Linux cooked (SLL) frame, 16 byte header."""
+    return struct.pack("!HHH8sH", 0, ARPHRD_ETHER, ADDRESS_LENGTH, ADDRESS_FIELD, ethertype) + payload
+
+
+def sll2(payload: bytes, *, ethertype: int = ETHERTYPE_IPV4) -> bytes:
+    """A Linux cooked v2 (SLL2) frame, 20 byte header."""
+    return struct.pack("!HHIHBB8s", ethertype, 0, 1, ARPHRD_ETHER, 0, ADDRESS_LENGTH, ADDRESS_FIELD) + payload
+
+
+def pcapng_bytes(records: list[Record], *, linktype: int = 1) -> bytes:
+    buffer = io.BytesIO()
+    writer = dpkt.pcapng.Writer(buffer, linktype=linktype)
+    for time, data, _orig_len in records:
+        writer.writepkt(data, ts=time)
+    return buffer.getvalue()
