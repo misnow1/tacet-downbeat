@@ -66,7 +66,7 @@ _ETHERTYPE = struct.Struct("!H")
 _IPV4 = struct.Struct("!BBHHHBBH4s4s")
 #: source port, destination port, length, checksum.
 _UDP = struct.Struct("!HHHH")
-_ETHERTYPE_AT = 12
+_ETHERTYPE_AT = ETHERNET_HEADER - _ETHERTYPE.size
 
 
 class PcapFormatError(ValueError):

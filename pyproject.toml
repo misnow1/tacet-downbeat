@@ -41,6 +41,7 @@ tacet-serve = "tacet.serve:main"
 tacet-verify-reaper = "tacet.verify_reaper:main"
 tacet-verify-dm7 = "tacet.verify_dm7:main"
 tacet-pilot-check = "tacet.pilot_check:main"
+tacet-rtd = "tacet.rtd_replay:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tacet"]
