@@ -472,19 +472,25 @@ destination port (default 21000).
 
 **Exit codes.** `0` decoded without a fault. `1` a frame faulted, the capture
 ends in the middle of a record, or no RTD datagram was found. `2` it could not
-run: unreadable file, pcapng, a non-Ethernet capture, bad arguments. Gaps and
-source changes are facts about the capture, not faults.
+run: dpkt missing, an unreadable file, a file that is not pcap or pcapng, an
+unsupported link type, bad arguments. Gaps and source changes are facts about
+the capture, not faults.
 
-**Capturing.** It reads classic pcap only, on an Ethernet interface:
+**Capturing.**
 
 ```
 tcpdump -i <interface> -w game.pcap udp port 21000
 ```
 
-pcapng is refused (convert with `editcap -F pcap`), and so is a capture taken
-with `-i any`, which is Linux cooked and has no Ethernet header to read. A box
-installed before this change has no `tacet-rtd` command until `make install` is
-run once more after pulling
+Classic pcap and pcapng are both read, as Ethernet or as Linux cooked, so
+`tcpdump -i any` on Linux is fine. Any other link type is refused. A pcapng
+with several interfaces is decoded with the first interface's link type.
+
+**Install.** It needs dpkt, an optional extra kept off the box's control path:
+`make install` includes it; with a plain `pip install -e .` run
+`pip install -e '.[analysis]'`. The command without dpkt says so rather than
+printing a traceback. A box installed before this change has no `tacet-rtd`
+command, and no dpkt, until `make install` is run once more after pulling
 ([gameday.md](gameday.md#the-box-update-before-the-game)).
 
 ---
