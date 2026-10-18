@@ -156,6 +156,17 @@ entries are good fader labels for the whole game** except 15:13:27 to 15:15:13.
 - **Target level** changed three times: +3.0 at 15:11:45 (rode, open), 0.0 at
   17:15:09 (stored, closed), +3.0 at 17:31:05 (rode, open).
 - **Other band** on the field 15:16:16 to 15:35:24, pregame.
+- **Defensive stop is a per-play label**, not a change of possession: the
+  operator taps it for a good defensive play while GT has the ball, mostly a
+  stop on first or third down. RTD agrees: 15 of the 16 taps fall in GT
+  possession, and the 16th (17:44:36) is 5 s before the scoreboard flipped to
+  GT. Each is followed 2-12 s later by the scoreboard's down advancing without
+  a first down (2nd & 10, 4th & 7, ...), or by a VT turnover (16:32:45, the
+  interception at 16:32:53).
+- **Scores against RTD:** all four touchdown taps match the scoreboard to
+  within a second; the field goal at **18:00:11 was not tapped**. The
+  scoreboard itself read VT 35 for 7 s at 18:09:28 before going back to 34.
+  Final VT 34, GT 24.
 
 ## Decisions
 
