@@ -142,10 +142,12 @@ entries are good fader labels for the whole game** except 15:13:27 to 15:15:13.
   fader; #202.
 - **Ready** was tapped once, pregame (14:59:51). It is not part of the
   operator's routine.
-- **Timeouts:** 19 spans (10 official, 3 injury, 3 away, 1 home, 1 media),
+- **Timeouts:** 18 spans (10 official, 3 injury, 3 away, 1 home, 1 media),
   all closed, but **the ends are fuzzy** apart from a couple of media and
   official timeouts. Recover them from RTD rather than ask for better taps
   (#205).
+  `tacet-timeouts` on the capture: 15 ends corrected, 2 nested, 1 not checked
+  (seq 687, whose hold spans the booth outage) (#205).
 - **Halftime exodus** was tapped at 16:41:10 and again at 16:41:12, so its
   span is 2 s long; the first tap is the label. The stand-down prompt it
   raised was dismissed at 17:20:07: the operator left for food and forgot to

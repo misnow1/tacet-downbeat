@@ -553,6 +553,9 @@ recording nor the log depends on the page or the markers working.
    Reference wav>"`. If its VERDICT line flags anything (exit code 1), copy the
    flagged rows into the game notes
    ([how to read it](box.md#after-the-game-the-pilot-check)).
+7. If an RTD capture was made, run `tacet-timeouts <log> <capture>`; read it,
+   then rerun with `--write`; copy the `.corrections.jsonl` with the log
+   ([how to read it](box.md#after-the-game-timeouts-from-rtd)).
 
 Four streams have to end up on the NAS together (design.md 9): the DVS
 multitrack, the DCA reference (a pilot tone, not the band PA), the RTD capture,

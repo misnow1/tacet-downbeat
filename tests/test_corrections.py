@@ -207,6 +207,16 @@ class TestReadAndAppend(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
 
+class TestDocumentedExample(unittest.TestCase):
+    def test_every_json_line_in_the_box_doc_sidecar_example_parses(self):
+        doc = (Path(__file__).resolve().parent.parent / "docs" / "box.md").read_text(encoding="utf-8")
+        section = doc.split("## The corrections sidecar", 1)[1].split("\n---", 1)[0]
+        lines = [row for row in section.splitlines() if row.startswith("{")]
+        self.assertGreaterEqual(len(lines), 2)
+        for row in lines:
+            self.assertEqual(corrections.correction_from_json(row).to_json(), row)
+
+
 class TestTargetsAndUnrecorded(unittest.TestCase):
     def test_targets(self):
         self.assertEqual(corrections.targets(supersede()), (("supersede", 637, "wall"),))
