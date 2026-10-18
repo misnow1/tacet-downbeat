@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 SYN = 0x16
 SOH = 0x01
@@ -85,6 +85,8 @@ class Frame:
     prefix: str
     offset: int
     text: str
+    #: The frame as received, SYN through ETB, so a fault on it can quote it.
+    raw: bytes = field(default=b"", compare=False, repr=False)
 
     @property
     def is_write(self) -> bool:
@@ -130,6 +132,7 @@ def parse_frame(raw: bytes) -> Frame | FrameFault:
         prefix=raw[PREFIX_AT:OFFSET_AT].decode("ascii"),
         offset=int(raw[OFFSET_AT:STX_AT]),
         text=text.decode("ascii"),
+        raw=raw,
     )
 
 
@@ -307,7 +310,7 @@ class Display:
             raise ValueError(f"prefix {frame.prefix!r} is not a write")
         end = frame.offset + len(frame.text)
         if end > len(self._cells):
-            return FrameFault(Fault.BEYOND_BUFFER, b"")
+            return FrameFault(Fault.BEYOND_BUFFER, frame.raw)
         touched = [f for f in self._fields if f.offset < end and f.end > frame.offset]
         before = {f.name: self.value(f) for f in touched}
         unmapped: list[int] = []

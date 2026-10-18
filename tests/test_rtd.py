@@ -212,7 +212,7 @@ class TestDisplay(unittest.TestCase):
     def test_write_beyond_buffer_is_refused_and_not_applied(self):
         display = rtd.Display()
         result = display.apply(written(350, "abcd"))
-        self.assertEqual(result, rtd.FrameFault(rtd.Fault.BEYOND_BUFFER, b""))
+        self.assertEqual(result, rtd.FrameFault(rtd.Fault.BEYOND_BUFFER, real.frame(350, "abcd")))
         self.assertIsNone(display.value(rtd.BALL_ON_LABEL))
 
     def test_write_ending_exactly_at_buffer_end_is_applied(self):
@@ -251,45 +251,87 @@ class TestFieldMap(unittest.TestCase):
 
     def test_field_map_pinned_against_pregame_full_write(self):
         values = self.full_write(real.PREGAME_FULL)
-        self.assertEqual(values["main_clock"], "70:07")
-        self.assertEqual(values["time_of_day"], " 2:24:53")
-        self.assertEqual(values["home_name"], "VT" + " " * 18)
-        self.assertEqual(values["guest_name"], "GT" + " " * 18)
-        self.assertEqual(values["home_short_name"], "Tech      ")
-        self.assertEqual(values["guest_short_name"], "GUEST     ")
-        self.assertEqual(values["home_score"], "   0")
-        self.assertEqual(values["guest_score"], "   0")
-        self.assertEqual(values["home_timeouts"], "3")
-        self.assertEqual(values["home_timeouts_copy"], "3")
-        self.assertEqual(values["guest_timeouts"], "3")
-        self.assertEqual(values["guest_timeouts_copy"], "3")
-        self.assertEqual(values["quarter"], "  ")
-        self.assertEqual(values["quarter_text"], "PRE ")
-        self.assertEqual(values["quarter_description"], "Pregame     ")
-        self.assertEqual(values["unknown_160"], "c")
-        self.assertEqual(values["unknown_183"], "66016001001")
-        self.assertEqual(values["play_clock"], "   40   ")
-        self.assertEqual(values["ball_on_label"], "BALLON")
-        self.assertNotIn(None, values.values())
+        self.assertEqual(
+            values,
+            {
+                "main_clock": "70:07",
+                "main_clock_copy_1": "70:07",
+                "main_clock_copy_2": "70:07",
+                "main_clock_copy_3": "70:07",
+                "clock_at_zero": " ",
+                "main_clock_stopped": " ",
+                "timeout_clock": "        ",
+                "time_of_day": " 2:24:53",
+                "home_name": "VT                  ",
+                "guest_name": "GT                  ",
+                "home_short_name": "Tech      ",
+                "guest_short_name": "GUEST     ",
+                "home_score": "   0",
+                "guest_score": "   0",
+                "home_timeouts": "3",
+                "home_timeouts_copy": "3",
+                "guest_timeouts": "3",
+                "guest_timeouts_copy": "3",
+                "home_timeout_text": "     ",
+                "guest_timeout_text": "     ",
+                "quarter": "  ",
+                "quarter_text": "PRE ",
+                "quarter_description": "Pregame     ",
+                "unknown_160": "c",
+                "unknown_183": "66016001001",
+                "play_clock": "   40   ",
+                "home_possession": "     ",
+                "guest_possession": "     ",
+                "ball_on": "  ",
+                "down": "   ",
+                "to_go": "  ",
+                "ball_on_side": " ",
+                "ball_on_copy": "  ",
+                "ball_on_label": "BALLON",
+            },
+        )
 
     def test_field_map_pinned_against_final_full_write(self):
         values = self.full_write(real.FINAL_FULL)
-        self.assertEqual(values["main_clock"], " 0:00")
-        self.assertEqual(values["clock_at_zero"], "z")
-        self.assertEqual(values["main_clock_stopped"], "s")
-        self.assertEqual(values["home_score"], "  34")
-        self.assertEqual(values["guest_score"], "  24")
-        self.assertEqual(values["quarter"], " 4")
-        self.assertEqual(values["quarter_text"], "4TH ")
-        self.assertEqual(values["quarter_description"], "4TH Quarter ")
-        self.assertEqual(values["home_possession"], "<POSS")
-        self.assertEqual(values["guest_possession"], "     ")
-        self.assertEqual(values["ball_on"], "25")
-        self.assertEqual(values["down"], "4th")
-        self.assertEqual(values["to_go"], "15")
-        self.assertEqual(values["ball_on_side"], "H")
-        self.assertEqual(values["ball_on_copy"], "25")
-        self.assertEqual(values["ball_on_label"], "BALLON")
+        self.assertEqual(
+            values,
+            {
+                "main_clock": " 0:00",
+                "main_clock_copy_1": " 0:00",
+                "main_clock_copy_2": " 0:00",
+                "main_clock_copy_3": " 0:00",
+                "clock_at_zero": "z",
+                "main_clock_stopped": "s",
+                "timeout_clock": "        ",
+                "time_of_day": " 6:42:23",
+                "home_name": "VT                  ",
+                "guest_name": "GT                  ",
+                "home_short_name": "Tech      ",
+                "guest_short_name": "GUEST     ",
+                "home_score": "  34",
+                "guest_score": "  24",
+                "home_timeouts": "2",
+                "home_timeouts_copy": "2",
+                "guest_timeouts": "0",
+                "guest_timeouts_copy": "0",
+                "home_timeout_text": "     ",
+                "guest_timeout_text": "     ",
+                "quarter": " 4",
+                "quarter_text": "4TH ",
+                "quarter_description": "4TH Quarter ",
+                "unknown_160": "c",
+                "unknown_183": "66016001001",
+                "play_clock": "   40   ",
+                "home_possession": "<POSS",
+                "guest_possession": "     ",
+                "ball_on": "25",
+                "down": "4th",
+                "to_go": "15",
+                "ball_on_side": "H",
+                "ball_on_copy": "25",
+                "ball_on_label": "BALLON",
+            },
+        )
 
     def test_both_full_writes_leave_nothing_unmapped(self):
         display = rtd.Display()

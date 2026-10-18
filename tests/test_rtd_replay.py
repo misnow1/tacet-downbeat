@@ -124,6 +124,7 @@ class TestEvents(unittest.TestCase):
         replay, events = feed_all([datagram(START, real.frame(350, "abcd"))])
         (row,) = of_kind(events, "fault")
         self.assertEqual(row["fault"], "beyond-buffer")
+        self.assertIn("0350", str(row["raw"]))
         self.assertEqual(replay.summary.faults[rtd.Fault.BEYOND_BUFFER], 1)
 
     def test_unmapped_row(self):
@@ -286,6 +287,22 @@ class TestCommand(unittest.TestCase):
     def test_a_missing_argument_is_an_argparse_error(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             rtd_replay.main([])
+
+    def test_gap_must_be_positive(self):
+        for bad in ("0", "-1"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                rtd_replay.main(["x.pcap", "--gap", bad])
+
+    def test_a_closed_pipe_is_not_a_refusal(self):
+        class ClosedPipe(io.StringIO):
+            def write(self, text: str) -> int:
+                raise BrokenPipeError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "game.pcap"
+            path.write_bytes(clean_capture(real.TIME_OF_DAY))
+            code = rtd_replay.main([str(path)], out=ClosedPipe(), err=io.StringIO())
+        self.assertEqual(code, rtd_replay.EXIT_CLEAN)
 
     def test_console_script_is_declared(self):
         project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from collections.abc import Mapping
@@ -271,6 +272,16 @@ def render_summary(summary: Summary, final: Mapping[str, str | None], name: str)
     return "\n".join(lines) + "\n"
 
 
+def positive_seconds(text: str) -> float:
+    try:
+        seconds = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(f"must be more than 0: {text!r}")
+    return seconds
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="tacet-rtd",
@@ -281,7 +292,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"UDP destination port (default {DEFAULT_PORT})")
     p.add_argument(
         "--gap",
-        type=float,
+        type=positive_seconds,
         default=DEFAULT_GAP_SECONDS,
         metavar="SECONDS",
         help=f"report a gap when no RTD datagram arrives for longer than this (default {DEFAULT_GAP_SECONDS})",
@@ -307,6 +318,12 @@ def main(argv: list[str] | None = None, *, out: TextIO | None = None, err: TextI
     args = parser().parse_args(argv)
     try:
         replay = _replayed(args, out)
+    except BrokenPipeError:
+        # `tacet-rtd x.pcap | head`: the reader left, which is not our failure.
+        if out is sys.stdout:
+            # Python flushes stdout at exit; point it at devnull so that does not fail too.
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return EXIT_CLEAN
     except (pcap.PcapFormatError, OSError) as exc:
         print(f"tacet-rtd: {_ascii(str(exc))}", file=err)
         return EXIT_REFUSED
