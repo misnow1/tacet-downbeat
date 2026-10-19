@@ -495,6 +495,126 @@ command, and no dpkt, until `make install` is run once more after pulling
 
 ---
 
+## After the game: timeouts from RTD
+
+The operator taps a timeout's start and kind but cannot reliably tap its end
+(the operator is alone in the booth and watching the conductor), so the ends are
+late or from memory. The scoreboard knows when play is ready again.
+`tacet-timeouts` lays the log beside an RTD capture (see above), finds where the
+play clock stopped counting down, and proposes a corrected end for each tapped
+timeout. It reads two files and sends nothing; it is not run on the box during a
+game.
+
+```
+tacet-timeouts GAME.jsonl GAME.pcap            # read the report
+tacet-timeouts GAME.jsonl GAME.pcap --write    # append the proposals to the sidecar
+```
+
+`python -m tacet.timeouts` is the same tool run as a module; `--port` is as for
+`tacet-rtd`. The log is never edited. Without `--write` nothing is written.
+
+**A hold** is the time the play clock is not counting down, at any value, for at
+least 20 s. Game 4 showed that it is not only 25: an injury timeout is the clock
+reset to 40 and held, a stoppage after a change of possession (15:47) is 40
+held and then 25 held, and the away timeout and halftime are a countdown that
+froze at 25 by ticking 26 to 25 with no reset. After a play the board resets
+to 40 and waits, up to 14.5 s in game 4, before it ticks; that is ordinary and
+is under the 20 s. A hold starts at the
+end-of-play reset (or admin set) when there is one, and at the last tick when
+the countdown just froze; it ends at the first tick, which is ready-for-play, at
+most one tick late. The main clock is not read: it stops for every incomplete
+pass.
+
+**Matching** uses the tap's start only, because the end is what is being
+corrected. A tap whose start falls inside a hold, or up to 5 s before it,
+belongs to it, however late it was tapped (game 4's taps lagged by 1 to 105 s).
+The report row gives the tap, the hold, the **lead** (tap minus hold start) and
+the **shift** (corrected end minus tapped end), and a verdict:
+
+- `agrees`: the tapped end is within a second of ready-for-play.
+- `end-corrected`: it is not. The proposal moves the end to the first tick. It
+  applies to the tap with the latest end in a hold, and to any tap that ran past
+  ready-for-play.
+- `end-added`: the span was never ended; the proposal adds the end.
+- `nested`: the tap ended inside a hold that a later tap ends (an injury timeout
+  inside an official one). It is reported and not corrected.
+- `untrusted`: the hold has a **doubt**, so no correction is proposed from it:
+  `capture-start` (the capture began inside it), `source-changed` (the sending
+  address moved during it), `interrupted` (a gap in the capture touches it) or
+  `too-long` (over 600 s: pregame and halftime, never a timeout).
+- `no-stoppage`: the play clock was counting down when the timeout was tapped.
+- `outside-capture`: the capture does not cover the tap.
+
+A tap that spans several holds (a long one left open) matches the hold its start
+fell in and lists the later ones as `covers`. A countdown started by mistake and
+then reset splits one hold in two; the tap matches the part it falls in, which is
+a known limit.
+
+**Kind.** When exactly one team's timeouts-left value dropped during a trusted
+hold, a generic `timeout` tap is proposed as `timeout-home` or `timeout-away`
+(RTD's guest team is the log's away team). A tap of any other kind that
+disagrees is reported as a `KIND CONFLICT` and never changed. Both teams in one
+hold, and a team tap with no RTD mark, are notes.
+
+Below the table the report lists the holds no tap matched (with their doubts and
+team), team timeouts that fell outside every hold, and the proposals. Untapped
+team timeouts are reported only; they do not become new spans.
+
+**`--write`** appends the proposals to the corrections sidecar (below), beside
+the log: `2026-10-17-gt.jsonl` gives `2026-10-17-gt.corrections.jsonl`. A line
+already in the sidecar, from any source, covers its target, so a hand correction
+always wins and running `--write` twice adds nothing. Copy the sidecar to the NAS
+beside the log, and **rename it with the log**: the sidecar finds its log by
+name.
+
+**Exit codes.** `0` every tap matched a trusted hold and the capture is clean.
+`1` a tap was `untrusted`, `no-stoppage` or `outside-capture`, a kind conflicted,
+or the capture had faults or ends in the middle of a record. `2` it could not
+run: dpkt missing, an unreadable or corrupt log or capture, no RTD datagrams, a
+malformed sidecar (which is left untouched), bad arguments. Proposals, nested
+taps, holds with no tap and stray marks never fail the run.
+
+**Install.** Same as `tacet-rtd`: it needs dpkt, from the `analysis` extra that
+`make install` includes. A box installed before this change has no
+`tacet-timeouts` until `make install` is run once more after pulling.
+
+---
+
+## The corrections sidecar
+
+What a later look at a game says its log got wrong, kept beside the log and never
+merged into it. Schema v1: one JSON object per line, ASCII, UTF-8, **closed** (an
+unknown key, action or `v` is an error). `src/tacet/corrections.py` reads and
+writes it; applying it to the timeline is #21.
+
+Every line has `v` (always `1`), `action` (`supersede` or `add`), `source` (who
+says so: `rtd`, `post-game review`, later `asr`) and `reason` (in words), all
+required, and an optional `evidence` object that readers carry through untouched.
+
+- **`supersede`** replaces part of an existing entry, found by `seq`. It needs at
+  least one of `wall` (the corrected time, ISO 8601 with a timezone, on the log's
+  wall clock; the superseded entry's tap delay does not apply to it) and `event`
+  (a key in the event vocabulary). A span's kind is its start entry's `event`, so
+  supersede the start to reclassify a span, and the end entry to move its end.
+- **`add`** records an entry the log lacks: `event` and `wall`, both required;
+  `phase` (`start` or `end`) and `span_id`, required for a span and forbidden for
+  an instant (`span_id` is the log's own when adding a missing end); and optional
+  `project_seconds` (a finite number) and `data` (an object).
+
+Examples: the first is game 4's seq 637; the other two are illustrative (a
+generic timeout made the away team's, and a missing end added).
+
+```
+{"action":"supersede","evidence":{"capture":"rtd-game-4-gt.pcap","hold_end":"2026-10-17T22:02:56.995609+00:00","hold_start":"2026-10-17T22:00:06.496680+00:00","superseded_wall":"2026-10-17T22:09:02.595268+00:00"},"reason":"play clock counted down after a 170 s hold; the tapped end was 366 s late","seq":637,"source":"rtd","v":1,"wall":"2026-10-17T22:02:56.995609+00:00"}
+{"action":"supersede","event":"timeout-away","evidence":{"capture":"rtd-example.pcap","team":"guest","team_timeout":"2026-10-17T20:00:05.000000+00:00"},"reason":"the scoreboard's guest timeouts left dropped during a 40 s hold","seq":900,"source":"rtd","v":1}
+{"action":"add","event":"timeout","phase":"end","reason":"play clock counted down after a 60 s hold; the span was never ended","source":"rtd","span_id":"timeout-901","v":1,"wall":"2026-10-17T20:01:00.000000+00:00"}
+```
+
+The raw log is never edited. `--write` writes proposals; a person can append their
+own lines in the same format and they win.
+
+---
+
 ## Not yet proven
 
 Honest state of things, so nothing here reads as more settled than it is.
@@ -512,7 +632,8 @@ Honest state of things, so nothing here reads as more settled than it is.
   StageMix, whose refresh is slower than the ramp, so a fine stagger would not
   have shown. No reason to think there is one.
 - **RTD.** The decoder exists and replays the Game 4 capture (`tacet-rtd`,
-  above); the live reader is #95, and game timing is operator-tapped for now.
+  above); timeout ends now come from it, offline (`tacet-timeouts`, above). The
+  live reader is #95, and game timing during the game is operator-tapped for now.
   One thing about it is known in advance and will bite on the first attempt: the
   scoreboard console **does not send its state when something connects**. It
   sends only changes, so a reader started mid-game shows blanks until each field

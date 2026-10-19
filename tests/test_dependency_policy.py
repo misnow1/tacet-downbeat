@@ -268,6 +268,35 @@ class TestNumpyStaysOffTheBox(unittest.TestCase):
                     self.assertIn(alias.name.split(".")[0], allowed)
 
 
+#: The post-game timeout tools (#205). Each imports only the standard library at module level; dpkt
+#: reaches `timeouts` through `pcap`, lazily, when the command runs.
+TIMEOUT_MODULES = ("stoppages", "corrections", "timeouts")
+
+
+class TestTimeoutToolsStayStdlibOnly(unittest.TestCase):
+    def test_they_import_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for name in TIMEOUT_MODULES:
+            self.assertTrue((PACKAGE_ROOT / f"{name}.py").is_file(), f"{name}.py is missing")
+            for module in _imported_top_level_modules(PACKAGE_ROOT / f"{name}.py"):
+                self.assertIn(module, allowed, f"tacet.{name} imports {module!r}, which is not in the standard library")
+
+    def test_they_import_at_module_level_without_dpkt(self):
+        code = "import sys, tacet.stoppages, tacet.corrections, tacet.timeouts; sys.exit('dpkt' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, "importing the timeout tools pulled in dpkt")
+
+    def test_the_box_does_not_import_them(self):
+        code = f"import sys, tacet.serve; sys.exit(any(f'tacet.{{m}}' in sys.modules for m in {TIMEOUT_MODULES!r}))"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, "importing tacet.serve pulled in a post-game timeout tool")
+
+    def test_no_control_path_module_imports_them(self):
+        for name in CONTROL_PATH:
+            imported = _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py")
+            self.assertEqual(imported & set(TIMEOUT_MODULES), set(), name)
+
+
 #: The modules allowed to import dpkt: reading a capture after the game, never the box (#210).
 DPKT_MODULES = ("pcap",)
 
