@@ -4,8 +4,8 @@ This page gives the build order: what to build next, and why. The issues hold
 the detail and the decisions. This page holds only the order. Without it, the
 order lives only in the last conversation.
 
-Last updated 2026-10-11. Game 3 was played and debriefed (`game-3.md`). The
-Game 4 order below comes from that review.
+Last updated 2026-10-19. Game 4 was played and debriefed (`game-4.md`). The
+Game 5 order below comes from that review.
 
 ## Before Game 3
 
@@ -186,6 +186,8 @@ Alongside, not in the build order above:
 This order comes from the Game 3 debrief (2026-10-04). Things that the operator
 touches on the night come first. The layout change lands early, so the pre-game
 runthrough (about 10-14 or 10-15) is not the first time a thumb meets it.
+Game 4 was played on 2026-10-17, and every row is done. The Game 4 milestone has
+no open issues, and it closes with #214.
 
 | # | Issue | Why here |
 |---|---|---|
@@ -216,7 +218,9 @@ Game 5 or later:
 
 - [#160](https://github.com/misnow1/tacet-downbeat/issues/160). Metering
   readback may only remove trust. It needs a design.md amendment.
-- RTD (#95), unless the booth sniff happens the Friday before Game 4.
+- RTD (#95), unless the booth sniff happens the Friday before Game 4. The sniff
+  happened on the morning of Game 4, and the whole game was captured
+  (`game-4.md`).
 
 These issues moved to Game 5 on 2026-10-05 (#182), because they will not land
 for the 2026-10-17 game:
@@ -234,6 +238,87 @@ in it, and moved to Game 5:
 [#167](https://github.com/misnow1/tacet-downbeat/issues/167) (safety: confirm
 every band track is armed before kickoff, beyond the 8-track OSC bank) got the
 Game 5 milestone on the same day.
+
+## Game 5 (2026-11-14)
+
+This order comes from the Game 4 review (2026-10-17). As in the Game 4 order,
+things that the operator touches on the night come first. They land before the
+pre-game runthrough, so the runthrough is not the first time a thumb meets them.
+
+| # | Issue | Why here |
+|---|---|---|
+| ~~1~~ | ~~[#210](https://github.com/misnow1/tacet-downbeat/issues/210) An RTD decoder and a pcap replay tool~~ (done). ~~[#205](https://github.com/misnow1/tacet-downbeat/issues/205) Timeout ends from RTD~~ (done) | Done (#211, #213). `tacet-timeouts` corrects the tapped timeout ends from the RTD play clock. At Game 4 it corrected 15 of the 18 ends. It also fixed the corrections sidecar schema v1. No sidecar is written for Game 4 yet. Running `--write` on the real log is the maintainer's call |
+| 2 | [#202](https://github.com/misnow1/tacet-downbeat/issues/202) Overturned: a label that never moves the fader, in place of Score reversed | Score reversed is a fader release, but the operator taps it as a label. At Game 4 it faded the band at 16:38:49. A label must never move the fader. It comes first because it changes the fader column. The operator said "probably", so confirm the design with the operator before it is built |
+| 3 | [#203](https://github.com/misnow1/tacet-downbeat/issues/203) Scoring order: First down, Safety, Field goal, Touchdown, Defensive stop | The operator hunted for these buttons all through Game 4. It is a small change. It comes after #202, so that Overturned gets its place in the same group. Muscle memory still needs the runthrough |
+| 4 | [#204](https://github.com/misnow1/tacet-downbeat/issues/204) Warn on the page when Reaper's project is unsaved | Game 4 recorded 72.6 GB into `~/Documents/REAPER Media`, because the project was not saved before the take. It was fixed by hand after the game. The box notices it, so nobody has to remember a step. It warns and never blocks a take. The mirror script must report to the box, which it cannot do today |
+| 5 | [#167](https://github.com/misnow1/tacet-downbeat/issues/167) Confirm every band track is armed before kickoff | An unarmed track records nothing, and nothing can recover it. Today only the operator's eyes check it, and the OSC bank shows tracks 1 to 8 only. It comes after #204, because the mirror script's report to the box is one of its two options. Its plan decides between that and a larger OSC bank |
+| 6 | [#48](https://github.com/misnow1/tacet-downbeat/issues/48) Pin the page messages that gameday.md quotes | Rows 2 to 5 change what the page says, and gameday.md quotes the page. Pin the messages in tests before the runthrough, so the runthrough runs from a runbook that matches the page |
+| 7 | [#206](https://github.com/misnow1/tacet-downbeat/issues/206) design.md 8: correct RTD from the first capture | Docs only. design.md 8 disagrees with the capture on the checksum, the refresh and the source address. The decoder (#210) already follows the capture, and #212 and #95 read this section. No thumb meets it, so it can land beside rows 2 to 6 |
+| 8 | [#212](https://github.com/misnow1/tacet-downbeat/issues/212) Quarter and halftime spans from RTD | It follows #205. RTD marks kickoff and the end of every period, so the quarters need no taps. It reads only the clock-at-zero flag and the quarter field, never the main clock's value (the 20:00 slip at Game 4). It is offline and does not gate the game. With #205, it lets the single taps below drop their end taps |
+| 9 | [#71](https://github.com/misnow1/tacet-downbeat/issues/71) Accept only IP addresses for the console and Reaper hosts | Nothing is broken today, because the site config uses IP addresses. It closes the trap before somebody types a hostname. A lookup once at startup, with a warning, is acceptable (2026-09-14). Its refusal message goes in gameday.md, pinned by #48 |
+| 10 | [#42](https://github.com/misnow1/tacet-downbeat/issues/42) Constraint tests that would still pass with the constraint broken | Safety, with no change that the operator sees. #202 and #204 touch code that these tests guard: the annotation path and Reaper. It comes after them, so the tests check what ships |
+| 11 | [#132](https://github.com/misnow1/tacet-downbeat/issues/132), [#136](https://github.com/misnow1/tacet-downbeat/issues/136), [#134](https://github.com/misnow1/tacet-downbeat/issues/134), [#201](https://github.com/misnow1/tacet-downbeat/issues/201) Docs: CLAUDE.md and design.md wording, and the named commands | Wording only. #132 and #201 both change CLAUDE.md, which is project instructions, so they get their own PR. #136 and #134 are small design.md fixes that can go with it. No thumb meets them, so they come late |
+| 12 | [#187](https://github.com/misnow1/tacet-downbeat/issues/187) Docs: the control VLAN has an internet route | The page still loads nothing from other servers. Only the reason changes, from no route to resilience. Two decisions rest on the old claim and get a second look. The game-day route goes in gameday.md |
+
+Agreed in principle, and about to be filed: the timeout buttons, Last two
+minutes and Halftime exodus become single taps that mark the start only. RTD
+gives the timeout ends now (#205), and #212 gives the end of each period. When
+the band comes back from halftime does not matter, because it does not play
+again until the Q3 kickoff. It changes buttons that the operator taps, so once
+it is filed it goes beside #203, before the runthrough.
+
+Nice to have for Game 5:
+
+- [#49](https://github.com/misnow1/tacet-downbeat/issues/49) Mirror script
+  resume. The mirror script is open for #204 and #167 anyway. A queue that is
+  replaced between games resumes in the middle of the file.
+- [#47](https://github.com/misnow1/tacet-downbeat/issues/47) The config
+  accepts nonsense fade lengths. A typo can make the 2 s close instant.
+- [#46](https://github.com/misnow1/tacet-downbeat/issues/46) Truncated or
+  nested OSC raises the wrong error. Each bad packet gives a traceback, but the
+  socket survives.
+- [#43](https://github.com/misnow1/tacet-downbeat/issues/43) The marker
+  fallback assumes that the take started at project time 0. It is offline only,
+  and #158 fixed part of it.
+
+These issues join Game 5 with #214: #201, #206 and #212.
+
+These issues move to Game 6 with #214, because they will not land for the
+2026-11-14 game:
+
+- [#95](https://github.com/misnow1/tacet-downbeat/issues/95), the READY prompt
+  from RTD. It needs a live reader and an offline score first. #210 and the
+  Game 4 capture make the score possible now.
+- [#66](https://github.com/misnow1/tacet-downbeat/issues/66), live markers at
+  the playhead stamp. It changes the queue format on both sides, and offline
+  work already uses the stamps. Before Game 5, the mirror script changes only
+  for #204, #167 and #49.
+
+These issues leave the Game 5 milestone with #214, because no game waits on
+them:
+
+- #17 (DJ and video program as context), #18 (fader readback, which waits on
+  the bench capture), #21 (the Game 2 sidecar, which can now use the schema v1
+  from #205) and #133 (where offline labels live).
+- [#186](https://github.com/misnow1/tacet-downbeat/issues/186), Tailwind. A
+  restyle of the whole page is not for the last two games. Decide it after the
+  season.
+
+No milestone, because no game waits on them:
+
+- [#159](https://github.com/misnow1/tacet-downbeat/issues/159) and
+  [#188](https://github.com/misnow1/tacet-downbeat/issues/188), the Game 3
+  sidecar and audio labels. #188 waits on #133.
+- [#160](https://github.com/misnow1/tacet-downbeat/issues/160). Metering
+  readback may only remove trust. It needs a design.md amendment first. Game 6
+  or later.
+- [#207](https://github.com/misnow1/tacet-downbeat/issues/207), a forgotten
+  stand-down over halftime. It is a Phase 2 question, answered on the box when
+  Phase 2 is planned.
+- #199 and #200, the package layout and the docstrings. They come after the
+  season, never in a game week. #199 lands first.
+- #173 and #174, small Reaper follow-ups from #172 and #158.
+- #137, #68 and #56, unchanged.
 
 ## Keeping this current
 
