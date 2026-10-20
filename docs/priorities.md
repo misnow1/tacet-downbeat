@@ -250,7 +250,7 @@ meets a change is the game itself, so these land first and stay few.
 |---|---|---|
 | ~~1~~ | ~~[#210](https://github.com/misnow1/tacet-downbeat/issues/210) An RTD decoder and a pcap replay tool~~ (done). ~~[#205](https://github.com/misnow1/tacet-downbeat/issues/205) Timeout ends from RTD~~ (done) | Done (#211, #213). `tacet-timeouts` proposes corrected timeout ends from the RTD play clock. At Game 4 it found corrections for 15 of the 18 ends. It also set the corrections sidecar schema v1. No sidecar is written for Game 4 yet. Running `--write` on the real log is the maintainer's call |
 | 2 | [#202](https://github.com/misnow1/tacet-downbeat/issues/202) Overturned: a game annotation that never moves the fader, in place of Score reversed | Score reversed is a fader release, but the operator taps it as an annotation. At Game 4 it faded the band at 16:38:49. An annotation must never move the fader. It comes first because it changes the fader column. The operator said "probably", so confirm the design with the operator before it is built |
-| 3 | [#203](https://github.com/misnow1/tacet-downbeat/issues/203) Scoring order: First down, Safety, Field goal, Touchdown, Defensive stop | The operator hunted for these buttons all through Game 4. It is a small change. It comes after #202, so that Overturned gets its place in the same group. Muscle memory needs a runthrough, and Game 5 may not have one |
+| 3 | [#203](https://github.com/misnow1/tacet-downbeat/issues/203) Scoring order: First down, Safety, Field goal, Touchdown, Defensive stop | The operator hunted for these buttons all through Game 4. It is a small change. It comes after #202, so that Overturned gets its place in the same group. It lands with or without a runthrough: the operator knows the current layout and still misses with it, so there is no muscle memory to lose |
 | 4 | [#204](https://github.com/misnow1/tacet-downbeat/issues/204) Warn on the page when Reaper's project is unsaved | Game 4 recorded 72.6 GB into `~/Documents/REAPER Media`, because the project was not saved before the take. It was fixed by hand after the game. The box notices it, so nobody has to remember a step. It warns and never blocks a take. The mirror script must report to the box, which it cannot do today |
 | 5 | [#167](https://github.com/misnow1/tacet-downbeat/issues/167) Confirm every band track is armed before kickoff | An unarmed track records nothing, and nothing can recover it. Today only the operator's eyes check it, and the OSC bank shows tracks 1 to 8 only. It comes after #204, because the mirror script's report to the box is one of its two options. Its plan decides between that and a larger OSC bank |
 | 6 | [#48](https://github.com/misnow1/tacet-downbeat/issues/48) Pin the page messages that gameday.md quotes | Rows 2 to 5 change what the page says, and gameday.md quotes the page. Pin the messages in tests before the game, so the runbook matches the page on the night |
@@ -266,8 +266,8 @@ minutes and Halftime exodus become single taps that mark the start only. RTD
 gives the timeout ends now (#205), and #212 gives the end of each period. When
 the band comes back from halftime does not matter, because it does not play
 again until the Q3 kickoff. It changes buttons that the operator taps, so once
-it is filed it goes beside #203. If Game 5 has no runthrough, whether it lands
-for Game 5 at all is the maintainer's call.
+it is filed it goes beside #203. Like #203, it lands with or without a
+runthrough. It takes away taps the operator already misses.
 
 Nice to have for Game 5:
 
