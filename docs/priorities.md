@@ -186,8 +186,8 @@ Alongside, not in the build order above:
 This order comes from the Game 3 debrief (2026-10-04). Things that the operator
 touches on the night come first. The layout change lands early, so the pre-game
 runthrough (about 10-14 or 10-15) is not the first time a thumb meets it.
-Game 4 was played on 2026-10-17, and every row is done. The Game 4 milestone has
-no open issues, and it closes with #214.
+Game 4 was played on 2026-10-17, and every row is done. The Game 4 milestone was
+closed on 2026-10-19 with no open issues.
 
 | # | Issue | Why here |
 |---|---|---|
