@@ -76,9 +76,10 @@ def select(proposed: dict[str, list[Candidate]], quotas: dict[str, int]) -> list
                 break
             hits = [c for c in chosen if overlaps(cand, c)]
             if hits and cls == model.CANNON:
-                if "hit_t" in cand.evidence:
+                hit = cand.evidence.get("hit_t", cand.evidence.get("relaxed_hit_t"))
+                if hit is not None:
                     for pat in (c for c in hits if c.cls == model.PAT_QUIET):
-                        evidence = {**pat.evidence, "cannon_hit_t": cand.evidence["hit_t"]}
+                        evidence = {**pat.evidence, "cannon_hit_t": hit}
                         chosen[chosen.index(pat)] = replace(pat, evidence=evidence)
                 trimmed = trim_cannon(cand, hits)
                 if trimmed is None or any(overlaps(trimmed, c) for c in chosen):

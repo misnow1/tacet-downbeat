@@ -639,16 +639,23 @@ def propose_cannon(ctx: Ctx) -> list[Candidate]:
         for h in relaxed[:3]:
             print("    relaxed: " + describe_hit(ctx, h, score))
         if relaxed:
-            ev = hit_evidence(relaxed[0], score) | {"hit": False, "relaxed_hit": True}
+            offsets = [round(h.t - score, 1) for h in relaxed[:3]]
+            ev = {
+                "hit": False,
+                "relaxed_hit": True,
+                "relaxed_hit_t": [round(h.t, 3) for h in relaxed[:3]],
+                "relaxed_from_score_s": offsets,
+                "channels": relaxed[0].ev.channels,
+            }
             why = (
-                f"no strict hit; relaxed ({RELAXED_RISE_DB:.0f} dB, {RELAXED_SHARP_DB:.0f} dB sharp, "
-                f"{RELAXED_CHANNELS} mics) hit {relaxed[0].ev.channels}/13 mics near {label}"
+                f"relaxed hit at {offsets[0]:+.1f} s from score, unreliable (relaxed tier passes ~95% of "
+                f"entrances); {RELAXED_CHANNELS}+ mics, {relaxed[0].ev.channels}/13 near {label}; "
+                "20 s clip from the score"
             )
-            t0, t1 = relaxed[0].t - CANNON_CLIP_PAD_S, relaxed[0].t + CANNON_CLIP_PAD_S
         else:
             ev = {"hit": False}
             why = f"no coincidence hit, strict or relaxed; 20 s from the score at {label}"
-            t0, t1 = score + CANNON_FALLBACK_CLIP[0], score + CANNON_FALLBACK_CLIP[1]
+        t0, t1 = score + CANNON_FALLBACK_CLIP[0], score + CANNON_FALLBACK_CLIP[1]
         found.append(Candidate(ctx.game.id, model.CANNON, t0, t1, source, why, ev))
     safety = safety_window(ctx)
     if safety is not None:
