@@ -14,6 +14,10 @@ CANNON_HIGHPASS_ORDER = 4
 CANNON_FRAME_S = 0.01
 CANNON_RISE_DB = 15.0
 CANNON_MIN_CHANNELS = 10
+#: And a step of at least this against frames 20-30 ms earlier: a blast, not a roar or drum roll climbing.
+CANNON_SHARP_RISE_DB = 10.0
+SHARP_NEAR_FRAMES = 2
+SHARP_FAR_FRAMES = 3
 CANNON_COINCIDENCE_S = 0.1
 #: Rise is measured against frames [n - BASE_FAR, n - BASE_NEAR].
 BASELINE_FAR_FRAMES = 60
@@ -25,6 +29,9 @@ WHISTLE_NFFT = 1024
 WHISTLE_HOP = 480
 WHISTLE_BAND_HZ = (1500.0, 5000.0)
 WHISTLE_PROMINENCE_DB = 15.0
+WHISTLE_EDGE_BINS = 2
+WHISTLE_EXCLUDE_BINS = 2
+WHISTLE_NEIGHBOURHOOD_HZ = 500.0
 WHISTLE_MIN_S = 0.15
 WHISTLE_MAX_S = 3.0
 WHISTLE_PEAK_SPREAD_HZ = 200.0
@@ -61,8 +68,17 @@ class CoincidenceEvent:
     frame: int
     channels: int
     median_rise_db: float
+    median_sharp_db: float
     spread_ms: float
     offsets_ms: list[float | None] = field(default_factory=list)
+
+
+def sharp_db_of(frames: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Each frame minus the louder of the frames 20 and 30 ms before it."""
+    out = np.zeros_like(frames)
+    before = np.maximum(frames[:-SHARP_FAR_FRAMES], frames[SHARP_FAR_FRAMES - SHARP_NEAR_FRAMES : -SHARP_NEAR_FRAMES])
+    out[SHARP_FAR_FRAMES:] = frames[SHARP_FAR_FRAMES:] - before
+    return out
 
 
 def onset_coincidence(
@@ -71,13 +87,15 @@ def onset_coincidence(
     *,
     rise_threshold_db: float = CANNON_RISE_DB,
     min_channels: int = CANNON_MIN_CHANNELS,
+    sharp_db: float = CANNON_SHARP_RISE_DB,
 ) -> list[CoincidenceEvent]:
     """frames_db[ch, n]: events where >= CANNON_MIN_CHANNELS channels start a >=15 dB rise within 0.1 s.
 
     Best first. Events closer than EVENT_MERGE_S keep only the better one.
     """
     rise = np.stack([rise_db(row) for row in frames_db])
-    hot = rise >= rise_threshold_db
+    sharp = np.stack([sharp_db_of(row) for row in frames_db])
+    hot = (rise >= rise_threshold_db) & (sharp >= sharp_db)
     edge = hot.copy()
     edge[:, 1:] &= ~hot[:, :-1]
     span = round(CANNON_COINCIDENCE_S / frame_s)
@@ -89,24 +107,32 @@ def onset_coincidence(
     count = (ahead > 0).sum(axis=0)
     events: list[CoincidenceEvent] = []
     for start in np.flatnonzero((count >= min_channels) & (np.r_[0, count[:-1]] < min_channels)):
-        events.append(_describe(rise, edge, int(start), span, frame_s, int(count[start:][: span + 1].max())))
+        events.append(_describe(rise, sharp, edge, int(start), span, frame_s, int(count[start:][: span + 1].max())))
     return _merge(events, frame_s)
 
 
 def _describe(
-    rise: NDArray[np.float32], edge: NDArray[np.bool_], start: int, span: int, frame_s: float, channels: int
+    rise: NDArray[np.float32],
+    sharp: NDArray[np.float32],
+    edge: NDArray[np.bool_],
+    start: int,
+    span: int,
+    frame_s: float,
+    channels: int,
 ) -> CoincidenceEvent:
     firsts: list[int | None] = []
     rises: list[float] = []
+    sharps: list[float] = []
     for ch in range(edge.shape[0]):
         hits = np.flatnonzero(edge[ch, start : start + span + 1])
         firsts.append(start + int(hits[0]) if len(hits) else None)
         if len(hits):
             rises.append(float(rise[ch, start + int(hits[0])]))
+            sharps.append(float(sharp[ch, start + int(hits[0])]))
     earliest = min(m for m in firsts if m is not None)
     offsets = [None if m is None else round((m - earliest) * frame_s * 1000, 1) for m in firsts]
     spread = max(o for o in offsets if o is not None)
-    return CoincidenceEvent(earliest, channels, float(np.median(rises)), spread, offsets)
+    return CoincidenceEvent(earliest, channels, float(np.median(rises)), float(np.median(sharps)), spread, offsets)
 
 
 def _merge(events: list[CoincidenceEvent], frame_s: float) -> list[CoincidenceEvent]:
@@ -135,19 +161,29 @@ class WhistleFrames:
 
 
 def whistle_frames(x: NDArray[np.float32], rate: int) -> WhistleFrames:
-    """Per STFT frame: peak minus band median in 1.5-5 kHz, and where the peak is."""
+    """Per STFT frame: the peak's prominence over its local neighbourhood, and where the peak is.
+
+    A peak within WHISTLE_EDGE_BINS of either edge of the band is rejected (prominence 0).
+    Prominence is the peak minus the median of the bins within +/-500 Hz, excluding +/-2 bins around it.
+    """
     if len(x) < WHISTLE_NFFT:
         return WhistleFrames(np.zeros(0, dtype=np.float32), np.zeros(0, dtype=np.float32))
     width = rate / WHISTLE_NFFT
     lo, hi = math.ceil(WHISTLE_BAND_HZ[0] / width), math.floor(WHISTLE_BAND_HZ[1] / width) + 1
+    reach = math.ceil(WHISTLE_NEIGHBOURHOOD_HZ / width)
     frames = np.lib.stride_tricks.sliding_window_view(x, WHISTLE_NFFT)[::WHISTLE_HOP]
     window = signal.windows.hann(WHISTLE_NFFT, sym=False).astype(np.float32)
-    mag = np.abs(np.fft.rfft(frames * window, axis=1)[:, lo:hi])
+    mag = np.abs(np.fft.rfft(frames * window, axis=1)[:, lo - reach : hi + reach])
     db = 20 * np.log10(mag + MAG_FLOOR)
-    peak = db.max(axis=1)
-    prominence = peak - np.median(db, axis=1)
-    peak_hz = (np.argmax(db, axis=1) + lo) * width
-    return WhistleFrames(prominence.astype(np.float32), peak_hz.astype(np.float32))
+    band = db[:, reach : reach + (hi - lo)]
+    at = np.argmax(band, axis=1)
+    peak = band[np.arange(len(band)), at]
+    offsets = np.array([d for d in range(-reach, reach + 1) if abs(d) > WHISTLE_EXCLUDE_BINS])
+    around = db[np.arange(len(db))[:, None], (at + reach)[:, None] + offsets[None, :]]
+    prominence = peak - np.median(around, axis=1)
+    interior = (at >= WHISTLE_EDGE_BINS) & (at < band.shape[1] - WHISTLE_EDGE_BINS)
+    prominence = np.where(interior, prominence, 0.0)
+    return WhistleFrames(prominence.astype(np.float32), ((at + lo) * width).astype(np.float32))
 
 
 @dataclass(frozen=True)

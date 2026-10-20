@@ -16,7 +16,7 @@ ENTRANCE_WHISTLE = "entrance-whistle"
 REJECT = "reject"
 
 #: Overlap priority: earlier wins.
-PRIORITY = (CANNON, PAT_QUIET, ENTRANCE_DRUMS, ENTRANCE_WHISTLE, WHISTLE, BAND_LOUD, CROWD_PA, CROWD)
+PRIORITY = (PAT_QUIET, CANNON, ENTRANCE_DRUMS, ENTRANCE_WHISTLE, WHISTLE, BAND_LOUD, CROWD_PA, CROWD)
 CLASSES = frozenset(PRIORITY)
 UNLIMITED = 99
 DEFAULT_QUOTAS = {
@@ -35,6 +35,7 @@ CONTEXT_PREFIX = "SPIKE-CONTEXT"
 NAME_SEP = "|"
 CONTEXT_SAFETY_SEARCH = "safety-search"
 CONTEXT_SAFETY = "safety"
+CONTEXT_RUN = "run"
 
 
 @dataclass(frozen=True)
@@ -48,8 +49,9 @@ class Candidate:
     evidence: dict[str, Any] = field(default_factory=dict)
     id: str = ""
 
-    def as_row(self) -> dict[str, Any]:
+    def as_row(self, run: str = "") -> dict[str, Any]:
         return {
+            "run": run,
             "id": self.id,
             "game": self.game,
             "class": self.cls,

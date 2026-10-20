@@ -51,10 +51,30 @@ def read_candidates(game: games.Game) -> dict[str, dict[str, object]]:
     return {str(r["id"]): r for r in rows}
 
 
-def problems(parsed: list[Parsed]) -> list[str]:
-    bad = [f"unknown class {p.cls!r} (id {p.ident!r})" for p in parsed if p.cls not in model.CLASSES | {model.REJECT}]
-    counts = Counter(p.ident for p in parsed if not p.ident.startswith(NEW_PREFIX))
+def problems(parsed: list[Parsed], candidates: dict[str, dict[str, object]]) -> list[str]:
+    bad: list[str] = []
+    for p in parsed:
+        label = f"SPIKE|{p.cls}|{p.ident}"
+        if p.cls not in model.CLASSES | {model.REJECT}:
+            bad.append(f"unknown class {p.cls!r} in {label!r}")
+        elif not p.ident:
+            bad.append(f"empty id in {label!r}")
+        elif p.ident.startswith(NEW_PREFIX):
+            if p.cls == model.REJECT:
+                bad.append(f"{label!r}: a new region cannot be rejected; delete it instead")
+        elif p.ident not in candidates:
+            bad.append(f"unknown id {p.ident!r} in {label!r} (is it a typo for one of {sorted(candidates)[:3]}...?)")
+    counts = Counter(p.ident for p in parsed if p.ident and not p.ident.startswith(NEW_PREFIX))
     return bad + [f"duplicate id {i!r} x{n}" for i, n in counts.items() if n > 1]
+
+
+def run_problems(runs: list[str], candidates: dict[str, dict[str, object]]) -> list[str]:
+    tokens = {str(r.get("run", "")) for r in candidates.values()}
+    if len(runs) != 1:
+        return [f"expected exactly one run region SPIKE-CONTEXT|run|<token>, found {len(runs)}"]
+    if tokens != {runs[0]}:
+        return [f"run token mismatch: project has {runs[0]!r}, candidates file has {sorted(tokens)}"]
+    return []
 
 
 def decide(game: games.Game, candidates: dict[str, dict[str, object]], parsed: list[Parsed]) -> list[dict[str, object]]:
@@ -114,18 +134,27 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     game = games.GAMES[args.game]
     text = game.spike_rpp.read_bytes().decode("utf-8", errors="surrogateescape")
-    found = rpp.read_regions(text)
-    context = [
-        {"name": f.name, "start": round(f.start, 3), "end": round(f.end, 3)}
-        for f in found
-        if f.name.startswith(model.CONTEXT_PREFIX + model.NAME_SEP)
-    ]
-    clips = [split_name(f) for f in found if f.name.startswith(model.REGION_PREFIX + model.NAME_SEP)]
-    bad = problems(clips)
+    bad: list[str] = []
+    found = rpp.read_regions(text, bad)
+    context: list[dict[str, object]] = []
+    runs: list[str] = []
+    clips: list[Parsed] = []
+    run_prefix = model.NAME_SEP.join((model.CONTEXT_PREFIX, model.CONTEXT_RUN, ""))
+    for f in found:
+        if f.name.startswith(run_prefix):
+            runs.append(f.name.removeprefix(run_prefix))
+        elif f.name.startswith(model.CONTEXT_PREFIX + model.NAME_SEP):
+            context.append({"name": f.name, "start": round(f.start, 3), "end": round(f.end, 3)})
+        elif f.name.startswith(model.REGION_PREFIX + model.NAME_SEP):
+            clips.append(split_name(f))
+        elif rpp.is_spike_name(f.name):
+            bad.append(f"region {f.name!r} looks like ours but the prefix is not SPIKE| or SPIKE-CONTEXT|")
+    candidates = read_candidates(game)
+    bad += problems(clips, candidates) + run_problems(runs, candidates)
     if bad:
         print("refusing:\n  " + "\n  ".join(bad), file=sys.stderr)
         return EXIT_BAD
-    rows = decide(game, read_candidates(game), clips)
+    rows = decide(game, candidates, clips)
     for r in rows:
         if r["decision"] in (KEPT, FIXED, ADDED) and r["start"] is not None:
             length = float(str(r["end"])) - float(str(r["start"]))

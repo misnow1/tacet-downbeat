@@ -10,7 +10,9 @@ import argparse
 import json
 import sys
 import time
+import uuid
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,10 +40,31 @@ COLORS = {
 }
 CONTEXT_COLOR = (90, 90, 90)
 EXIT_REFUSED = 2
+MIN_TRIMMED_CANNON_S = 5.0
+RUN_REGION_S = 1.0
+RUN_TOKEN_CHARS = 12
 
 
 def overlaps(a: Candidate, b: Candidate) -> bool:
     return a.start < b.end and b.start < a.end
+
+
+def trim_cannon(cand: Candidate, others: list[Candidate]) -> Candidate | None:
+    """The cannon clip with the overlap cut away on the side without the hit, or None if too little is left."""
+    start, end = cand.start, cand.end
+    hit = cand.evidence.get("hit_t")
+    for other in others:
+        if not (start < other.end and other.start < end):
+            continue
+        before, after = other.start - start, end - other.end
+        keep_before = (hit < other.start) if isinstance(hit, float) else before >= after
+        if keep_before:
+            end = other.start
+        else:
+            start = other.end
+    if end - start < MIN_TRIMMED_CANNON_S or (isinstance(hit, float) and not start <= hit <= end):
+        return None
+    return replace(cand, start=start, end=end, why=cand.why + f" (trimmed to {end - start:.0f} s to clear a PAT clip)")
 
 
 def select(proposed: dict[str, list[Candidate]], quotas: dict[str, int]) -> list[Candidate]:
@@ -51,7 +74,17 @@ def select(proposed: dict[str, list[Candidate]], quotas: dict[str, int]) -> list
         for cand in proposed.get(cls, []):
             if taken >= quotas.get(cls, 0):
                 break
-            if any(overlaps(cand, c) for c in chosen):
+            hits = [c for c in chosen if overlaps(cand, c)]
+            if hits and cls == model.CANNON:
+                if "hit_t" in cand.evidence:
+                    for pat in (c for c in hits if c.cls == model.PAT_QUIET):
+                        evidence = {**pat.evidence, "cannon_hit_t": cand.evidence["hit_t"]}
+                        chosen[chosen.index(pat)] = replace(pat, evidence=evidence)
+                trimmed = trim_cannon(cand, hits)
+                if trimmed is None or any(overlaps(trimmed, c) for c in chosen):
+                    continue
+                cand = trimmed
+            elif hits:
                 continue
             chosen.append(cand)
             taken += 1
@@ -59,8 +92,6 @@ def select(proposed: dict[str, list[Candidate]], quotas: dict[str, int]) -> list
 
 
 def assign_ids(chosen: list[Candidate], prefix: str) -> list[Candidate]:
-    from dataclasses import replace
-
     ordered = sorted(chosen, key=lambda c: c.start)
     return [replace(c, id=f"{prefix}-{i:02d}") for i, c in enumerate(ordered, start=1)]
 
@@ -142,6 +173,13 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     game = games.GAMES[args.game]
     quotas = parse_quotas(args.quota)
+    if args.only and not args.dry_run:
+        print("--only implies --dry-run: a partial set is never written")
+        args.dry_run = True
+    stale = games.OUT_DIR / f"{game.id}.clips.jsonl"
+    if not args.dry_run and stale.exists():
+        print(f"refusing: {stale} holds decisions from an earlier run; move it aside first", file=sys.stderr)
+        return EXIT_REFUSED
     if not args.dry_run and game.spike_rpp.exists():
         print(f"refusing: {game.spike_rpp} exists; move or delete it first", file=sys.stderr)
         return EXIT_REFUSED
@@ -160,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(f"dry run: nothing written ({time.time() - started:.0f} s)")
         return 0
-    write_outputs(game, chosen, context_regions(game, ctx))
+    write_outputs(game, chosen, context_regions(game, ctx), uuid.uuid4().hex[:RUN_TOKEN_CHARS])
     print(f"done in {time.time() - started:.0f} s")
     return 0
 
@@ -175,14 +213,16 @@ def print_table(proposed: dict[str, list[Candidate]], chosen: list[Candidate]) -
         print(f"  {c.id} {c.cls:<17}{c.start:9.1f} {c.end:9.1f}  {c.why}")
 
 
-def write_outputs(game: games.Game, chosen: list[Candidate], context: list[rpp.Region]) -> None:
+def write_outputs(game: games.Game, chosen: list[Candidate], context: list[rpp.Region], run: str) -> None:
     games.OUT_DIR.mkdir(parents=True, exist_ok=True)
+    run_name = model.NAME_SEP.join((model.CONTEXT_PREFIX, model.CONTEXT_RUN, run))
+    context = [*context, rpp.Region(run_name, 0.0, RUN_REGION_S, rpp.native_color(*CONTEXT_COLOR))]
     text = game.rpp.read_bytes().decode("utf-8", errors="surrogateescape")
     new_text = rpp.insert_regions(text, regions_for(chosen, context))
     assert game.spike_rpp != game.rpp
     game.spike_rpp.write_bytes(new_text.encode("utf-8", errors="surrogateescape"))
-    write_jsonl(games.OUT_DIR / f"{game.id}.candidates.jsonl", [c.as_row() for c in chosen])
-    print(f"wrote {game.spike_rpp} ({len(chosen)} regions, {len(context)} context)")
+    write_jsonl(games.OUT_DIR / f"{game.id}.candidates.jsonl", [c.as_row(run) for c in chosen])
+    print(f"wrote {game.spike_rpp} ({len(chosen)} regions, {len(context)} context incl. run {run})")
 
 
 if __name__ == "__main__":

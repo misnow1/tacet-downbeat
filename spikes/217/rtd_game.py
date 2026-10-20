@@ -107,6 +107,16 @@ def plays(rep: Replayed, take_start: float) -> list[Play]:
     return found
 
 
+def snaps(rep: Replayed, take_start: float) -> list[float]:
+    """Every snap: the play clock jumping to 40 from 1-39, gaps or not."""
+    out = []
+    for f in rep.fields:
+        old, new = _clock(f.old), _clock(f.new)
+        if f.name == rtd.PLAY_CLOCK.name and new == PLAY_CLOCK_FULL and old is not None and 1 <= old < PLAY_CLOCK_FULL:
+            out.append(f.t - take_start)
+    return out
+
+
 def clock_stops(rep: Replayed, take_start: float) -> list[float]:
     return [
         f.t - take_start

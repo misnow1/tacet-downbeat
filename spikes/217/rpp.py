@@ -50,8 +50,18 @@ def _lines_for(index: int, region: Region, eol: str) -> list[str]:
     return [first + eol, second + eol]
 
 
-def _marker_parts(lines: list[str]) -> list[list[str]]:
-    return [shlex.split(line.strip()) for line in lines if MARKER_LINE.match(line)]
+def _marker_parts(lines: list[str]) -> tuple[list[list[str]], list[str]]:
+    """Split every top-level MARKER line; lines shlex cannot split (an apostrophe) come back as bad."""
+    good: list[list[str]] = []
+    bad: list[str] = []
+    for line in lines:
+        if not MARKER_LINE.match(line):
+            continue
+        try:
+            good.append(shlex.split(line.strip()))
+        except ValueError:
+            bad.append(line.strip())
+    return good, bad
 
 
 def insert_regions(text: str, regions: list[Region]) -> str:
@@ -59,7 +69,9 @@ def insert_regions(text: str, regions: list[Region]) -> str:
     lines = text.split("\n")
     eol = EOL_CR if lines and lines[0].endswith(EOL_CR) else ""
     # Markers and regions are numbered separately in Reaper (M1 and R1 coexist).
-    indexes = [int(p[1]) for p in _marker_parts(lines) if int(p[4]) & REGION_FLAG]
+    good, bad = _marker_parts(lines)
+    indexes = [int(p[1]) for p in good if int(p[4]) & REGION_FLAG]
+    indexes += [int(m.group(1)) for line in bad if (m := MARKER_LINE.match(line))]
     marker_rows = [i for i, line in enumerate(lines) if MARKER_LINE.match(line)]
     first_track = next((i for i, line in enumerate(lines) if TRACK_OR_BAY.match(line)), len(lines))
     at = marker_rows[-1] + 1 if marker_rows else first_track
@@ -83,18 +95,30 @@ class Found:
     end: float
 
 
-def read_regions(text: str) -> list[Found]:
-    """Every region in the project, in file order of the named line. Order-independent pairing."""
+def is_spike_name(name: str) -> bool:
+    return "spike" in name.lower()
+
+
+def read_regions(text: str, problems: list[str] | None = None) -> list[Found]:
+    """Every region in the project. Pairing is order-independent.
+
+    Anything that looks like ours (the name has "spike" in it, any case) but cannot be read as a region
+    is appended to `problems` instead of being dropped.
+    """
+    issues = problems if problems is not None else []
+    good, bad = _marker_parts(text.split("\n"))
+    issues += [f"unreadable marker line (apostrophe or stray quote?): {line}" for line in bad if is_spike_name(line)]
     by_index: dict[int, list[tuple[str, float]]] = {}
-    for parts in _marker_parts(text.split("\n")):
+    for parts in good:
         index, pos, name, flags = int(parts[1]), float(parts[2]), parts[3], int(parts[4])
         if flags & REGION_FLAG:
             by_index.setdefault(index, []).append((name, pos))
     found: list[Found] = []
-    for rows in by_index.values():
+    for index, rows in by_index.items():
         named = [r for r in rows if r[0]]
-        if len(rows) != 2 or len(named) != 1:
-            continue
-        positions = sorted(p for _, p in rows)
-        found.append(Found(named[0][0], positions[0], positions[1]))
+        if len(rows) == 2 and len(named) == 1:
+            positions = sorted(p for _, p in rows)
+            found.append(Found(named[0][0], positions[0], positions[1]))
+        elif any(is_spike_name(n) for n, _ in named):
+            issues.append(f"region index {index} ({', '.join(n for n, _ in named)}) is not exactly one start/end pair")
     return found
