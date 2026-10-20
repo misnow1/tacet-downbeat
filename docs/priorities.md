@@ -261,12 +261,12 @@ meets a change is the game itself, so these land first and stay few.
 | 11 | [#132](https://github.com/misnow1/tacet-downbeat/issues/132), [#136](https://github.com/misnow1/tacet-downbeat/issues/136), [#134](https://github.com/misnow1/tacet-downbeat/issues/134), [#201](https://github.com/misnow1/tacet-downbeat/issues/201) Docs: CLAUDE.md and design.md wording, and the named commands | Wording only. #132 and #201 both change CLAUDE.md, which is project instructions, so they share a PR of their own. #136 and #134 are small design.md fixes that can go in it. No thumb meets them, so they come late |
 | 12 | [#187](https://github.com/misnow1/tacet-downbeat/issues/187) Docs: the control VLAN has an internet route | The page still loads nothing from other servers. Only the reason changes, from no route to resilience. Two decisions rest on the old claim and get a second look. The game-day route goes in gameday.md |
 
-Agreed in principle, and about to be filed: the timeout buttons, Last two
-minutes and Halftime exodus become single taps that mark the start only. RTD
-gives the timeout ends now (#205), and #212 gives the end of each period. When
-the band comes back from halftime does not matter, because it does not play
-again until the Q3 kickoff. It changes buttons that the operator taps, so once
-it is filed it goes beside #203. Like #203, it lands with or without a
+[#216](https://github.com/misnow1/tacet-downbeat/issues/216) (Game 5): the
+timeout buttons, Last two minutes and Halftime exodus become single taps that
+mark the start only. RTD gives the timeout ends now (#205), and #212 gives the
+end of each period. When the band comes back from halftime does not matter,
+because it does not play again until the Q3 kickoff. It changes buttons that the
+operator taps, so it goes beside #203. Like #203, it lands with or without a
 runthrough. It takes away taps the operator already misses.
 
 Nice to have for Game 5:
