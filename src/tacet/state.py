@@ -17,7 +17,7 @@
 
         IDLE ---(ready)---> READY ---(any trigger, fast)---> OPEN
                                |
-                 (score reversed, or stand down: the ordinary 2 s fade)
+                 (faded out, or stand down: the ordinary 2 s fade)
                                v
                            RELEASING
 
@@ -95,7 +95,7 @@ class State(StrEnum):
     IDLE = "idle"
     #: The fader is riding, or has ridden, to a hold level short of target -
     #: something good happened for the home team, the band is not yet playing.
-    #: Any trigger takes it the rest of the way; a score reversed or a
+    #: Any trigger takes it the rest of the way; Faded out or a
     #: stand-down fades it like an ordinary close (#6).
     READY = "ready"
     #: DCA at unity.
@@ -582,7 +582,7 @@ def _ready(machine: Machine, event: Event) -> Outcome:
         # unlike OPEN's own `riding_in` snap (#6).
         return _opening(machine, event)
     if event.command is Command.RELEASE:
-        # Score reversed, or a plain close: the same 2 s fade as any other
+        # A plain close: the same 2 s fade as any other
         # close. The band may have quietly started, so this is never a snap.
         return _closing(machine, pending_stand_down=False)
     if event.command is Command.STAND_DOWN:

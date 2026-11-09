@@ -380,11 +380,11 @@ VOCABULARY: tuple[EventType, ...] = (
     _instant("up-drums", "Up on drums", Category.FADER, action=Action.OPEN),
     _instant("up-slow", "Up slow, missed the start", Category.FADER, action=Action.OPEN_SLOW),
     _instant("out", "Faded out", Category.FADER, action=Action.RELEASE),
-    # The same 2 s fade as "out", in one tap, next to it: a slip between the
-    # two does the same thing to the fader and only mislabels the log. Only
-    # for abandoning a READY - if the band is already playing when a review
-    # lands, this is not tapped; see design.md and #6.
-    _instant("score-reversed", "Score reversed", Category.FADER, action=Action.RELEASE),
+    # Retired in #202: an annotation must never move the fader, and this one
+    # did. Game 3 and 4 logs carry the key, so it stays in the vocabulary. It
+    # stays FADER because old queues carry `FDR|score-reversed`. READY's way
+    # out is "out".
+    _instant("score-reversed", "Score reversed", Category.FADER, button=False),
     # Detector was wrong. Useful long before a detector exists, because the
     # operator can mark what one would have got wrong.
     _instant("false-open", "Detector wrong: false open", Category.DETECTOR),

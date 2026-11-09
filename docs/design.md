@@ -178,7 +178,7 @@ fader is up with no band. A detector trained on where the fader was would learn
 that crowd cheering means open, the amplitude failure §1 describes; keeping the
 two apart is what §9 is for. As an operator act it is harmless, since the ball
 is dead. If the DJ or the other band plays instead (mostly Q4), it is pulled
-back quietly under the cheering with Score reversed, the ordinary 2 s fade. The
+back quietly under the cheering with Faded out, the ordinary 2 s fade. The
 box never does this by itself, in any phase (§6.4).
 
 **The cannon.** It fires on a touchdown or a field goal: a broadband
@@ -361,7 +361,7 @@ What the flag gates is absolute against relative:
   ride to the hold level, the slow open, and the retarget ride (#128). Each is
   refused while the level is unknown, with the reason on the page. Refused, not queued - a tap held back
   and run later runs on a belief nobody has looked at since. The page also
-  greys the four column buttons that make these moves, in place, so the refusal
+  greys the three column buttons that make these moves, in place, so the refusal
   is rarely reached.
 - `ARM` is refused too. It sends nothing and calls the fader closed, which only
   a known level makes true.
@@ -786,7 +786,7 @@ READY sits beside IDLE, entered only by the operator:
 ```
 IDLE ──(operator: band likely)──> READY ──(any trigger)──> OPEN
                                     |
-            score reversed, stand down, or a plain fade
+                         Faded out or stand down
                                     v
                               RELEASING (2 s fade)
 ```
@@ -800,8 +800,8 @@ IDLE ──(operator: band likely)──> READY ──(any trigger)──> OPEN
   from STANDING DOWN, which it arms on the way (#89) - or reported with "It's at
   ready level" when the box does not know where the fader is (§5.3). Never
   entered by the detector, in any phase (§6.4). Any trigger commits it the rest
-  of the way to OPEN from wherever the ride had got to. Score reversed, a plain
-  fade and a stand-down take the ordinary 2 s fade rather than a snap (§5.3
+  of the way to OPEN from wherever the ride had got to. Faded out and a
+  stand-down take the ordinary 2 s fade rather than a snap (§5.3
   covers the level-unknown case), because the fader is up and the box cannot be
   sure the band has not quietly started.
 - **OPEN** — DCA at 0 dB. Held by tonality and envelope consensus, reinforced by
@@ -1158,7 +1158,7 @@ Game 3:
 - *Why the operator got ready:* the game instants `touchdown`, `field-goal`,
   `safety`, `first-down` and `defensive-stop`.
 - *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
-  `score-reversed` or `out` for an abandon.
+  `out` for an abandon (`score-reversed` in logs from before #202).
 - *Duty and where the band was:* `armed`, `stood-down`, `band-enters-stands`,
   `band-exits-stands` and `halftime-exodus`.
 - *Control authority:* `handed-off`, `took-back` and `still-mine`.

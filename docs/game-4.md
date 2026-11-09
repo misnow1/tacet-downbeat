@@ -174,6 +174,7 @@ entries are good fader labels for the whole game** except 15:13:27 to 15:15:13.
 
 - **Overturned replaces Score reversed** as a game annotation that never moves
   the fader (#202; operator: "probably", confirm in the PR).
+  *Superseded 2026-11-08: the button was removed and nothing replaces it (#202).*
 - **Scoring order:** First down, Safety, Field goal, Touchdown, Defensive stop
   (#203).
 - **Timeout ends come from RTD**, once the capture proves it; keep tapping

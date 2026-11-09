@@ -109,12 +109,12 @@ function showRefusal(text, loud = false) {
 // is a reviewed, hallway-tested fact, not something that should shift because
 // a new key happened to be declared before it in annotations.py. A future
 // fader reason is data on an existing button, not a new button - the column
-// holds exactly these six, and a seventh will not fit.
+// holds these five and one empty slot. The slot keeps them in place and is not room for a new button.
 //
 // Split around the readout gap, which is its own fixed slot in the HTML
-// (level, target, and the refusal duplicate) rather than a seventh entry here.
+// (level, target, and the refusal duplicate) rather than another entry here.
 const FADER_COLUMN_TOP = ["up-whistle", "up-drums", "up-slow", "up-ready"];
-const FADER_COLUMN_BOTTOM = ["score-reversed", "out"];
+const FADER_COLUMN_BOTTOM = ["out"];
 const FADER_COLUMN = [...FADER_COLUMN_TOP, ...FADER_COLUMN_BOTTOM];
 
 // Commands that ramp from what the box believes the level is. Disabled in
@@ -143,7 +143,6 @@ const KEY_ICONS = {
   "up-slow": svg('<path d="M3 20C10 20 12 7 20 6"/><path d="M16.5 3.6L20 6l-2.8 3.4"/>'),
   "up-ready": svg('<path d="M3 5h18" stroke-dasharray="2.5 3"/><path d="M3 20h3l4-9h11"/>'),
   "out": svg('<path d="M3 4h4l10 15h4"/><path d="M3 21h18" stroke-opacity=".45"/>'),
-  "score-reversed": svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
   "touchdown": svg('<path d="M4 20C4 11 11 4 20 4c0 9-7 16-16 16z"/><path d="M8.5 15.5l7-7M10 12l2 2M12 10l2 2"/>'),
   "field-goal": svg('<path d="M12 22v-9M5 13h14M5 13V3M19 13V3"/>'),
   "safety": svg('<path d="M2.5 12h6M5.5 9v6"/><path d="M12.5 8.5a3.5 3.5 0 1 1 6.3 2.1L12.5 18.5h7.5"/>'),

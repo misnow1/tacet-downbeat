@@ -929,10 +929,10 @@ check(
 
 // -- the ramping buttons, greyed while the level is unknown (#107) --------------
 
-// The four column buttons whose move ramps from the believed level, and the two
-// snaps that do not. Keys, not actions: the column is six named, pinned
-// buttons (#5).
-const RAMPING_KEYS = ["up-slow", "up-ready", "out", "score-reversed"];
+// The three column buttons whose move ramps from the believed level, and the two
+// snaps that do not. Keys, not actions: the column is five named, pinned
+// buttons and an empty slot (#5, #202).
+const RAMPING_KEYS = ["up-slow", "up-ready", "out"];
 const SNAP_KEYS = ["up-whistle", "up-drums"];
 const COLUMN_KEYS = [...RAMPING_KEYS, ...SNAP_KEYS];
 const RAMPING_BLOCKED = "Greyed: they ramp from an unknown level";
@@ -968,12 +968,12 @@ for (const known of [false, true]) {
   const { column } = columnAt(false);
   check("a greyed button keeps its own label; the reason lives in the column, not on it",
         [column("up-slow").textContent, column("up-ready").textContent,
-         column("out").textContent, column("score-reversed").textContent],
-        ["Up slow, missed the start", "Ready (band likely)", "Faded out", "Score reversed"]);
+         column("out").textContent],
+        ["Up slow, missed the start", "Ready (band likely)", "Faded out"]);
 }
 
 {
-  // In place: the same four nodes, in the same order, before and after. This is
+  // In place: the same nodes, in the same order, before and after. This is
   // how level_known is pinned out of the rebuild signature. The assertion is
   // indirect - renderButtons is the only thing that creates these buttons, so
   // an unchanged created list across a belief change proves no rebuild.
@@ -985,19 +985,19 @@ for (const known of [false, true]) {
   const stale = before.filter((node) => RAMPING_KEYS.includes(node.dataset.key)).map((node) => node.disabled);
   context.render(levelSnapshot(true));
   const after = buttonsNow();
-  check("the four were disabled first", stale, [true, true, true, true]);
+  check("the three were disabled first", stale, [true, true, true]);
   check("changing the belief creates nothing", after.length, before.length);
   check("changing the belief reorders nothing", after.map((node) => node.dataset.key), keysBefore);
   check("every node is the very same node", after.every((node, i) => node === before[i]), true);
   check("they re-enable in place once the level is known",
         after.filter((node) => RAMPING_KEYS.includes(node.dataset.key)).map((node) => node.disabled),
-        [false, false, false, false]);
+        [false, false, false]);
   context.render(levelSnapshot(false));
   check("and grey again in place when the belief is lost", buttonsNow().length, before.length);
   check("still the same nodes", buttonsNow().every((node, i) => node === before[i]), true);
   check("and disabled again",
         buttonsNow().filter((node) => RAMPING_KEYS.includes(node.dataset.key)).map((node) => node.disabled),
-        [true, true, true, true]);
+        [true, true, true]);
 }
 
 {
@@ -2178,12 +2178,26 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
   context.render(SNAPSHOTS["standing-down"]);
   const keys = created.filter((node) => node.tag === "button")
     .map((node) => node.dataset.key)
-    .filter((key) => ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"].includes(key));
+    .filter((key) => ["up-whistle", "up-drums", "up-slow", "up-ready", "out"].includes(key));
   check(
     "the column keeps the reviewed order, split around the gap",
     keys,
-    ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"],
+    ["up-whistle", "up-drums", "up-slow", "up-ready", "out"],
   );
+}
+
+// -- Score reversed is retired (#202): nothing renders it, the script does not
+// know it ---------------------------------------------------------------------
+
+{
+  const retired = "score-reversed";
+  for (const name of Object.keys(SNAPSHOTS)) {
+    const b = browser();
+    b.context.render(SNAPSHOTS[name]);
+    check(`snapshot ${name}: no rendered button carries the retired key`,
+          b.created.some((node) => node.tag === "button" && node.dataset.key === retired), false);
+  }
+  check("and the script does not know the key", SOURCE.includes(retired), false);
 }
 
 // -- a tap expands a status chip to its full sentence, without growing the
@@ -2701,7 +2715,7 @@ function game3(openSpans = []) {
 
 const SCORING_KEYS = ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"];
 const TIMEOUT_KEYS = ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"];
-const FADER_KEYS = ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"];
+const FADER_KEYS = ["up-whistle", "up-drums", "up-slow", "up-ready", "out"];
 const toneOf = (tone) => (node) => node.dataset.tone === tone;
 
 {
@@ -2769,11 +2783,11 @@ const svgOf = (node) => iconOf(node).innerHTML;
     check(`${key} leads with an icon`, iconOf(byKey.get(key)).className, "ico");
     check(`${key}'s icon is an svg`, svgOf(byKey.get(key)).startsWith("<svg"), true);
   }
-  check("all 11 fader and scoring icons are pairwise distinct", new Set(keyed.map((key) => svgOf(byKey.get(key)))).size, 11);
+  check("all 10 fader and scoring icons are pairwise distinct", new Set(keyed.map((key) => svgOf(byKey.get(key)))).size, 10);
 
   const shared = new Set(TIMEOUT_KEYS.map((key) => svgOf(byKey.get(key))));
   check("the timeouts share one icon", shared.size, 1);
-  check("and it differs from all 11 others", keyed.map((key) => svgOf(byKey.get(key))).includes([...shared][0]), false);
+  check("and it differs from all 10 others", keyed.map((key) => svgOf(byKey.get(key))).includes([...shared][0]), false);
 
   for (const key of ["halftime-exodus", "band-enters-stands"]) {
     check(`a grey button (${key}) has one child`, byKey.get(key).children.length, 1);
