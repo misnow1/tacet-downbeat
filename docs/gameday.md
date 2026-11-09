@@ -394,8 +394,8 @@ this one is a different key.
 only.
 
 **Everything else lives in MAIN and MORE**, beside the fader column, and
-records only, moving nothing. MAIN holds Scoring first (**Touchdown**,
-**Field goal**, **Safety**, **First down**, **Defensive stop**), then the
+records only, moving nothing. MAIN holds Scoring first (**First down**,
+**Safety**, **Field goal**, **Touchdown**, **Defensive stop**), then the
 timeouts, then **Halftime exodus** and **Last two minutes**, on one
 screen, though **Halftime exodus** and **Last two minutes** may sit just below
 the fold on the press-box iPad. **Official timeout** is the timeout to tap whenever you cannot
