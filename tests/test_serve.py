@@ -597,8 +597,8 @@ class TestStartupBannerWarnsAboutAClockReset(unittest.TestCase):
 class TestStartupBannerWarnsAboutCarriedOverSpans(unittest.TestCase):
     """Spans a previous run left open in this log (#20).
 
-    They are resumed, so their buttons read "(end)" - last game's `q4` still
-    running on the page of this one.
+    They are resumed, and no button owns them any more (#216) - last game's
+    `q4` still running on the page of this one, ended from MORE.
     """
 
     WALL = "2026-09-12T15:31:00+00:00"
@@ -637,14 +637,18 @@ class TestStartupBannerWarnsAboutCarriedOverSpans(unittest.TestCase):
         self.assertIn(annotations.lookup("q4").label, text)
         self.assertIn(annotations.lookup("halftime").label, text)
 
-    def test_it_says_what_the_page_will_show(self):
-        self.assertIn("(end)", self.banner_with(self.span("q4", 140)))
+    def test_it_says_what_a_restart_and_a_new_game_each_mean(self):
+        text = self.banner_with(self.span("q4", 140))
+        self.assertNotIn("(end)", text)
+        self.assertIn("if this is a restart mid-game, that is right.", text)
+        self.assertIn("it wants a fresh --log", text)
 
-    def test_a_retired_span_says_where_it_is_ended(self):
-        # #155: no button starts a quarter any more, so a q4 an older log left
-        # open can only be ended from the page's OPEN FROM AN EARLIER RUN.
-        self.assertIn("OPEN FROM AN EARLIER RUN", self.banner_with(self.span("q4", 140)))
-        self.assertNotIn("OPEN FROM AN EARLIER RUN", self.banner_with(self.span("timeout-home", 140)))
+    def test_a_span_says_where_it_is_ended(self):
+        # #155, #216: no button starts a span any more, so one an older log
+        # left open can only be ended from the page's OPEN FROM AN EARLIER RUN.
+        for key in ("q4", "timeout-home"):
+            with self.subTest(key):
+                self.assertIn("OPEN FROM AN EARLIER RUN", self.banner_with(self.span(key, 140)))
 
     def test_the_retired_span_note_fits_the_banner(self):
         # 74 columns less the 12-column label and the 2-column indent.

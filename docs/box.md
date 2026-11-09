@@ -536,6 +536,10 @@ the **shift** (corrected end minus tapped end), and a verdict:
   applies to the tap with the latest end in a hold, and to any tap that ran past
   ready-for-play.
 - `end-added`: the span was never ended; the proposal adds the end.
+- `span-added`: a single tap (below) in a trusted hold; the proposal adds the
+  whole span.
+- `repeat-tap`: a later single tap of a kind that already has the hold's span.
+  No proposal, and not a failure.
 - `nested`: the tap ended inside a hold that a later tap ends (an injury timeout
   inside an official one). It is reported and not corrected.
 - `untrusted`: the hold has a **doubt**, so no correction is proposed from it:
@@ -549,6 +553,26 @@ A tap that spans several holds (a long one left open) matches the hold its start
 fell in and lists the later ones as `covers`. A countdown started by mistake and
 then reset splits one hold in two; the tap matches the part it falls in, which is
 a known limit.
+
+**Single taps (#216).** From Game 5 the timeout buttons are instants
+(`timeout-tap`, `timeout-home-tap`, `timeout-away-tap`, `timeout-media-tap`,
+`timeout-injury-tap`): one tap at the start, no end in the log. Games 2 to 4
+carry spans, and both are read in one run. A tap in a trusted hold becomes a
+span of two sidecar `add` lines, a start and an end, under the retired span
+key (`timeout`, `timeout-media` and so on) and a `span_id` made from the tap's
+seq, so a second `--write` adds nothing. The key is the span's, not the tap's,
+because an `add` of a span needs a `phase` and a `span_id` and an instant
+forbids them. The start is the tap's time less its logged delay; the end is
+where the hold ends (ready-for-play). A generic `timeout-tap` in a hold with
+one team's mark gets that team's key on both lines, and keeps the id. No
+`supersede` is written for a single tap. Two taps of the **same kind** in one
+hold give one span and `repeat-tap` for the later one; **different kinds** in
+one hold each get a span, as nested spans do. A tap with no trusted hold
+(`untrusted`, `no-stoppage`, `outside-capture`) proposes nothing and fails the
+run, as a span's tap does. `last-two-minutes-tap` is ignored here: its end is
+the end of the period (#212), and its span follows from that. `halftime-exodus-tap`
+has no end and is never a span. The header adds `, N single taps` when there are
+any.
 
 **Kind.** When exactly one team's timeouts-left value dropped during a trusted
 hold, a generic `timeout` tap is proposed as `timeout-home` or `timeout-away`
@@ -572,7 +596,7 @@ name.
 or the capture had faults or ends in the middle of a record. `2` it could not
 run: dpkt missing, an unreadable or corrupt log or capture, no RTD datagrams, a
 malformed sidecar (which is left untouched), bad arguments. Proposals, nested
-taps, holds with no tap and stray marks never fail the run.
+taps, repeat taps, holds with no tap and stray marks never fail the run.
 
 **Install.** Same as `tacet-rtd`: it needs dpkt, from the `analysis` extra that
 `make install` includes. A box installed before this change has no
@@ -601,13 +625,16 @@ required, and an optional `evidence` object that readers carry through untouched
   an instant (`span_id` is the log's own when adding a missing end); and optional
   `project_seconds` (a finite number) and `data` (an object).
 
-Examples: the first is game 4's seq 637; the other two are illustrative (a
-generic timeout made the away team's, and a missing end added).
+Examples: the first is game 4's seq 637; the others are illustrative (a
+generic timeout made the away team's, a missing end added, and the start and
+end `add` pair a single `timeout-media-tap` at seq 901 earns).
 
 ```
 {"action":"supersede","evidence":{"capture":"rtd-game-4-gt.pcap","hold_end":"2026-10-17T22:02:56.995609+00:00","hold_start":"2026-10-17T22:00:06.496680+00:00","superseded_wall":"2026-10-17T22:09:02.595268+00:00"},"reason":"play clock counted down after a 170 s hold; the tapped end was 366 s late","seq":637,"source":"rtd","v":1,"wall":"2026-10-17T22:02:56.995609+00:00"}
 {"action":"supersede","event":"timeout-away","evidence":{"capture":"rtd-example.pcap","team":"guest","team_timeout":"2026-10-17T20:00:05.000000+00:00"},"reason":"the scoreboard's guest timeouts left dropped during a 40 s hold","seq":900,"source":"rtd","v":1}
 {"action":"add","event":"timeout","phase":"end","reason":"play clock counted down after a 60 s hold; the span was never ended","source":"rtd","span_id":"timeout-901","v":1,"wall":"2026-10-17T20:01:00.000000+00:00"}
+{"action":"add","event":"timeout-media","evidence":{"capture":"rtd-example.pcap","hold_end":"2026-10-17T20:03:00.000000+00:00","hold_start":"2026-10-17T20:00:00.000000+00:00","tap_seq":901},"phase":"start","reason":"a single tap in a 180 s hold where the play clock was not counting down; the start is the tap","source":"rtd","span_id":"timeout-media-901","v":1,"wall":"2026-10-17T20:00:03.000000+00:00"}
+{"action":"add","event":"timeout-media","evidence":{"capture":"rtd-example.pcap","hold_end":"2026-10-17T20:03:00.000000+00:00","hold_start":"2026-10-17T20:00:00.000000+00:00","tap_seq":901},"phase":"end","reason":"a single tap in a 180 s hold where the play clock was not counting down; the end is ready for play","source":"rtd","span_id":"timeout-media-901","v":1,"wall":"2026-10-17T20:03:00.000000+00:00"}
 ```
 
 The raw log is never edited. `--write` writes proposals; a person can append their

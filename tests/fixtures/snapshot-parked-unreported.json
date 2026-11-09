@@ -88,50 +88,50 @@
     {
       "action": null,
       "category": "GAME",
-      "key": "halftime-exodus",
-      "kind": "span",
+      "key": "halftime-exodus-tap",
+      "kind": "instant",
       "label": "Halftime exodus"
     },
     {
       "action": null,
       "category": "GAME",
-      "key": "last-two-minutes",
-      "kind": "span",
+      "key": "last-two-minutes-tap",
+      "kind": "instant",
       "label": "Last two minutes"
     },
     {
       "action": null,
       "category": "GAME",
-      "key": "timeout-home",
-      "kind": "span",
+      "key": "timeout-home-tap",
+      "kind": "instant",
       "label": "Timeout: home"
     },
     {
       "action": null,
       "category": "GAME",
-      "key": "timeout-away",
-      "kind": "span",
+      "key": "timeout-away-tap",
+      "kind": "instant",
       "label": "Timeout: away"
     },
     {
       "action": null,
       "category": "GAME",
-      "key": "timeout-media",
-      "kind": "span",
+      "key": "timeout-media-tap",
+      "kind": "instant",
       "label": "Timeout: media"
     },
     {
       "action": null,
       "category": "GAME",
-      "key": "timeout-injury",
-      "kind": "span",
+      "key": "timeout-injury-tap",
+      "kind": "instant",
       "label": "Timeout: injury"
     },
     {
       "action": null,
       "category": "GAME",
-      "key": "timeout",
-      "kind": "span",
+      "key": "timeout-tap",
+      "kind": "instant",
       "label": "Official timeout"
     },
     {

@@ -127,7 +127,31 @@ FADE_TICK_HZ_HIGH = 1000.0
 WRITER_REPORTS = 5.0
 
 
+#: #216 retired every span button, but `start_span` and `end_span` still serve a span an older log left
+#: open. A test that needs one to start, or to be on the page, registers this key for its own length.
+SPAN_KEY = "test-span"
+SPAN_LABEL = "Test span"
+SPAN_EVENTS = {SPAN_KEY: ann.EventType(SPAN_KEY, SPAN_LABEL, ann.Category.GAME, ann.Kind.SPAN)}
+
+#: The seven spans #216 retired as buttons, each with the single tap that took its place.
+RETIRED_SPAN_KEYS = (
+    "timeout",
+    "timeout-home",
+    "timeout-away",
+    "timeout-media",
+    "timeout-injury",
+    "last-two-minutes",
+    "halftime-exodus",
+)
+
+
 class AppTestCase(unittest.IsolatedAsyncioTestCase):
+    def with_span_button(self):
+        """Let this test start a span, as a button once could."""
+        patcher = mock.patch.dict(ann.EVENTS, SPAN_EVENTS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def setUp(self):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -396,16 +420,17 @@ class TestAFailingDisk(AppTestCase):
         self.assertEqual(app.machine.state, state.State.IDLE)
 
     async def test_a_span_that_was_not_saved_says_so_and_is_not_open(self):
+        self.with_span_button()
         app = self.build()
         self.disk.full = True
         push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"])
-        self.assertIsNotNone(await app.start_span("last-two-minutes"))
+        self.assertIsNotNone(await app.start_span(SPAN_KEY))
         pushed = await self.pushed(push)
         self.assertEqual(pushed["open_spans"], [])
 
     async def test_an_end_that_was_not_saved_reopens_the_span_to_retap(self):
         app = self.build()
-        span = await app.start_span("last-two-minutes")
+        span = self.log.start_span("last-two-minutes")
         self.log.flush()
         self.disk.full = True
         push = self.expect_push(app, lambda snapshot: not snapshot["log"]["healthy"] and snapshot["open_spans"])
@@ -1584,20 +1609,24 @@ class TestAnnotation(AppTestCase):
         self.assertEqual(app.snapshot()["open_spans"], [])
 
     async def test_spans_open_and_close(self):
+        self.with_span_button()
         app = self.build()
-        span = await app.start_span("last-two-minutes")
-        self.assertIn(
-            {"span_id": span, "event": "last-two-minutes", "label": "Last two minutes"}, app.snapshot()["open_spans"]
-        )
+        span = await app.start_span(SPAN_KEY)
+        self.assertIn({"span_id": span, "event": SPAN_KEY, "label": SPAN_LABEL}, app.snapshot()["open_spans"])
         await app.end_span(span)
         self.assertEqual(app.snapshot()["open_spans"], [])
 
-    async def test_an_open_span_names_the_button_that_owns_it(self):
-        # The page matches a button to its span on this, and never parses the
-        # id -- a prefix match let "timeout" claim "timeout-home-12".
+    async def test_an_open_span_names_its_event_and_no_button_owns_it(self):
+        # The page matches a span to a button on `event`, and never parses the
+        # id -- a prefix match let "timeout" claim "timeout-home-12". Since
+        # #216 no button starts a span, so an older log's is offered under
+        # OPEN FROM AN EARLIER RUN, and its event is in no button's key.
+        older = ann.AnnotationLog(self.root / "game.jsonl")
+        older.open()
+        home = older.start_span("timeout-home")
+        exodus = older.start_span("halftime-exodus")
+        older.close()
         app = self.build()
-        home = await app.start_span("timeout-home")
-        exodus = await app.start_span("halftime-exodus")
         keys = {button["key"] for button in app.snapshot()["buttons"]}
         self.assertEqual(
             app.snapshot()["open_spans"],
@@ -1607,7 +1636,23 @@ class TestAnnotation(AppTestCase):
             ],
         )
         for span in app.snapshot()["open_spans"]:
-            self.assertIn(span["event"], keys)
+            self.assertNotIn(span["event"], keys)
+
+    async def test_each_retired_span_still_ends_through_end_span(self):
+        app = self.build()
+        for key in RETIRED_SPAN_KEYS:
+            with self.subTest(key):
+                span = self.log.start_span(key)
+                self.assertIn(span, {item["span_id"] for item in app.snapshot()["open_spans"]})
+                self.assertIsNotNone(await app.end_span(span))
+                self.assertNotIn(span, {item["span_id"] for item in app.snapshot()["open_spans"]})
+
+    async def test_no_retired_span_can_be_started(self):
+        app = self.build()
+        for key in RETIRED_SPAN_KEYS:
+            with self.subTest(key), self.assertRaises(ann.NotAButtonError):
+                await app.start_span(key)
+        self.assertEqual(app.snapshot()["open_spans"], [])
 
 
 class TestRecorder(AppTestCase):
@@ -1704,9 +1749,10 @@ class TestThePlayheadIsStamped(AppTestCase):
         self.assertIsNone(self.last().project_seconds)
 
     async def test_spans_are_stamped_at_both_ends(self):
+        self.with_span_button()
         app = self.build()
         app.handle_recorder_packet(osc.encode_message("/time", 10.0))
-        span = await app.start_span("last-two-minutes")
+        span = await app.start_span(SPAN_KEY)
         app.handle_recorder_packet(osc.encode_message("/time", 900.0))
         await app.end_span(span)
         entries = self.entries()
@@ -3907,9 +3953,10 @@ class TestEveryEntryATapProducesCarriesItsTiming(AppTestCase):
         self.assertEqual(stamped[tacet_app.STOOD_DOWN], self.TAP.as_data())
 
     async def test_spans_and_arming_and_recording(self):
+        self.with_span_button()
         app = self.build()
         await app.arm(tap=self.TAP)
-        span = await app.start_span("last-two-minutes", tap=self.TAP)
+        span = await app.start_span(SPAN_KEY, tap=self.TAP)
         assert span is not None
         await app.end_span(span, tap=self.TAP)
         self.reaper_parked(app)
@@ -4032,10 +4079,11 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
         self.assertIsNone(app.snapshot()["stale_tap"])
 
     async def test_spans_arming_and_recording_are_never_refused(self):
+        self.with_span_button()
         app = self.build()
         await app.arm(tap=self.STALE)
         self.assertEqual(app.machine.state, state.State.IDLE)
-        self.assertIsNotNone(await app.start_span("last-two-minutes", tap=self.STALE))
+        self.assertIsNotNone(await app.start_span(SPAN_KEY, tap=self.STALE))
         self.reaper_parked(app)
         await app.start_recording(tap=self.STALE)
         self.assertIn(tacet_app.RECORDING_REQUESTED, self.events())
@@ -4125,29 +4173,37 @@ class TestPromptsFromAnnotations(PromptTestCase):
         (raised,) = self.named(prompts.PROMPT_RAISED)
         self.assertEqual(raised.data["state"], "standing-down")
 
-    async def test_halftime_exodus_span_start_raises_a_stand_down_prompt(self):
+    async def test_halftime_exodus_tap_raises_a_stand_down_prompt(self):
         app = self.build()
         await app.arm()
-        await app.start_span(ann.HALFTIME_EXODUS)
-        self.assertEqual(self.question(app), {"seq": 1, "kind": "stand-down", "source": ann.HALFTIME_EXODUS})
+        await app.annotate(ann.HALFTIME_EXODUS_TAP)
+        self.assertEqual(self.question(app), {"seq": 1, "kind": "stand-down", "source": ann.HALFTIME_EXODUS_TAP})
         keys = self.keys()
-        self.assertLess(keys.index(ann.HALFTIME_EXODUS), keys.index(prompts.PROMPT_RAISED))
+        self.assertLess(keys.index(ann.HALFTIME_EXODUS_TAP), keys.index(prompts.PROMPT_RAISED))
 
-    async def test_ending_the_halftime_exodus_span_raises_nothing(self):
-        # D6: only the start of the span asks.
+    async def test_ending_an_older_halftime_exodus_span_asks_nothing(self):
+        # #216: the span can no longer start, but one an older log left open
+        # still ends, and ending it says nothing about duty.
         app = self.build()
         await app.arm()
-        span = await app.start_span(ann.HALFTIME_EXODUS)
-        assert span is not None
-        await app.dismiss_prompt(1)
+        span = self.log.start_span(ann.HALFTIME_EXODUS)
         await app.end_span(span)
         self.assertIsNone(self.question(app))
-        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+        self.assertEqual(self.named(prompts.PROMPT_RAISED), [])
 
-    async def test_a_span_that_asks_nothing_asks_nothing(self):
+    async def test_a_double_exodus_tap_writes_two_entries_and_asks_once(self):
         app = self.build()
         await app.arm()
-        await app.start_span("last-two-minutes")
+        await app.annotate(ann.HALFTIME_EXODUS_TAP)
+        await app.annotate(ann.HALFTIME_EXODUS_TAP)
+        self.assertEqual(self.keys().count(ann.HALFTIME_EXODUS_TAP), 2)
+        self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
+        self.assertEqual(self.question(app)["seq"], 1)
+
+    async def test_a_tap_that_asks_nothing_asks_nothing(self):
+        app = self.build()
+        await app.arm()
+        await app.annotate("last-two-minutes-tap")
         self.assertIsNone(self.question(app))
         self.assertEqual(self.named(prompts.PROMPT_RAISED), [])
 
@@ -4191,7 +4247,7 @@ class TestPromptsFromAnnotations(PromptTestCase):
         await app.arm()
         await app.annotate(ann.BAND_EXITS_STANDS)
         await app.annotate(ann.BAND_EXITS_STANDS)
-        await app.start_span(ann.HALFTIME_EXODUS)
+        await app.annotate(ann.HALFTIME_EXODUS_TAP)
         self.assertEqual(self.question(app)["seq"], 1)
         self.assertEqual(self.question(app)["source"], ann.BAND_EXITS_STANDS)
         self.assertEqual(len(self.named(prompts.PROMPT_RAISED)), 1)
@@ -4246,13 +4302,13 @@ class TestPromptsFromAnnotations(PromptTestCase):
     async def test_the_other_way_round_an_arm_question_is_withdrawn_by_a_stand_down_tap(self):
         app = self.build()
         await self.standing_down_with_an_arm_question(app)
-        await app.start_span(ann.HALFTIME_EXODUS)
+        await app.annotate(ann.HALFTIME_EXODUS_TAP)
         self.assertIsNone(self.question(app))
         self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
         (withdrawn,) = self.named(prompts.PROMPT_WITHDRAWN)
         self.assertEqual((withdrawn.data["prompt"], withdrawn.data["seq"]), ("arm", 1))
         (resolved,) = self.named(prompts.PROMPT_RESOLVED)
-        self.assertEqual((resolved.data["prompt"], resolved.data["source"]), ("stand-down", ann.HALFTIME_EXODUS))
+        self.assertEqual((resolved.data["prompt"], resolved.data["source"]), ("stand-down", ann.HALFTIME_EXODUS_TAP))
 
     async def test_a_withdrawn_question_can_be_asked_again_and_takes_a_fresh_seq(self):
         app = self.build()
@@ -4310,12 +4366,12 @@ class TestPromptsFromAnnotations(PromptTestCase):
             await app.annotate(ann.BAND_EXITS_STANDS)
         self.assertEqual(self.question(app)["kind"], "stand-down")
 
-    async def test_a_span_start_the_log_refused_still_asks(self):
+    async def test_an_exodus_tap_the_log_refused_still_asks(self):
         app = self.build()
         await app.arm()
-        with mock.patch.object(self.log, "start_span", side_effect=ann.WriteError("log refused")):
-            self.assertIsNone(await app.start_span(ann.HALFTIME_EXODUS))
-        self.assertEqual(self.question(app)["source"], ann.HALFTIME_EXODUS)
+        with mock.patch.object(self.log, "record", side_effect=ann.WriteError("log refused")):
+            await app.annotate(ann.HALFTIME_EXODUS_TAP)
+        self.assertEqual(self.question(app)["source"], ann.HALFTIME_EXODUS_TAP)
 
     async def test_the_entries_a_tap_earns_carry_its_stamp(self):
         app = self.build()
@@ -4659,7 +4715,7 @@ class TestAnsweringAPrompt(PromptTestCase):
         await app.annotate(ann.BAND_ENTERS_STANDS)  # raised, seq 1
         await app.accept_prompt(1)  # armed
         await app.annotate("up-whistle")
-        await app.start_span(ann.HALFTIME_EXODUS)  # raised, seq 2
+        await app.annotate(ann.HALFTIME_EXODUS_TAP)  # raised, seq 2
         await app.accept_prompt(2)  # fades, stands down on landing
         await app.wait_for_fade()
         await app.annotate(ann.BAND_ENTERS_STANDS)  # raised, seq 3

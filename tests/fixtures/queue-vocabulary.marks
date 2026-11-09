@@ -45,6 +45,13 @@ region	GAME|timeout-media
 region	GAME|timeout-official
 region	GAME|timeout-injury
 region	GAME|timeout
+marker	GAME|halftime-exodus-tap
+marker	GAME|last-two-minutes-tap
+marker	GAME|timeout-home-tap
+marker	GAME|timeout-away-tap
+marker	GAME|timeout-media-tap
+marker	GAME|timeout-injury-tap
+marker	GAME|timeout-tap
 marker	FDR|commanded
 marker	FDR|move-failed
 marker	FDR|move-landed

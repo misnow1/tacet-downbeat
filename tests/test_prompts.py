@@ -34,8 +34,12 @@ class TestWhatAsks(unittest.TestCase):
     def test_band_exits_stands_asks_to_stand_down(self):
         self.assertIs(prompts.asked_by(ann.BAND_EXITS_STANDS), prompts.Prompt.STAND_DOWN)
 
-    def test_halftime_exodus_asks_to_stand_down(self):
-        self.assertIs(prompts.asked_by(ann.HALFTIME_EXODUS), prompts.Prompt.STAND_DOWN)
+    def test_halftime_exodus_tap_asks_to_stand_down(self):
+        self.assertIs(prompts.asked_by(ann.HALFTIME_EXODUS_TAP), prompts.Prompt.STAND_DOWN)
+
+    def test_the_retired_halftime_exodus_span_asks_nothing(self):
+        # #216: it can no longer start, and ending it says nothing about arming.
+        self.assertIsNone(prompts.asked_by(ann.HALFTIME_EXODUS))
 
     def test_band_enters_stands_asks_to_arm(self):
         self.assertIs(prompts.asked_by(ann.BAND_ENTERS_STANDS), prompts.Prompt.ARM)
@@ -54,6 +58,7 @@ class TestWhatAsks(unittest.TestCase):
         self.assertEqual(ann.BAND_ENTERS_STANDS, "band-enters-stands")
         self.assertEqual(ann.BAND_EXITS_STANDS, "band-exits-stands")
         self.assertEqual(ann.HALFTIME_EXODUS, "halftime-exodus")
+        self.assertEqual(ann.HALFTIME_EXODUS_TAP, "halftime-exodus-tap")
 
     def test_no_trigger_moves_the_fader_by_itself(self):
         for key in prompts.ASKS:
@@ -143,7 +148,7 @@ class TestAsking(unittest.TestCase):
         self.assertEqual([note.key for note in decision.notes], [prompts.PROMPT_RESOLVED])
 
     def test_a_stand_down_ask_while_a_stand_down_is_pending_is_resolved_not_raised(self):
-        decision = self.ask(None, ann.HALFTIME_EXODUS, PENDING)
+        decision = self.ask(None, ann.HALFTIME_EXODUS_TAP, PENDING)
         self.assertIsNone(decision.prompt)
         self.assertEqual([note.key for note in decision.notes], [prompts.PROMPT_RESOLVED])
 
@@ -245,7 +250,7 @@ class TestAsking(unittest.TestCase):
         self.assertEqual(decision.notes, ())
 
     def test_a_different_trigger_of_the_same_kind_is_still_the_same_question(self):
-        decision = self.ask(STAND_DOWN_PROMPT, ann.HALFTIME_EXODUS, OPEN, seq=99)
+        decision = self.ask(STAND_DOWN_PROMPT, ann.HALFTIME_EXODUS_TAP, OPEN, seq=99)
         self.assertEqual(decision, prompts.Decision(prompt=STAND_DOWN_PROMPT))
 
     def test_an_annotation_with_no_question_changes_nothing(self):

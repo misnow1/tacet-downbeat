@@ -8,6 +8,16 @@ operator is alone in the booth and watching the conductor. The scoreboard knows
 when play is ready again - the play clock counts down - and the capture of its
 RTD stream (`tacet-rtd`, #210) has it to the tick.
 
+Since #216 the buttons are single taps (`timeout-tap`, `timeout-home-tap` and
+so on): an instant with no end at all. Games 2 to 4 carry the older spans, and
+both are read. For a single tap in a trusted hold the span is derived, as two
+sidecar `add` lines, a start and an end, under the retired span key (an `add`
+of a span event needs a phase and a span id, and an instant forbids them) and
+a span id built from the tap's seq. The start is the tap's own time less its
+logged delay; the end is where the hold ends. A second tap of the same kind in
+the same hold is `repeat-tap`: no proposal, and not a failure. `last-two-minutes-tap`
+is ignored here; its end is #212's.
+
 For every tapped timeout this finds the stoppage (`tacet.stoppages`) its start
 fell in, says what RTD makes of its end and its kind, and proposes corrections.
 Nothing is written without `--write`, and the log itself is never edited: a
@@ -22,6 +32,8 @@ belongs to it. The verdicts:
     agrees           the tapped end is within a tick of ready-for-play
     end-corrected    it is not; the proposal moves it to the first tick
     end-added        the span was never ended; the proposal adds the end
+    span-added       a single tap in a trusted hold; the proposal adds the span
+    repeat-tap       a later single tap of a kind already given the hold's span
     nested           the tap ended inside a hold that a later tap ends
     untrusted        the hold has a doubt (capture start, source change, gap, too long)
     no-stoppage      the play clock was counting down when the timeout was tapped
@@ -33,8 +45,8 @@ reported as a conflict and never corrected.
 
 Exit 0: every tap matched a trusted hold and the capture is clean. Exit 1: a
 tap was untrusted, unmatched or in conflict, or the capture faulted or ends
-mid-record. Exit 2: it could not run. Proposals, nested taps, holds with no tap
-and stray marks never fail the run.
+mid-record. Exit 2: it could not run. Proposals, nested taps, repeat taps, holds
+with no tap and stray marks never fail the run.
 
 The standard library only at import time: dpkt is imported when the capture is
 read, so a machine without the `analysis` extra gets one clear line. This tool
@@ -57,6 +69,7 @@ from . import corrections, rtd_replay, stoppages
 from .annotations import Entry
 from .corrections import Add, Correction, Supersede
 from .stoppages import MIN_HOLD_SECONDS, Scan, Stoppage, Team, TeamTimeout
+from .taps import delay_of
 
 DPKT_MODULE = "dpkt"
 DPKT_HINT = "tacet-timeouts needs dpkt: pip install -e '.[analysis]'"
@@ -65,8 +78,16 @@ EXIT_CLEAN = 0
 EXIT_ATTENTION = 1
 EXIT_REFUSED = 2
 
-#: Every timeout key in the vocabulary; all spans. A test pins this against `annotations.EVENTS`.
+#: Every timeout span key in the vocabulary. A test pins this against `annotations.EVENTS`.
 TIMEOUT_KEYS = ("timeout", "timeout-official", "timeout-media", "timeout-injury", "timeout-home", "timeout-away")
+#: The single-tap instants of #216 and the retired span key each stands in for. A test pins this.
+TIMEOUT_TAP_SPANS: Mapping[str, str] = {
+    "timeout-tap": "timeout",
+    "timeout-home-tap": "timeout-home",
+    "timeout-away-tap": "timeout-away",
+    "timeout-media-tap": "timeout-media",
+    "timeout-injury-tap": "timeout-injury",
+}
 #: The default button, and the announcer's wording: a timeout marked at once beats one that went unmarked.
 GENERIC_TIMEOUT = "timeout"
 #: RTD's guest team is the log's away team.
@@ -88,6 +109,8 @@ class Verdict(StrEnum):
     AGREES = "agrees"
     END_CORRECTED = "end-corrected"
     END_ADDED = "end-added"
+    SPAN_ADDED = "span-added"
+    REPEAT_TAP = "repeat-tap"
     NESTED = "nested"
     UNTRUSTED = "untrusted"
     NO_STOPPAGE = "no-stoppage"
@@ -107,11 +130,16 @@ def wall_time(entry: Entry) -> float:
 
 @dataclass(frozen=True)
 class TappedTimeout:
-    #: The start entry's event: a span's kind is how it began.
+    #: The span key: the start entry's event for a span, the retired span key a single tap stands in for.
     key: str
     span_id: str
     start: Entry
     end: Entry | None
+
+    @property
+    def instant(self) -> bool:
+        """A single tap (#216): there is no span in the log, so there is no end to read."""
+        return self.start.span_id is None
 
     @property
     def start_time(self) -> float:
@@ -135,6 +163,9 @@ def tapped(entries: Iterable[Entry]) -> Taps:
     ends: dict[str, Entry] = {}
     orphans: list[Entry] = []
     for entry in entries:
+        if entry.event in TIMEOUT_TAP_SPANS:
+            starts[ann.span_id_for(TIMEOUT_TAP_SPANS[entry.event], entry.seq)] = entry
+            continue
         if entry.event not in TIMEOUT_KEYS or entry.span_id is None:
             continue
         if entry.phase == ann.PHASE_START:
@@ -143,7 +174,10 @@ def tapped(entries: Iterable[Entry]) -> Taps:
             ends[entry.span_id] = entry
         else:
             orphans.append(entry)
-    found = tuple(TappedTimeout(s.event, span_id, s, ends.get(span_id)) for span_id, s in starts.items())
+    found = tuple(
+        TappedTimeout(TIMEOUT_TAP_SPANS.get(s.event, s.event), span_id, s, ends.get(span_id))
+        for span_id, s in starts.items()
+    )
     return Taps(found, tuple(orphans))
 
 
@@ -236,12 +270,23 @@ def _kind(tap: TappedTimeout, hold: Stoppage) -> tuple[str | None, Team | None, 
     return None, team, (f"tapped {tap.key} but RTD shows a {team.value} timeout",)
 
 
-def _match(tap: TappedTimeout, hold: Stoppage, group: Sequence[TappedTimeout], holds: Sequence[Stoppage]) -> Match:
+def _match(
+    tap: TappedTimeout,
+    hold: Stoppage,
+    group: Sequence[TappedTimeout],
+    holds: Sequence[Stoppage],
+    *,
+    repeat: bool = False,
+) -> Match:
     covered = _covered(tap, hold, holds)
     if not hold.trusted:
         return Match(tap, Verdict.UNTRUSTED, hold, covered)
-    last = max(group, key=lambda t: _end_of(t))
+    if tap.instant and repeat:
+        return Match(tap, Verdict.REPEAT_TAP, hold, covered)
     reclassify, conflict, notes = _kind(tap, hold)
+    if tap.instant:
+        return Match(tap, Verdict.SPAN_ADDED, hold, covered, reclassify, conflict, notes)
+    last = max(group, key=lambda t: _end_of(t))
     return Match(tap, _end_verdict(tap, hold, last), hold, covered, reclassify, conflict, notes)
 
 
@@ -250,12 +295,17 @@ def compare(taps: Taps, scan: Scan, *, capture_start: float, capture_end: float)
     found = [(tap, _hold_for(tap.start_time, holds)) for tap in taps.timeouts]
     groups: dict[int, list[TappedTimeout]] = {}
     for tap, hold in found:
-        if hold is not None:
+        if hold is not None and not tap.instant:
             groups.setdefault(id(hold), []).append(tap)
+    given: dict[tuple[int, str], TappedTimeout] = {}
+    for tap, hold in found:
+        if hold is not None and tap.instant:
+            given.setdefault((id(hold), tap.key), tap)
     matches: list[Match] = []
     for tap, hold in found:
         if hold is not None:
-            matches.append(_match(tap, hold, groups[id(hold)], holds))
+            repeat = tap.instant and given[(id(hold), tap.key)] is not tap
+            matches.append(_match(tap, hold, groups.get(id(hold), []), holds, repeat=repeat))
         elif capture_start <= tap.start_time <= capture_end:
             matches.append(Match(tap, Verdict.NO_STOPPAGE))
         else:
@@ -310,6 +360,41 @@ def _end_proposal(match: Match, hold: Stoppage, capture: str) -> Correction | No
     return None
 
 
+def _span_proposal(match: Match, hold: Stoppage, capture: str) -> tuple[Add, Add]:
+    """A single tap's span as two adds under the retired span key (#216).
+
+    The key is the tapped kind, or the team RTD names for a generic tap; the id
+    is the tap's own, derived from its seq, so a reclassified tap keeps it.
+    """
+    tap = match.tap
+    key = tap.key if match.reclassify_to is None else match.reclassify_to
+    evidence: dict[str, object] = {
+        "capture": capture,
+        "hold_start": rtd_replay.iso(hold.start),
+        "hold_end": rtd_replay.iso(hold.end),
+        "tap_seq": tap.start.seq,
+    }
+    if match.reclassify_to is not None:
+        evidence["team"] = hold.marks[0].team.value
+    start = tap.start_time - max(0.0, delay_of(tap.start.data) or 0.0)
+    reason = f"a single tap in a {_seconds(hold.held)} s hold where the play clock was not counting down"
+
+    def add(phase: str, wall: float, what: str) -> Add:
+        return Add(
+            event=key,
+            wall=rtd_replay.iso(wall),
+            source=SOURCE,
+            reason=f"{reason}; {what}",
+            phase=phase,
+            span_id=tap.span_id,
+            evidence=evidence,
+        )
+
+    return add(ann.PHASE_START, start, "the start is the tap"), add(
+        ann.PHASE_END, hold.end, "the end is ready for play"
+    )
+
+
 def _kind_proposal(match: Match, hold: Stoppage, capture: str) -> Correction | None:
     if match.reclassify_to is None:
         return None
@@ -329,6 +414,10 @@ def propose(comparison: Comparison, *, capture: str) -> tuple[Correction, ...]:
     for match in comparison.matches:
         hold = match.stoppage
         if hold is None or match.verdict is Verdict.UNTRUSTED:
+            continue
+        if match.tap.instant:
+            if match.verdict is Verdict.SPAN_ADDED:
+                found += [(match.tap.start.seq, item) for item in _span_proposal(match, hold, capture)]
             continue
         for item in (_end_proposal(match, hold, capture), _kind_proposal(match, hold, capture)):
             if item is not None:
@@ -429,10 +518,16 @@ def _verdict_text(match: Match, tz: tzinfo | None) -> str:
 
 
 def _seq_text(tap: TappedTimeout) -> str:
+    if tap.instant:
+        return str(tap.start.seq)
     return f"{tap.start.seq}-{'' if tap.end is None else tap.end.seq}"
 
 
 _TABLE_HEADERS = ["seq", "kind", "tapped", "RTD hold", "lead", "shift", "verdict"]
+
+
+def _tapped_text(tap: TappedTimeout, tz: tzinfo | None) -> str:
+    return _clock(tap.start_time, tz) if tap.instant else _span_text(tap.start_time, tap.end_time, tz)
 
 
 def _match_row(match: Match, tz: tzinfo | None) -> list[str]:
@@ -442,7 +537,7 @@ def _match_row(match: Match, tz: tzinfo | None) -> list[str]:
     return [
         _seq_text(tap),
         tap.key,
-        _span_text(tap.start_time, tap.end_time, tz),
+        _tapped_text(tap, tz),
         held,
         _signed(match.lead),
         _signed(match.shift) if corrected else NOT_APPLICABLE,
@@ -469,14 +564,16 @@ def _listed(label: str, lines: Sequence[str]) -> list[str]:
 
 def _header(report: Report, tz: tzinfo | None) -> list[str]:
     taps, summary = report.taps, report.summary
-    open_spans = sum(1 for t in taps.timeouts if t.end is None)
+    spans = [t for t in taps.timeouts if not t.instant]
+    singles = len(taps.timeouts) - len(spans)
+    open_spans = sum(1 for t in spans if t.end is None)
     first, last = summary.first_time, summary.last_time
     window = NOT_APPLICABLE if first is None or last is None else _span_text(first, last, tz)
     zone = NOT_APPLICABLE if first is None else datetime.fromtimestamp(first, tz).astimezone(tz).tzname()
     lines = [
         f"log: {_ascii(report.log.name)}",
-        f"{INDENT}{_plural(len(taps.timeouts), 'timeout span')}, {open_spans} open, "
-        f"{_plural(len(taps.orphan_ends), 'orphan end')}",
+        f"{INDENT}{_plural(len(spans), 'timeout span')}, {open_spans} open, "
+        f"{_plural(len(taps.orphan_ends), 'orphan end')}" + (f", {_plural(singles, 'single tap')}" if singles else ""),
         f"capture: {_ascii(report.capture.name)}",
         f"{INDENT}{window} ({zone}), {_plural(sum(summary.faults.values()), 'fault')}, "
         f"{_plural(len(summary.gaps), 'gap')}, {_plural(len(summary.sources), 'source')}",
@@ -502,6 +599,8 @@ _VERDICT_LABELS: Mapping[Verdict, str] = {
     Verdict.AGREES: "agree",
     Verdict.END_CORRECTED: "end corrected",
     Verdict.END_ADDED: "end added",
+    Verdict.SPAN_ADDED: "span added",
+    Verdict.REPEAT_TAP: "repeat tap",
     Verdict.NESTED: "nested",
     Verdict.UNTRUSTED: "not checked",
     Verdict.NO_STOPPAGE: "with no stoppage",
