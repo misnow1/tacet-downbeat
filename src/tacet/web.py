@@ -704,8 +704,9 @@ margin:4px 0 0}
 /* MORE > Target level (#9): one segment per preset, wrapping if a site offers
    more than fit a row. 96 x 72 pt each, the size the UX review settled on for a
    thumb: 96px wide is the label ("-3 dB") with room either side, 72px tall
-   matches the fader column's smallest button (score-reversed), so a tap here is
-   as easy to land as the ones that matter more. Styled as a fader control (a
+   is above the fader column's 64px shrink floor and a little under the 80px of
+   its shortest buttons, so a tap here is easy to land and the fader buttons
+   stay the larger targets. Styled as a fader control (a
    2px border and bold, like the fader buttons) because a tap rides the fader
    while it is up (#128). The selected segment is solid and NEUTRAL,
    deliberately: a retarget goes either way, so it must not borrow the colour
@@ -802,14 +803,14 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 /* The pinned fader column (#5): full height, on the thumb edge, never
    scrolled and never rebuilt by a tab switch. Heights and order are a
    reviewed, hallway-tested list (annotations.py's FADER_COLUMN in app.js),
-   not automatic - a seventh fader reason is data on an existing button. */
+   not automatic - a further fader reason is data on an existing button. */
 #fader-column{flex:0 0 280px;width:280px;display:flex;flex-direction:column;gap:12px;
 padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
 border-left:1px solid var(--line);background:var(--bg)}
 #fader-top,#fader-bottom{display:contents}
 #fader-column button{width:100%;flex:0 0 auto;font-size:16px}
 /* The heights below are the reviewed list and are what a screen with room
-   gets, exactly. Shorter than that, these six give way together rather than
+   gets, exactly. Shorter than that, these give way together rather than
    the column overflowing and putting the last of them - Faded out - under the
    fold (#140): flex-shrink spreads the deficit in proportion to those heights,
    so the hallway-tested ordering of sizes survives, and min-height is the
@@ -831,14 +832,18 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="up-drums"]{height:112px}
 #fader-column button[data-key="up-slow"]{height:80px}
 #fader-column button[data-key="up-ready"]{height:80px}
-#fader-column button[data-key="score-reversed"]{height:72px}
+/* The retired sixth button (#202) leaves a slot: plain deletion would move
+   Close now and "It's at ready level" down 84px and change every button's
+   height below 760px. Padding gives the slot a button's inner size (72 - 12
+   padding - 4 border = 56), so flex-shrink treats it the same at every height. */
+#fader-spacer{flex:0 1 auto;height:72px;min-height:64px;padding:8px 0;touch-action:manipulation}
 #fader-column button[data-key="out"]{height:136px}
 /* A move in flight (#154): the button that started it, until the box says the
    move has landed. An id selector so it outranks button[data-action=...] and
    stays out of the category rules. White on #e040a0 is about 4.8:1. */
 #fader-column button.fading{background:var(--state-fading);border-color:var(--state-fading);color:#fff}
 /* The readout gap: exactly 96px of room, never more asked for. The column is 592
-   of buttons + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
+   of buttons and the empty slot + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
    iPad (#107 put the belief row in here without changing that). Since #140 a
    shorter screen takes the difference out of the buttons rather than scrolling
    the page, but this gap is not part of that: it does not shrink, because what
@@ -889,7 +894,7 @@ text-overflow:ellipsis}
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #col-refusal{color:#ffb4a9;font-size:12px;line-height:15px;display:none;flex:0 1 auto;
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-/* Why four of the column's buttons are grey (#107): a standing note, not a
+/* Why three of the column's buttons are grey (#107): a standing note, not a
    fault, so the dim colour rather than the refusal's. Same yielding class as
    the refusal line, and never shown with it (see the budget above). */
 #col-unknown{color:var(--dim);font-size:12px;line-height:15px;display:none;flex:0 1 auto;
@@ -991,6 +996,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       <button id="btn-report-ready">It's at ready level</button>
     </div>
   </div>
+  <div id="fader-spacer"></div>
   <div id="fader-bottom"></div>
 </div>
 </div>

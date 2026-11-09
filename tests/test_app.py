@@ -2426,15 +2426,15 @@ class TestUpReadyRidesToTheHoldLevel(AppTestCase):
         self.assertEqual(app._console.commanded_level, dm7.UNITY)
         self.assertEqual(app.snapshot()["state"], state.State.OPEN.value)
 
-    async def test_score_reversed_fades_like_an_ordinary_close(self):
+    async def test_faded_out_abandons_ready_with_the_ordinary_fade(self):
         app = self.build(fade=0.1)
         app._ready_ride_seconds = 0.1
         await app.arm()
         await app.annotate("up-ready")
         await app.wait_for_fade()
-        await app.annotate("score-reversed")
+        await app.annotate("out")
         self.assertIn(app.machine.state, (state.State.RELEASING, state.State.IDLE))
-        self.assertIn("score-reversed", self.keys())
+        self.assertIn("out", self.keys())
         await app.wait_for_fade()
         self.assertEqual(app._console.commanded_level, dm7.MINUS_INF)
 
@@ -2483,7 +2483,7 @@ class TestUpReadyRidesToTheHoldLevel(AppTestCase):
         app = self.build()
         buttons = {b["key"]: b["action"] for b in app.snapshot()["buttons"]}
         self.assertEqual(buttons["up-ready"], "ready")
-        self.assertEqual(buttons["score-reversed"], "release")
+        self.assertEqual(buttons["out"], "release")
 
 
 class TestFaderPositionTrust(AppTestCase):
@@ -5335,6 +5335,64 @@ class TestStoppingTheBox(AppTestCase):
         app.close_console()
         self.assertTrue(sender.closed)
         self.assertFalse(self.console.is_ramping)
+
+
+class TestScoreReversedIsRetired(AppTestCase):
+    """#202: an annotation must never move the fader. The key is still read
+    from old logs, and a tap on it is refused before anything acts."""
+
+    async def reach(self, app, where):
+        app._ready_ride_seconds = 0.5 if where == "ready-riding" else 0.1
+        if where == "standing-down":
+            return
+        await app.arm()
+        if where == "idle":
+            return
+        if where in ("ready-landed", "ready-riding"):
+            await app.annotate("up-ready")
+            if where == "ready-landed":
+                await app.wait_for_fade()
+            else:
+                await asyncio.sleep(UNDER_WAY)
+                self.assertTrue(app.machine.riding_in)
+            return
+        await app.annotate("up-drums")
+        if where == "releasing":
+            await app.annotate("out")
+
+    async def test_a_tap_is_refused_in_every_state_and_acts_on_nothing(self):
+        settled = {"standing-down", "idle", "ready-landed", "open"}
+        for where, known in (
+            ("standing-down", True),
+            ("standing-down", False),
+            ("idle", True),
+            ("ready-landed", True),
+            ("ready-riding", True),
+            ("open", True),
+            ("releasing", True),
+        ):
+            with self.subTest(where=where, level_known=known):
+                self.setUp()
+                app = self.build(level_known=known, fade=0.3)
+                await self.reach(app, where)
+                machine = app.machine
+                entries = len(self.entries())
+                packets = len(self.console_sender.packets)
+                with (
+                    mock.patch.object(app, "_command", mock.AsyncMock()) as command,
+                    self.assertRaises(ann.NotAButtonError),
+                ):
+                    await app.annotate("score-reversed")
+                command.assert_not_awaited()
+                self.assertEqual(app.machine, machine)
+                self.assertEqual(len(self.entries()), entries)
+                if where in settled:
+                    self.assertEqual(len(self.console_sender.packets), packets)
+                await app.wait_for_fade()
+
+    async def test_the_snapshot_does_not_offer_it(self):
+        app = self.build()
+        self.assertNotIn("score-reversed", [b["key"] for b in app.snapshot()["buttons"]])
 
 
 if __name__ == "__main__":

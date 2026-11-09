@@ -39,7 +39,7 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
     # the machine has no opinion about how long a move takes.
     ann.Action.OPEN_SLOW: state.Command.TRIGGER,
     ann.Action.READY: state.Command.READY,
-    # score-reversed reuses this: the same 2 s fade as "out", one tap (#6).
+    # "out": the 2 s fade, and READY's way out (#6, #202).
     ann.Action.RELEASE: state.Command.RELEASE,
 }
 
