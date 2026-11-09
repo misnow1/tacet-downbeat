@@ -52,6 +52,24 @@ def span(start_seq: int, end_seq: int | None, key: str, start: float, end: float
     return found
 
 
+def tap(seq: int, key: str, seconds: float, delay: float | None = None) -> list[ann.Entry]:
+    """A single-tap instant (#216): no phase, no span id."""
+    event = ann.EVENTS[key]
+    data = {} if delay is None else {"tap": {"delay": delay}}
+    return [
+        ann.Entry(
+            seq=seq,
+            event=key,
+            category=event.category.value,
+            kind=event.kind.value,
+            label=event.label,
+            wall=rtd_replay.iso(at(seconds)),
+            monotonic=float(seq),
+            data=data,
+        )
+    ]
+
+
 def hold(start: float, end: float, *doubts: Doubt, marks: tuple[TeamTimeout, ...] = ()) -> Stoppage:
     return Stoppage(at(start), at(end), tuple(sorted(doubts)), marks)
 
@@ -102,7 +120,7 @@ class TestTapped(unittest.TestCase):
 
 class TestKeys(unittest.TestCase):
     def test_timeout_keys_are_every_timeout_in_the_vocabulary_and_all_spans(self):
-        in_vocabulary = {key for key in ann.EVENTS if key.startswith("timeout")}
+        in_vocabulary = {key for key in ann.EVENTS if key.startswith("timeout") and not key.endswith("-tap")}
         self.assertEqual(set(timeouts.TIMEOUT_KEYS), in_vocabulary)
         for key in timeouts.TIMEOUT_KEYS:
             self.assertIs(ann.EVENTS[key].kind, ann.Kind.SPAN)
@@ -111,6 +129,21 @@ class TestKeys(unittest.TestCase):
         self.assertTrue(set(timeouts.TEAM_KEYS.values()) <= set(timeouts.TIMEOUT_KEYS))
         self.assertEqual(timeouts.TEAM_KEYS[Team.GUEST], "timeout-away")
         self.assertEqual(timeouts.TEAM_KEYS[Team.HOME], "timeout-home")
+
+    def test_the_tap_keys_map_to_the_retired_span_keys(self):
+        self.assertEqual(
+            dict(timeouts.TIMEOUT_TAP_SPANS),
+            {
+                "timeout-tap": "timeout",
+                "timeout-home-tap": "timeout-home",
+                "timeout-away-tap": "timeout-away",
+                "timeout-media-tap": "timeout-media",
+                "timeout-injury-tap": "timeout-injury",
+            },
+        )
+        for tap_key, span_key in timeouts.TIMEOUT_TAP_SPANS.items():
+            self.assertIs(ann.EVENTS[tap_key].kind, ann.Kind.INSTANT)
+            self.assertIn(span_key, timeouts.TIMEOUT_KEYS)
 
     def test_the_constants_are_pinned(self):
         self.assertEqual(timeouts.TAP_BEFORE_HOLD_SECONDS, 5.0)
@@ -329,6 +362,148 @@ class TestProposals(unittest.TestCase):
             self.assertEqual(corrections.correction_from_json(proposal.to_json()), proposal)
 
 
+class TestSingleTaps(unittest.TestCase):
+    """#216: an instant tap in a trusted hold becomes a span of two sidecar adds."""
+
+    def proposals(self, entries: list[ann.Entry], *holds: Stoppage) -> tuple[corrections.Correction, ...]:
+        return timeouts.propose(compared(entries, *holds), capture=CAPTURE_NAME)
+
+    def test_a_tapped_instant_is_found_with_the_span_key_and_a_derived_id(self):
+        (found,) = timeouts.tapped(tap(7, "timeout-media-tap", 12)).timeouts
+        self.assertTrue(found.instant)
+        self.assertEqual((found.key, found.span_id), ("timeout-media", "timeout-media-7"))
+        self.assertIsNone(found.end)
+
+    def test_a_span_is_not_an_instant(self):
+        (found,) = timeouts.tapped(span(1, 2, "timeout", 12, 80)).timeouts
+        self.assertFalse(found.instant)
+
+    def test_it_gives_the_start_then_the_end_with_the_span_key_and_source_rtd(self):
+        start, end = self.proposals(tap(7, "timeout-media-tap", 12), hold(10, 80))
+        assert isinstance(start, Add) and isinstance(end, Add)
+        self.assertEqual(
+            [(a.event, a.phase, a.span_id, a.source) for a in (start, end)],
+            [("timeout-media", "start", "timeout-media-7", "rtd"), ("timeout-media", "end", "timeout-media-7", "rtd")],
+        )
+        self.assertEqual((start.wall, end.wall), (rtd_replay.iso(at(12)), rtd_replay.iso(at(80))))
+        for add in (start, end):
+            self.assertEqual(
+                add.evidence,
+                {
+                    "capture": CAPTURE_NAME,
+                    "hold_start": rtd_replay.iso(at(10)),
+                    "hold_end": rtd_replay.iso(at(80)),
+                    "tap_seq": 7,
+                },
+            )
+
+    def test_the_start_moves_back_by_the_tap_delay(self):
+        start, _ = self.proposals(tap(7, "timeout-tap", 12, delay=1.5), hold(10, 80))
+        assert isinstance(start, Add)
+        self.assertEqual(start.wall, rtd_replay.iso(at(10.5)))
+
+    def test_a_negative_or_missing_delay_does_not_move_the_start(self):
+        for delay in (None, -0.25):
+            with self.subTest(delay=delay):
+                start, _ = self.proposals(tap(7, "timeout-tap", 12, delay=delay), hold(10, 80))
+                assert isinstance(start, Add)
+                self.assertEqual(start.wall, rtd_replay.iso(at(12)))
+
+    def test_a_generic_tap_with_one_teams_mark_puts_the_team_key_on_both_adds(self):
+        held = hold(10, 80, marks=(mark(11, Team.GUEST),))
+        proposals = self.proposals(tap(3, "timeout-tap", 12), held)
+        self.assertEqual(len(proposals), 2)
+        for item in proposals:
+            assert isinstance(item, Add)
+            self.assertEqual((item.event, item.span_id), ("timeout-away", "timeout-3"))
+            self.assertEqual(item.evidence and item.evidence["team"], "guest")
+        self.assertFalse(any(isinstance(p, Supersede) for p in proposals))
+
+    def test_a_tap_that_names_a_team_keeps_it(self):
+        held = hold(10, 80, marks=(mark(11, Team.GUEST),))
+        proposals = self.proposals(tap(3, "timeout-away-tap", 12), held)
+        self.assertEqual({p.event for p in proposals if isinstance(p, Add)}, {"timeout-away"})
+
+    def test_a_kind_conflict_still_proposes_the_span_under_the_tapped_key(self):
+        held = hold(10, 80, marks=(mark(11, Team.GUEST),))
+        match = only(compared(tap(3, "timeout-home-tap", 12), held))
+        self.assertIsNotNone(match.conflict)
+        self.assertEqual({p.event for p in self.proposals(tap(3, "timeout-home-tap", 12), held)}, {"timeout-home"})
+
+    def test_repeats_of_a_kind_in_one_hold_give_one_span_and_repeat_tap(self):
+        entries = tap(1, "timeout-tap", 12) + tap(2, "timeout-tap", 20)
+        comparison = compared(entries, hold(10, 80))
+        self.assertEqual([m.verdict for m in comparison.matches], [Verdict.SPAN_ADDED, Verdict.REPEAT_TAP])
+        proposals = timeouts.propose(comparison, capture=CAPTURE_NAME)
+        self.assertEqual([p.span_id for p in proposals if isinstance(p, Add)], ["timeout-1", "timeout-1"])
+        self.assertEqual(timeouts.exit_code(build(entries, hold(10, 80))), timeouts.EXIT_CLEAN)
+
+    def test_different_kinds_in_one_hold_each_get_a_span(self):
+        entries = tap(1, "timeout-tap", 12) + tap(2, "timeout-injury-tap", 20)
+        comparison = compared(entries, hold(10, 80))
+        self.assertEqual([m.verdict for m in comparison.matches], [Verdict.SPAN_ADDED, Verdict.SPAN_ADDED])
+        spans = {p.span_id for p in timeouts.propose(comparison, capture=CAPTURE_NAME) if isinstance(p, Add)}
+        self.assertEqual(spans, {"timeout-1", "timeout-injury-2"})
+
+    def test_taps_that_cannot_be_checked_propose_nothing_and_exit_1(self):
+        cases = {
+            Verdict.UNTRUSTED: (tap(1, "timeout-tap", 12), hold(10, 80, Doubt.INTERRUPTED)),
+            Verdict.NO_STOPPAGE: (tap(1, "timeout-tap", 500), hold(10, 80)),
+            Verdict.OUTSIDE_CAPTURE: (tap(1, "timeout-tap", 9000), hold(10, 80)),
+        }
+        for verdict, (entries, held) in cases.items():
+            with self.subTest(verdict):
+                report = build(entries, held)
+                self.assertEqual(report.comparison.matches[0].verdict, verdict)
+                self.assertEqual(report.fresh, ())
+                self.assertEqual(timeouts.exit_code(report), timeouts.EXIT_ATTENTION)
+
+    def test_a_mixed_log_keeps_tap_order(self):
+        entries = span(1, 2, "timeout", 12, 200) + tap(3, "timeout-media-tap", 215)
+        found = timeouts.tapped(entries).timeouts
+        self.assertEqual([t.start.seq for t in found], [1, 3])
+
+    def test_an_instant_does_not_change_which_span_is_last(self):
+        # The span's tapped end is the last in its hold, so a late end is corrected.
+        entries = span(1, 2, "timeout", 12, 40) + tap(3, "timeout-media-tap", 20)
+        comparison = compared(entries, hold(10, 80))
+        self.assertEqual([m.verdict for m in comparison.matches], [Verdict.END_CORRECTED, Verdict.SPAN_ADDED])
+
+    def test_last_two_minutes_is_ignored(self):
+        found = timeouts.tapped(tap(1, "last-two-minutes-tap", 12))
+        self.assertEqual((found.timeouts, found.orphan_ends), ((), ()))
+
+    def test_a_second_write_adds_nothing(self):
+        entries = tap(7, "timeout-tap", 12)
+        first = build(entries, hold(10, 80))
+        self.assertEqual(len(first.fresh), 2)
+        again = build(entries, hold(10, 80), existing=first.fresh)
+        self.assertEqual((len(again.fresh), len(again.already)), (0, 2))
+
+    def test_the_adds_round_trip_through_the_sidecar(self):
+        for item in self.proposals(tap(7, "timeout-tap", 12, delay=0.5), hold(10, 80)):
+            assert isinstance(item, Add)
+            self.assertEqual(Add.from_json(item.to_json()), item)
+
+    def test_the_report_counts_single_taps_only_when_there_are_some(self):
+        text = timeouts.render(build(tap(7, "timeout-tap", 12), hold(10, 80)), tz=UTC)
+        self.assertIn("0 timeout spans, 0 open, 0 orphan ends, 1 single tap", text)
+        self.assertIn("span-added", text)
+        self.assertIn("VERDICT: 1 tapped; 1 span added", text)
+        twice = timeouts.render(build(tap(1, "timeout-tap", 12) + tap(2, "timeout-tap", 13), hold(10, 80)), tz=UTC)
+        self.assertIn("2 single taps", twice)
+        self.assertIn("1 repeat tap", twice)
+
+    def test_a_spans_only_report_has_no_single_tap_text(self):
+        text = timeouts.render(build(span(1, 2, "timeout", 12, 200), hold(10, 80)), tz=UTC)
+        self.assertNotIn("single tap", text)
+
+    def test_an_instants_row_has_one_time_and_no_trailing_dash(self):
+        text = timeouts.render(build(tap(7, "timeout-tap", 12), hold(10, 80)), tz=UTC)
+        row = next(line for line in text.splitlines() if line.startswith("7 "))
+        self.assertNotIn("7-", row)
+
+
 def build(
     entries: list[ann.Entry], *holds: Stoppage, existing: tuple[corrections.Correction, ...] = ()
 ) -> timeouts.Report:
@@ -530,6 +705,19 @@ class TestCommand(unittest.TestCase):
         # The play clock write lands half a second after the second's time-of-day frame.
         self.assertEqual(written.wall, rtd_replay.iso(at(50.5)))
         self.assertIn("wrote 1 correction", run.out.getvalue())
+        before = run.sidecar.read_bytes()
+        run.again("--write")
+        self.assertEqual(run.sidecar.read_bytes(), before)
+        self.assertIn("nothing new to write", run.out.getvalue())
+
+    def test_write_for_a_single_tap_adds_the_span_and_a_second_write_adds_nothing(self):
+        run = self.run_of(tap(1, "timeout-tap", 12), pcap_of(HOLD_WRITES), "--write")
+        self.assertEqual(run.code, timeouts.EXIT_CLEAN, run.err.getvalue())
+        start, end = corrections.read_corrections(run.sidecar)
+        assert isinstance(start, Add) and isinstance(end, Add)
+        self.assertEqual((start.phase, end.phase), ("start", "end"))
+        self.assertEqual((start.event, end.event), ("timeout", "timeout"))
+        self.assertEqual(start.span_id, end.span_id)
         before = run.sidecar.read_bytes()
         run.again("--write")
         self.assertEqual(run.sidecar.read_bytes(), before)

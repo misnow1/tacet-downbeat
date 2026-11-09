@@ -255,19 +255,24 @@ meets a change is the game itself, so these land first and stay few.
 | 5 | [#167](https://github.com/misnow1/tacet-downbeat/issues/167) Confirm every band track is armed before kickoff | An unarmed track records nothing, and nothing can recover it. Today only the operator's eyes check it, and the OSC bank shows tracks 1 to 8 only. It comes after #204, because the mirror script's report to the box is one of its two options. Its plan decides between that and a larger OSC bank |
 | 6 | [#48](https://github.com/misnow1/tacet-downbeat/issues/48) Pin the page messages that gameday.md quotes | Rows 2 to 5 change what the page says, and gameday.md quotes the page. Pin the messages in tests before the game, so the runbook matches the page on the night |
 | 7 | [#206](https://github.com/misnow1/tacet-downbeat/issues/206) design.md 8: correct RTD from the first capture | Docs only. design.md 8 has the checksum wrong. It says nothing of the full refresh every 10 s, or of a source address that moves. The decoder (#210) already follows the capture, and #212 and #95 read this section. No thumb meets it, so it can land beside rows 2 to 6 |
-| 8 | [#212](https://github.com/misnow1/tacet-downbeat/issues/212) Quarter and halftime spans from RTD | It follows #205. RTD marks kickoff and the end of every period, so the quarters need no taps. It reads only the clock-at-zero flag and the quarter field, never the main clock's value (the 20:00 slip at Game 4). It is offline and does not gate the game. With #205, it is what lets the buttons below become single taps |
+| 8 | [#212](https://github.com/misnow1/tacet-downbeat/issues/212) Quarter and halftime spans from RTD | It follows #205. RTD marks kickoff and the end of every period, so the quarters need no taps. It reads only the clock-at-zero flag and the quarter field, never the main clock's value (the 20:00 slip at Game 4). It is offline and does not gate the game. With #205, it is what made the buttons single taps (#216); it still owes the end of Last two minutes |
 | 9 | [#71](https://github.com/misnow1/tacet-downbeat/issues/71) Accept only IP addresses for the console and Reaper hosts | Nothing is broken today, because the site config uses IP addresses. It closes the trap before somebody types a hostname. The maintainer accepts a lookup once at startup, with a warning (2026-09-13). Its refusal message goes in gameday.md, pinned by #48 |
 | 10 | [#42](https://github.com/misnow1/tacet-downbeat/issues/42) Constraint tests that would still pass with the constraint broken | Safety, with no change that the operator sees. #202 removes a fader key from the annotation path, and one of these tests checks that a move goes out before its log entry. It comes after #202, so the tests check what ships |
 | 11 | [#132](https://github.com/misnow1/tacet-downbeat/issues/132), [#136](https://github.com/misnow1/tacet-downbeat/issues/136), [#134](https://github.com/misnow1/tacet-downbeat/issues/134), [#201](https://github.com/misnow1/tacet-downbeat/issues/201) Docs: CLAUDE.md and design.md wording, and the named commands | Wording only. #132 and #201 both change CLAUDE.md, which is project instructions, so they share a PR of their own. #136 and #134 are small design.md fixes that can go in it. No thumb meets them, so they come late |
 | 12 | [#187](https://github.com/misnow1/tacet-downbeat/issues/187) Docs: the control VLAN has an internet route | The page still loads nothing from other servers. Only the reason changes, from no route to resilience. Two decisions rest on the old claim and get a second look. The game-day route goes in gameday.md |
 
-[#216](https://github.com/misnow1/tacet-downbeat/issues/216) (Game 5): the
+~~[#216](https://github.com/misnow1/tacet-downbeat/issues/216) (Game 5): the
 timeout buttons, Last two minutes and Halftime exodus become single taps that
-mark the start only. RTD gives the timeout ends now (#205), and #212 gives the
-end of each period. When the band comes back from halftime does not matter,
-because it does not play again until the Q3 kickoff. It changes buttons that the
-operator taps, so it goes beside #203. Like #203, it lands with or without a
-runthrough. It takes away taps the operator already misses.
+mark the start only.~~ Done. Each is an instant (`timeout-tap` and the four
+typed ones, `last-two-minutes-tap`, `halftime-exodus-tap`) in the old button's
+place with the old label, and the span keys stay for Games 2 to 4. RTD gives the
+timeout ends: `tacet-timeouts` turns a tap in a trusted hold into a start and
+an end `add` in the sidecar. Halftime exodus has no end, because the band does
+not play again until the Q3 kickoff, and its tap still raises Stand down?. In a
+Game 5 log, Last two minutes is one `last-two-minutes-tap` instant and one
+Reaper point marker, `GAME|last-two-minutes-tap`: no region and no sidecar
+line until #212 adds the pair for the end of the period. It changes buttons that
+the operator taps, and takes away taps the operator already misses.
 
 Nice to have for Game 5:
 

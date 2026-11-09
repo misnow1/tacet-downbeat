@@ -513,21 +513,29 @@ Initial event vocabulary (extend freely — unknown-unknowns are the point):
 
 Plus, standing in for RTD until it exists (§5.4), the game-timing events an
 operator can see from the box. Quarters and halftime were retired as buttons
-in #155 and are recovered offline (#159); the last-two-minutes window remains.
+in #155 and are recovered offline (#159). The timeouts, `last-two-minutes` and
+`halftime-exodus` were spans until #216: the operator missed the second tap, so
+each is now a single-tap instant (`timeout-tap`, `timeout-home-tap`,
+`timeout-away-tap`, `timeout-media-tap`, `timeout-injury-tap`,
+`last-two-minutes-tap`, `halftime-exodus-tap`) and the span keys stay in the
+vocabulary, with no button, for older logs. A timeout's end is read offline
+from the RTD play clock (`tacet-timeouts`, #205), Last two minutes ends with
+the period (#212, not yet built), and Halftime exodus has no end at all.
 
 Two-tap maximum, no typing required for the common cases. Anything requiring
 attention mid-game will not get logged.
 
-**Some annotations also ask a question (#19).** `band-exits-stands`, the start
-of `halftime-exodus`, and `band-enters-stands` are ordinary annotations first -
+**Some annotations also ask a question (#19).** `band-exits-stands`, `halftime-exodus-tap`,
+and `band-enters-stands` are ordinary annotations first -
 they record what the operator saw - and additionally raise the arm /
 stand-down question described in §6.4. Raising the question never itself
 changes duty state: a mis-tapped `band-exits-stands` mid-drive must not
 disable anything on its own (principle 4 again), and the only path from the
 question to a state change is the operator's own tap on its accept button,
 which runs the ordinary Arm or Stand down command with its own stale check and
-its own refusals. Ending `halftime-exodus` asks nothing; the band never plays
-during it, and only its start says anything about duty.
+its own refusals. `halftime-exodus-tap` is a single tap: the band does not
+play until the Q3 kickoff, so nothing ends it. The old `halftime-exodus` span
+cannot start, and ending one from an older log asks nothing.
 
 ### 5.7 Network resilience
 
@@ -670,8 +678,12 @@ where §5.6 requires it to stay extensible.
 
 Conventions:
 
-- **Regions for spans, markers for instants.** Quarters, halftime exodus,
-  last-two-minutes and band-in-stands are intervals; a fader move is a point.
+- **Regions for spans, markers for instants.** Quarters, band-in-stands and
+  the timeouts of Games 2 to 4 are intervals; a fader move is a point. Since
+  #216 a Game 5 timeout, last-two-minutes or halftime exodus is one point
+  marker (`GAME|timeout-tap`, `GAME|last-two-minutes-tap`) from the tap; a
+  timeout's span is derived afterwards into the sidecar (`tacet-timeouts`),
+  and the others wait for #212 or never have one.
 - **Parseable names** — a delimited prefix (`FDR|up-whistle`, `GAME|q3-start`)
   so the later read is a split rather than a regex.
 
@@ -817,8 +829,8 @@ separates what the fader was doing from whether the band was playing.
 ### 6.4 Mode handling
 
 **The arm / stand-down question (#19), as shipped.** The box **prompts**
-rather than acting silently: tapping `band-exits-stands`, or starting
-`halftime-exodus`, raises a persistent *"Band left the stands. Stand down?"*
+rather than acting silently: tapping `band-exits-stands`, or the
+`halftime-exodus-tap`, raises a persistent *"Band left the stands. Stand down?"*
 in the operator page's prompt slot; tapping `band-enters-stands` raises *"Band
 in the stands. Arm?"* Two reasons for asking rather than acting: it varies by
 game, and a system that announces what it is about to do earns trust faster
@@ -839,9 +851,9 @@ on the question's own sequence number, so a tap already on its way toward
 some other button on the fixed layout (§5.5) cannot land on a question that
 has just appeared in its place.
 
-Ending `halftime-exodus` asks nothing; the band never plays during it, and
-only its start says anything about duty. Same idea on return during Q3 -
-`band-enters-stands` asks again rather than assuming.
+`halftime-exodus-tap` has no end and asks once; a second tap while the
+question is open is logged and asks nothing new. Same idea on return during
+Q3 - `band-enters-stands` asks again rather than assuming.
 
 **RTD is a second source of the same questions, not yet built.** §5.4's
 halftime-exodus arming (Q2 under 5:00) and the return during Q3 are meant to
@@ -1160,7 +1172,8 @@ Game 3:
 - *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
   `out` for an abandon (`score-reversed` in logs from before #202).
 - *Duty and where the band was:* `armed`, `stood-down`, `band-enters-stands`,
-  `band-exits-stands` and `halftime-exodus`.
+  `band-exits-stands` and `halftime-exodus-tap` (`halftime-exodus` in logs
+  from before #216).
 - *Control authority:* `handed-off`, `took-back` and `still-mine`.
 - *Taps that did not execute:* `stale-tap`, or a fader button's own entry marked
   `executed: false`.

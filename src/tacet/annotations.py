@@ -213,12 +213,15 @@ CONSOLE_CHECKED = "console-checked"
 
 #: The three taps the box answers with a question (#19): the band entering the
 #: stands asks whether to arm, the band leaving them - or the halftime exodus
-#: starting - asks whether to stand down. Named once, like `ANCHOR_EVENT`, so
+#: tap (#216) - asks whether to stand down. Named once, like `ANCHOR_EVENT`, so
 #: `tacet.prompts` and the vocabulary below cannot spell them two ways. None of
 #: them moves anything: they record, and the box only asks.
 BAND_ENTERS_STANDS = "band-enters-stands"
 BAND_EXITS_STANDS = "band-exits-stands"
 HALFTIME_EXODUS = "halftime-exodus"
+#: The single tap that replaced the `HALFTIME_EXODUS` span as a button (#216).
+#: The span key stays in the vocabulary for logs that carry it.
+HALFTIME_EXODUS_TAP = "halftime-exodus-tap"
 
 #: The event vocabulary. Extend it freely - unknown-unknowns are the point
 #: (design.md 5.6). Keys are stable and machine-facing; labels are what the
@@ -323,29 +326,48 @@ VOCABULARY: tuple[EventType, ...] = (
     _span("q3", "Q3", Category.GAME, button=False),
     _span("q4", "Q4", Category.GAME, button=False),
     _span("halftime", "Halftime", Category.GAME, button=False),
-    _span(HALFTIME_EXODUS, "Halftime exodus", Category.GAME),
-    _span("last-two-minutes", "Last two minutes", Category.GAME),
+    # Retired as buttons in #216: the operator missed the second tap, and a
+    # better source now exists for every end that matters (the RTD play clock
+    # for timeouts, #205; the end of the period for Last two minutes, #212).
+    # Each has a single-tap instant just below, with the same label. The span
+    # keys stay, with `button=False`, because `end_span` looks up the event of
+    # a span an older log left open (Games 2 to 4 carry them) and old logs
+    # have to go on reading. Keys never change kind.
+    _span(HALFTIME_EXODUS, "Halftime exodus", Category.GAME, button=False),
+    _span("last-two-minutes", "Last two minutes", Category.GAME, button=False),
     # Timeouts are not one thing. The band plays through most of them, but not
     # an injury timeout (design.md 2, "Practical reading"), so a log that calls
     # them all "timeout" cannot answer the one question that matters when
     # tuning: was the band meant to be playing here. Whose timeout it is also
     # decides which band is playing at all - see other-band-on-field.
-    _span("timeout-home", "Timeout: home", Category.GAME),
-    _span("timeout-away", "Timeout: away", Category.GAME),
-    _span("timeout-media", "Timeout: media", Category.GAME),
+    _span("timeout-home", "Timeout: home", Category.GAME, button=False),
+    _span("timeout-away", "Timeout: away", Category.GAME, button=False),
+    _span("timeout-media", "Timeout: media", Category.GAME, button=False),
     # Retired as a button in #155. In NCAA usage an official's timeout is the
     # referee's umbrella stoppage, which TV/media and injury timeouts both fall
     # under, so two such buttons would mean the same thing. Entries from Games
     # 2-3 keep whatever they meant then.
     _span("timeout-official", "Timeout: officials", Category.GAME, button=False),
-    _span("timeout-injury", "Timeout: injury", Category.GAME),
+    _span("timeout-injury", "Timeout: injury", Category.GAME, button=False),
     # The default timeout, and the announcer's wording ("official timeout on
     # the field"). Use it whenever the kind is not obvious: the operator is
     # watching a field, and a timeout marked at once beats one that went
     # unmarked while they decided. The corrections sidecar (#159) classifies it
     # offline. Also the key old logs already carry; its place on MAIN comes
     # from app.js, not from here.
-    _span("timeout", "Official timeout", Category.GAME),
+    _span("timeout", "Official timeout", Category.GAME, button=False),
+    # The single taps (#216), in the old buttons' places. The tap marks the
+    # start and the kind, which only the operator can supply; the end is found
+    # offline. `tacet-timeouts` derives a timeout's span from the RTD play
+    # clock as two sidecar adds under the retired span key. Halftime exodus has
+    # no end at all, and its tap still raises the stand-down question (#19).
+    _instant(HALFTIME_EXODUS_TAP, "Halftime exodus", Category.GAME),
+    _instant("last-two-minutes-tap", "Last two minutes", Category.GAME),
+    _instant("timeout-home-tap", "Timeout: home", Category.GAME),
+    _instant("timeout-away-tap", "Timeout: away", Category.GAME),
+    _instant("timeout-media-tap", "Timeout: media", Category.GAME),
+    _instant("timeout-injury-tap", "Timeout: injury", Category.GAME),
+    _instant("timeout-tap", "Official timeout", Category.GAME),
     # Fader moves. `commanded` is written by the box itself; the rest both move
     # the fader and say why, in one tap.
     #

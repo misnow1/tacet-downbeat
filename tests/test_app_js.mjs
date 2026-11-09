@@ -956,7 +956,7 @@ for (const known of [false, true]) {
   for (const key of SNAP_KEYS) {
     check(`${at}: ${key} (a snap open) is never disabled`, column(key).disabled, false);
   }
-  for (const key of ["band-enters-stands", "last-two-minutes", "touchdown", "note"]) {
+  for (const key of ["band-enters-stands", "last-two-minutes-tap", "touchdown", "note"]) {
     check(`${at}: the annotation ${key} is never disabled by the belief`, column(key).disabled, false);
   }
   for (const key of COLUMN_KEYS) {
@@ -1119,7 +1119,7 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("standing down: an unheard Reaper is unknown", nodes.get("rec").textContent, "unknown");
   check("standing down: and says so", nodes.get("rec-tag").textContent, "no feedback");
   check("standing down: nothing is wrong with saving", nodes.get("saving").className, "");
-  check("standing down: the whole vocabulary is on screen", button("last-two-minutes").textContent, "Last two minutes (start)");
+  check("standing down: the whole vocabulary is on screen", button("last-two-minutes-tap").textContent, "Last two minutes");
 }
 
 {
@@ -1129,7 +1129,11 @@ for (const name of Object.keys(SNAPSHOTS)) {
   check("open: confirmed", nodes.get("rec-tag").textContent, "confirmed");
   check("open: where", nodes.get("rec-pos").textContent, "at 0:12:34.500");
   check("open: the record button will not be pressed twice", nodes.get("btn-record").disabled, true);
-  check("open: the open media timeout offers to end", button("timeout-media").textContent, "Timeout: media (end)");
+  // #216: the media timeout was tapped once and nothing is open, so its button
+  // says what it is, with no (start) or (end), and is not lit like an open span.
+  check("open: the tapped media timeout is a single tap", button("timeout-media-tap").textContent, "Timeout: media");
+  check("open: and no span is left running", SNAPSHOTS["open-recording"].open_spans, []);
+  check("open: and its button is not lit", button("timeout-media-tap").classList.contains("on"), false);
 }
 
 {
@@ -1518,7 +1522,7 @@ function prefixed(openSpans) {
 // annotation grids are, so they still carry the styling that tells them apart.
 const MIXED = [
   { key: "band-enters-stands", label: "Band enters stands", category: "BAND", kind: "instant" },
-  { key: "last-two-minutes", label: "Last two minutes", category: "GAME", kind: "span" },
+  { key: "last-two-minutes-tap", label: "Last two minutes", category: "GAME", kind: "instant" },
   { key: "up-whistle", label: "Up on whistle", category: "FDR", kind: "instant", action: "open" },
   { key: "out", label: "Faded out", category: "FDR", kind: "instant", action: "release" },
 ];
@@ -1546,16 +1550,16 @@ check(
   undefined,
 );
 check(
-  "a span that does not act is not marked as acting",
-  byKey.get("last-two-minutes").dataset.action,
+  "a single tap that does not act is not marked as acting",
+  byKey.get("last-two-minutes-tap").dataset.action,
   undefined,
 );
 // #5: the fader buttons move to their own pinned column, which carries no
 // heading of its own - there is nothing to sort against any more.
-// last-two-minutes lands in MAIN's "Game" group (Scoring and Timeouts have nothing to show and get no
+// last-two-minutes-tap lands in MAIN's "Game" group (Scoring and Timeouts have nothing to show and get no
 // heading of their own); band-enters-stands lands in MORE under its category.
 check("the fader column carries no heading", headings().includes("FDR"), false);
-check("last-two-minutes lands in MAIN's Game group", headings()[0], "Game");
+check("last-two-minutes-tap lands in MAIN's Game group", headings()[0], "Game");
 check("band-enters-stands lands in MORE under its category", headings()[1], "BAND");
 check("only the groups with something to show get a heading", headings().length, 2);
 check(
@@ -2050,7 +2054,8 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 {
   // A span whose button still exists is handled by that button, as before.
   const { context, created } = browser();
-  context.render(snapshot({}, {}, undefined, [{ span_id: "timeout-home-9", event: "timeout-home", label: "Timeout: home" }]));
+  const owned = [{ key: "timeout-home", label: "Timeout: home", category: "GAME", kind: "span" }];
+  context.render(snapshot({}, {}, owned, [{ span_id: "timeout-home-9", event: "timeout-home", label: "Timeout: home" }]));
   const labels = created.filter((node) => node.tag === "button").map((node) => node.textContent);
   check("no orphan control for a span that has its own button",
         labels.some((label) => label.startsWith("End: ")), false);
@@ -2714,7 +2719,17 @@ function game3(openSpans = []) {
 }
 
 const SCORING_KEYS = ["first-down", "safety", "field-goal", "touchdown", "defensive-stop"];
-const TIMEOUT_KEYS = ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"];
+const TIMEOUT_KEYS = ["timeout-tap", "timeout-home-tap", "timeout-away-tap", "timeout-media-tap", "timeout-injury-tap"];
+// The seven spans #216 retired as buttons. None is offered; an older log's open one is ended from MORE.
+const RETIRED_SPAN_KEYS = [
+  "timeout",
+  "timeout-home",
+  "timeout-away",
+  "timeout-media",
+  "timeout-injury",
+  "last-two-minutes",
+  "halftime-exodus",
+];
 const FADER_KEYS = ["up-whistle", "up-drums", "up-slow", "up-ready", "out"];
 const toneOf = (tone) => (node) => node.dataset.tone === tone;
 
@@ -2735,14 +2750,15 @@ const toneOf = (tone) => (node) => node.dataset.tone === tone;
     SCORING_KEYS,
   );
   const timeouts = buttons.filter(toneOf("timeout"));
-  check("Official timeout leads the Timeouts group", timeouts[0].dataset.key, "timeout");
-  check("and says Official timeout", timeouts[0].textContent, "Official timeout (start)");
+  check("Official timeout leads the Timeouts group", timeouts[0].dataset.key, "timeout-tap");
+  check("and says Official timeout, with no (start)", timeouts[0].textContent, "Official timeout");
   check("the Timeouts group is the five timeouts", timeouts.map((node) => node.dataset.key), TIMEOUT_KEYS);
-  for (const key of ["q1", "q2", "q3", "q4", "halftime", "timeout-official"]) {
+  for (const key of ["q1", "q2", "q3", "q4", "halftime", "timeout-official", ...RETIRED_SPAN_KEYS]) {
     check(`no ${key} button renders`, byKey.has(key), false);
   }
-  check("halftime exodus is still on MAIN", byKey.has("halftime-exodus"), true);
-  check("halftime exodus is untoned", byKey.get("halftime-exodus").dataset.tone, undefined);
+  check("halftime exodus is still on MAIN", byKey.has("halftime-exodus-tap"), true);
+  check("halftime exodus is untoned", byKey.get("halftime-exodus-tap").dataset.tone, undefined);
+  check("no MAIN button is a span", buttons.filter((node) => node.dataset.kind === "span").length, 0);
   check(
     "every scoring button, Safety included, carries the score tone",
     SCORING_KEYS.map((key) => byKey.get(key).dataset.tone),
@@ -2775,7 +2791,7 @@ const toneOf = (tone) => (node) => node.dataset.tone === tone;
 
 {
   const VOCABULARY_SCORING_ORDER = ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"];
-  const GAME_KEYS = ["halftime-exodus", "last-two-minutes"];
+  const GAME_KEYS = ["halftime-exodus-tap", "last-two-minutes-tap"];
   const { created } = game3();
   const grid = created.find(
     (node) => node.tag === "div" && node.children.some((child) => child.dataset.key === "touchdown"),
@@ -2817,7 +2833,7 @@ const svgOf = (node) => iconOf(node).innerHTML;
   check("the timeouts share one icon", shared.size, 1);
   check("and it differs from all 10 others", keyed.map((key) => svgOf(byKey.get(key))).includes([...shared][0]), false);
 
-  for (const key of ["halftime-exodus", "band-enters-stands"]) {
+  for (const key of ["halftime-exodus-tap", "band-enters-stands"]) {
     check(`a grey button (${key}) has one child`, byKey.get(key).children.length, 1);
     check(`and it is the label`, byKey.get(key).children[0].className, "lbl");
   }
@@ -2832,15 +2848,45 @@ const svgOf = (node) => iconOf(node).innerHTML;
 }
 
 {
-  const span = { span_id: "timeout-9", event: "timeout", label: "Official timeout" };
+  // #216: no vocabulary button is a span now, so a span-kind button is given
+  // explicitly, in a timeout's slot, to keep the toggle and its icon covered.
+  const local = [{ key: "timeout-tap", label: "Official timeout", category: "GAME", kind: "span" }];
+  const span = { span_id: "timeout-tap-9", event: "timeout-tap", label: "Official timeout" };
   const { context, created } = browser();
-  context.render(snapshot({}, {}, undefined, [span]));
-  const node = created.find((n) => n.tag === "button" && n.dataset.key === "timeout");
+  context.render(snapshot({}, {}, local, [span]));
+  const node = created.find((n) => n.tag === "button" && n.dataset.key === "timeout-tap");
   check("an open span's button says (end)", node.textContent, "Official timeout (end)");
   check("and keeps its icon", iconOf(node).className, "ico");
-  context.render(snapshot({}, {}, undefined, []));
+  context.render(snapshot({}, {}, local, []));
   check("a closed span says (start) again", node.textContent, "Official timeout (start)");
   check("and still keeps its icon", iconOf(node).className, "ico");
+}
+
+// -- the single taps (#216) --------------------------------------------------
+
+{
+  const { byKey, posted } = game3();
+  for (const key of [...TIMEOUT_KEYS, "last-two-minutes-tap", "halftime-exodus-tap"]) {
+    const node = byKey.get(key);
+    posted.length = 0;
+    node.onclick();
+    node.onclick();
+    check(`${key}: each tap posts one annotation`, posted.map(({ path, body }) => [path, body.key]),
+          [["/api/annotate", key], ["/api/annotate", key]]);
+    check(`${key}: its label has no (start) or (end)`, node.textContent, SNAPSHOTS["standing-down"].buttons.find((b) => b.key === key).label);
+    check(`${key}: it never gets .on`, node.classList.contains("on"), false);
+  }
+}
+
+{
+  // An older log left a media timeout open: it has no button, so MORE offers to end it.
+  const { created, posted } = game3([{ span_id: "timeout-media-12", event: "timeout-media", label: "Timeout: media" }]);
+  const ender = created.find((node) => node.tag === "button" && node.textContent === "End: Timeout: media");
+  check("an older open media timeout is offered in MORE", ender !== undefined, true);
+  posted.length = 0;
+  ender.onclick();
+  check("tapping it ends it by id", [posted[0].path, posted[0].body.span_id], ["/api/span/end", "timeout-media-12"]);
+  check("and posts nothing else", posted.length, 1);
 }
 
 {

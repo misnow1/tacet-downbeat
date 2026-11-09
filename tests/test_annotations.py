@@ -27,6 +27,19 @@ class FakeClock:
         return value
 
 
+#: The spans #216 retired as buttons: each now has a single-tap instant beside it, with the same label.
+SINGLE_TAPS: dict[str, str] = {
+    "timeout": "timeout-tap",
+    "timeout-home": "timeout-home-tap",
+    "timeout-away": "timeout-away-tap",
+    "timeout-media": "timeout-media-tap",
+    "timeout-injury": "timeout-injury-tap",
+    "last-two-minutes": "last-two-minutes-tap",
+    "halftime-exodus": "halftime-exodus-tap",
+}
+RETIRED_SPANS = tuple(SINGLE_TAPS)
+
+
 class TestVocabulary(unittest.TestCase):
     def test_keys_are_unique(self):
         keys = [e.key for e in ann.VOCABULARY]
@@ -75,9 +88,11 @@ class TestVocabulary(unittest.TestCase):
         self.assertEqual(ann.BAND_ENTERS_STANDS, "band-enters-stands")
         self.assertEqual(ann.BAND_EXITS_STANDS, "band-exits-stands")
         self.assertEqual(ann.HALFTIME_EXODUS, "halftime-exodus")
-        for key in (ann.BAND_ENTERS_STANDS, ann.BAND_EXITS_STANDS, ann.HALFTIME_EXODUS):
+        self.assertEqual(ann.HALFTIME_EXODUS_TAP, "halftime-exodus-tap")
+        for key in (ann.BAND_ENTERS_STANDS, ann.BAND_EXITS_STANDS, ann.HALFTIME_EXODUS_TAP):
             self.assertIn(key, ann.EVENTS)
             self.assertTrue(ann.EVENTS[key].button)
+        self.assertIs(ann.EVENTS[ann.HALFTIME_EXODUS_TAP].kind, ann.Kind.INSTANT)
         self.assertIs(ann.EVENTS[ann.HALFTIME_EXODUS].kind, ann.Kind.SPAN)
 
     def test_the_prompt_keys_are_written_by_the_box_not_tapped(self):
@@ -122,6 +137,7 @@ class TestVocabulary(unittest.TestCase):
             "halftime",
             "timeout-official",
             "score-reversed",
+            *RETIRED_SPANS,
         ):
             with self.subTest(key):
                 self.assertIn(key, ann.EVENTS)
@@ -175,14 +191,32 @@ class TestVocabulary(unittest.TestCase):
                 with self.assertRaises(ann.NotAButtonError):
                     ann.operator_event(key)
 
-    def test_halftime_exodus_stays_a_button(self):
-        self.assertTrue(ann.EVENTS["halftime-exodus"].button)
-        self.assertIs(ann.EVENTS["halftime-exodus"].kind, ann.Kind.SPAN)
+    def test_the_single_taps_are_game_instant_buttons_with_the_old_labels(self):
+        # #216: one tap marks the start; the end comes offline.
+        for span, tap in SINGLE_TAPS.items():
+            with self.subTest(tap):
+                event = ann.EVENTS[tap]
+                self.assertIs(event.kind, ann.Kind.INSTANT)
+                self.assertIs(event.category, ann.Category.GAME)
+                self.assertTrue(event.button)
+                self.assertEqual(event.label, ann.EVENTS[span].label)
+                self.assertIsNone(event.action)
+
+    def test_the_retired_spans_stay_spans_for_older_logs(self):
+        # Keys never change kind: end_span still has to find them (#216).
+        for key in RETIRED_SPANS:
+            with self.subTest(key):
+                self.assertIs(ann.EVENTS[key].kind, ann.Kind.SPAN)
+                self.assertFalse(ann.EVENTS[key].button)
+
+    def test_no_span_is_a_button(self):
+        for event in ann.BUTTONS:
+            self.assertIs(event.kind, ann.Kind.INSTANT, event.key)
 
     def test_the_default_timeout_says_official_timeout(self):
-        event = ann.EVENTS["timeout"]
+        event = ann.EVENTS["timeout-tap"]
         self.assertEqual(event.label, "Official timeout")
-        self.assertIs(event.kind, ann.Kind.SPAN)
+        self.assertIs(event.kind, ann.Kind.INSTANT)
         self.assertTrue(event.button)
 
     def test_the_officials_timeout_is_retired_and_keeps_its_label(self):
@@ -191,7 +225,7 @@ class TestVocabulary(unittest.TestCase):
         self.assertFalse(event.button)
 
     def test_only_one_offered_button_says_official(self):
-        self.assertEqual([b.key for b in ann.BUTTONS if "official" in b.label.lower()], ["timeout"])
+        self.assertEqual([b.key for b in ann.BUTTONS if "official" in b.label.lower()], ["timeout-tap"])
 
     def test_no_two_buttons_share_a_label(self):
         labels = [b.label.lower() for b in ann.BUTTONS]
@@ -219,7 +253,7 @@ class TestVocabulary(unittest.TestCase):
             self.assertEqual(ann.EVENTS[key].kind, ann.Kind.SPAN, key)
 
     def test_every_timeout_is_a_game_span(self):
-        timeouts = [e for e in ann.VOCABULARY if e.key.startswith("timeout")]
+        timeouts = [e for e in ann.VOCABULARY if e.key.startswith("timeout") and not e.key.endswith("-tap")]
         self.assertGreater(len(timeouts), 1)
         for event in timeouts:
             self.assertEqual(event.kind, ann.Kind.SPAN, event.key)

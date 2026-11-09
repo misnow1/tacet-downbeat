@@ -160,8 +160,8 @@ const TONE_ICONS = {
 // groups; null means grey.
 const MAIN_GROUPS = [
   ["Scoring", "score", ["first-down", "safety", "field-goal", "touchdown", "defensive-stop"]],
-  ["Timeouts", "timeout", ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"]],
-  ["Game", null, ["halftime-exodus", "last-two-minutes"]],
+  ["Timeouts", "timeout", ["timeout-tap", "timeout-home-tap", "timeout-away-tap", "timeout-media-tap", "timeout-injury-tap"]],
+  ["Game", null, ["halftime-exodus-tap", "last-two-minutes-tap"]],
 ];
 
 // What the fader column and MAIN together account for, so MORE is "whatever
@@ -1079,8 +1079,8 @@ function paintHandoffPrompt() {
 
 // -- the arm / stand-down question (#19) -------------------------------------
 //
-// The box raises this from `band-exits-stands`, the start of
-// `halftime-exodus`, or `band-enters-stands` (tacet.prompts); the page only
+// The box raises this from `band-exits-stands`, a `halftime-exodus-tap`,
+// or `band-enters-stands` (tacet.prompts); the page only
 // renders what it is told and answers with one tap. It has the #prompt slot to
 // itself, but is still held back while a hand-off confirmation is open,
 // through `paintSlot`, which the hand-off handlers and `selectTab` call

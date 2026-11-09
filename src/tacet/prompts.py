@@ -2,7 +2,7 @@
 
 Game 2 was armed before the band entered and never stood down at halftime. The
 box does not decide that for the operator; it asks. Tapping `band-exits-stands`
-(or starting `halftime-exodus`) raises "Stand down?", tapping
+(or tapping `halftime-exodus-tap`) raises "Stand down?", tapping
 `band-enters-stands` raises "Arm?", and the operator answers with one tap or
 leaves it. The answer is logged either way.
 
@@ -43,12 +43,12 @@ class Prompt(StrEnum):
     STAND_DOWN = "stand-down"
 
 
-#: Which tap asks which question. `halftime-exodus` is a span, and only its
-#: start is asked about: the band never plays during it, and ending it says
-#: nothing about whether to arm.
+#: Which tap asks which question. `halftime-exodus-tap` is a single tap (#216):
+#: the band never plays during the exodus and nothing ends it. The old
+#: `halftime-exodus` span can no longer start, so it asks nothing.
 ASKS: Mapping[str, Prompt] = {
     ann.BAND_EXITS_STANDS: Prompt.STAND_DOWN,
-    ann.HALFTIME_EXODUS: Prompt.STAND_DOWN,
+    ann.HALFTIME_EXODUS_TAP: Prompt.STAND_DOWN,
     ann.BAND_ENTERS_STANDS: Prompt.ARM,
 }
 

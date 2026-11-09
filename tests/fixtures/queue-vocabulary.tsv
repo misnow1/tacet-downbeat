@@ -59,6 +59,13 @@ GAME|timeout-injury	start	timeout-injury-58
 GAME|timeout-injury	end	timeout-injury-58
 GAME|timeout	start	timeout-60
 GAME|timeout	end	timeout-60
+GAME|halftime-exodus-tap	-	-
+GAME|last-two-minutes-tap	-	-
+GAME|timeout-home-tap	-	-
+GAME|timeout-away-tap	-	-
+GAME|timeout-media-tap	-	-
+GAME|timeout-injury-tap	-	-
+GAME|timeout-tap	-	-
 FDR|commanded	-	-
 FDR|move-failed	-	-
 FDR|move-landed	-	-

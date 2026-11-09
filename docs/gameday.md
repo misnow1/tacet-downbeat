@@ -239,6 +239,20 @@ finds out until they look down at a black slab in the middle of a drive. The
 page says so at the bottom of the screen, because it cannot do it itself. Put
 the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 
+### 5. The RTD capture
+
+Start the capture before kickoff and leave it running through the end of the
+game. Since #216 a timeout has no tapped end, so a game with no capture has no
+timeout ends at all, and they cannot be recovered afterwards.
+
+```
+sudo tcpdump -i vlan0 -U -w data/rtd-<date>-<opponent>.pcap udp port 21000
+```
+
+`vlan0` was the interface at Game 4; confirm it on the day. Filter on the port
+and never on an address, because the RTD source address moved twice during
+Game 4. `-U` writes each packet out as it arrives, so a crash loses little.
+
 ---
 
 ## Pre-flight
@@ -289,10 +303,12 @@ second press.
 
 **Arm and stand down** follow the band, not the clock. The box asks rather than
 deciding for you (CLAUDE.md principle 4: announce, don't surprise): tapping
-**Band exits stands**, or starting **Halftime exodus**, raises a **Stand
-down?** question in the prompt slot at the top of the left panel; tapping
-**Band enters stands** raises **Arm?**. Ending Halftime exodus asks nothing -
-the band never plays during it, and only its start says anything about duty.
+**Band exits stands**, or **Halftime exodus**, raises a **Stand down?**
+question in the prompt slot at the top of the left panel; tapping **Band
+enters stands** raises **Arm?**. Halftime exodus is a single tap (#216): there
+is no second tap, because nothing ends it and the band does not play again
+until the Q3 kickoff. Tap it once; a second tap while the question is open
+logs the tap and asks nothing new.
 
 The exact wording:
 
@@ -398,7 +414,12 @@ records only, moving nothing. MAIN holds Scoring first (**First down**,
 **Safety**, **Field goal**, **Touchdown**, **Defensive stop**), then the
 timeouts, then **Halftime exodus** and **Last two minutes**, on one
 screen, though **Halftime exodus** and **Last two minutes** may sit just below
-the fold on the press-box iPad. **Official timeout** is the timeout to tap whenever you cannot
+the fold on the press-box iPad. **Every timeout, Halftime exodus and Last two
+minutes is a single tap (#216): tap once when it starts, and there is no second
+tap.** The end of a timeout is read afterwards from the scoreboard's play
+clock, so without an RTD capture a timeout is only a start marker; Halftime exodus has no end; the end of Last two minutes is the end of
+the period, found offline (#212). Tapping again adds a second mark, so tap
+once. **Official timeout** is the timeout to tap whenever you cannot
 tell which kind; the typed ones are for when it is obvious. Quarters and
 halftime are no longer tapped: they are recovered afterwards from the
 announcer and HokieVision recordings. Colour and icon say what a button is:
@@ -410,10 +431,11 @@ runthrough. MORE holds band movement, the other band, the drumline,
 Note, and Arm / Stand down / Start recording / StageMix has it. A tap in MORE
 leaves you on MORE; tap **Main**, or swipe right across the left panel, when
 you want it back (swipe left on MAIN for MORE). A swipe that starts on the
-fader column never changes tab. Buttons marked `(start)` are spans: tap once to open the region, again to close it. They read
-`(end)` while open. A span left open by an earlier run whose button has since
-gone (a retired Q1-Q4, Halftime or Timeout: officials, say) appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE, with one
-button to end it.
+fader column never changes tab. No button on the page is a span any more
+(#216), so none reads `(start)` or `(end)`. A span left open by an earlier run
+whose button has since gone (a retired Q1-Q4, Halftime, a timeout or Last two
+minutes, say) appears under **OPEN FROM AN EARLIER RUN**, at the bottom of MORE,
+with one button to end it. A fresh log should never show one.
 
 **The fader line is what the box commanded, never what the console reports**,
 with how long ago that was next to it (`0.00 dB - 3s ago`). The DM7 cannot
@@ -554,7 +576,8 @@ recording nor the log depends on the page or the markers working.
    Reference wav>"`. If its VERDICT line flags anything (exit code 1), copy the
    flagged rows into the game notes
    ([how to read it](box.md#after-the-game-the-pilot-check)).
-7. If an RTD capture was made, run `tacet-timeouts <log> <capture>`; read it,
+7. Run `tacet-timeouts <log> <capture>` on the RTD capture. Without one, a
+   timeout is only a start marker and its end cannot be recovered. Read it,
    then rerun with `--write`; copy the `.corrections.jsonl` with the log
    ([how to read it](box.md#after-the-game-timeouts-from-rtd)).
 

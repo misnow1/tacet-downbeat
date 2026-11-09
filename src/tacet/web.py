@@ -928,7 +928,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </div>
 <div id="prompt">
   <!-- #19: the arm / stand-down question the box raises from
-       band-exits-stands, the start of halftime-exodus, or band-enters-stands.
+       band-exits-stands, a halftime-exodus-tap, or band-enters-stands.
        The accept button's label is filled in by script, per the question's
        kind; it ships empty because nothing has answered that yet. -->
   <div class="panel" id="prompt-panel" style="display:none">

@@ -20,6 +20,7 @@ from tacet import dm7, osc, prompts, reaper, state, web
 from tests.disk import Disk
 from tests.reaper_stream import listened_parked, meter_packet
 from tests.snapshots import _build, _known, _Sender
+from tests.test_app import RETIRED_SPAN_KEYS, SPAN_EVENTS, SPAN_KEY, SPAN_LABEL
 
 
 class FakeSender:
@@ -31,6 +32,12 @@ class FakeSender:
 
 
 class WebTestCase(AioHTTPTestCase):
+    def with_span_button(self):
+        """Let this test start a span, as a button once could (#216)."""
+        patcher = mock.patch.dict(ann.EVENTS, SPAN_EVENTS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     #: The console's ramp rate and the app's fade length. Class attributes so a
     #: subclass can run the same test at another step count (#154).
     TICK_HZ = 200.0
@@ -891,14 +898,39 @@ class TestAnnotation(WebTestCase):
         self.assertEqual(response.status, 200)
 
     async def test_spans_open_and_close(self):
-        opened = await (await self.client.post("/api/span/start", json={"key": "last-two-minutes"})).json()
+        self.with_span_button()
+        opened = await (await self.client.post("/api/span/start", json={"key": SPAN_KEY})).json()
         span_id = opened["span_id"]
         self.assertIn(
-            {"span_id": span_id, "event": "last-two-minutes", "label": "Last two minutes"},
+            {"span_id": span_id, "event": SPAN_KEY, "label": SPAN_LABEL},
             opened["state"]["open_spans"],
         )
         closed = await (await self.client.post("/api/span/end", json={"span_id": span_id})).json()
         self.assertEqual(closed["state"]["open_spans"], [])
+
+    async def test_each_retired_span_ends_through_the_route(self):
+        for key in RETIRED_SPAN_KEYS:
+            with self.subTest(key):
+                span_id = self.log.start_span(key)
+                response = await self.client.post("/api/span/end", json={"span_id": span_id})
+                self.assertEqual(response.status, 200)
+                self.assertNotIn(span_id, [s["span_id"] for s in (await response.json())["state"]["open_spans"]])
+
+    async def test_a_retired_span_cannot_be_started_through_the_route(self):
+        for key in RETIRED_SPAN_KEYS:
+            with self.subTest(key):
+                response = await self.client.post("/api/span/start", json={"key": key})
+                self.assertEqual(response.status, 400)
+                self.assertIn("retired", (await response.json())["error"])
+        self.assertEqual((await (await self.client.get("/api/state")).json())["open_spans"], [])
+
+    async def test_a_single_tap_is_an_ordinary_annotation(self):
+        for key in ("timeout-tap", "last-two-minutes-tap", "halftime-exodus-tap"):
+            with self.subTest(key):
+                response = await self.client.post("/api/annotate", json={"key": key})
+                self.assertEqual(response.status, 200)
+                self.assertEqual((await response.json())["state"]["open_spans"], [])
+        self.assertEqual(self.entries().count("timeout-tap"), 1)
 
     async def test_ending_an_unknown_span_is_a_client_error(self):
         response = await self.client.post("/api/span/end", json={"span_id": "q1-999"})
@@ -1092,8 +1124,9 @@ class TestFailures(WebTestCase):
         self.assertIn("retired", (await response.json())["error"])
 
     async def test_a_span_that_was_not_saved_says_so(self):
+        self.with_span_button()
         self.disk.full = True
-        response = await self.client.post("/api/span/start", json={"key": "last-two-minutes"})
+        response = await self.client.post("/api/span/start", json={"key": SPAN_KEY})
         self.assertEqual(response.status, 200)
         self.log.flush()
         state = await (await self.client.get("/api/state")).json()
@@ -1658,9 +1691,10 @@ class TestTapsAreStampedOnTheWayIn(WebTestCase):
                 self.assertEqual(entry.data["tap"], want)
 
     async def test_annotations_and_spans_read_it_too(self):
+        self.with_span_button()
         body = self.stamp(at=6000.0, offset=1000.5, uncertainty=0.01)
         await self.client.post("/api/annotate", json={"key": "note", "data": {"text": "x"}, **body})
-        started = await (await self.client.post("/api/span/start", json={"key": "last-two-minutes", **body})).json()
+        started = await (await self.client.post("/api/span/start", json={"key": SPAN_KEY, **body})).json()
         await self.client.post("/api/span/end", json={"span_id": started["span_id"], **body})
         for entry in self.logged():
             with self.subTest(entry.event, phase=entry.phase):
