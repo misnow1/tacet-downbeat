@@ -2699,7 +2699,7 @@ function game3(openSpans = []) {
   return { context, created, posted, buttons, byKey: new Map(buttons.map((node) => [node.dataset.key, node])) };
 }
 
-const SCORING_KEYS = ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"];
+const SCORING_KEYS = ["first-down", "safety", "field-goal", "touchdown", "defensive-stop"];
 const TIMEOUT_KEYS = ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"];
 const FADER_KEYS = ["up-whistle", "up-drums", "up-slow", "up-ready", "score-reversed", "out"];
 const toneOf = (tone) => (node) => node.dataset.tone === tone;
@@ -2716,7 +2716,7 @@ const toneOf = (tone) => (node) => node.dataset.tone === tone;
 {
   const { buttons, byKey } = game3();
   check(
-    "Scoring renders Touchdown, Field goal, Safety, First down, Defensive stop",
+    "Scoring renders First down, Safety, Field goal, Touchdown, Defensive stop",
     buttons.filter(toneOf("score")).map((node) => node.dataset.key),
     SCORING_KEYS,
   );
@@ -2757,6 +2757,34 @@ const toneOf = (tone) => (node) => node.dataset.tone === tone;
     (node) => node.tag === "div" && node.children.some((child) => child.dataset.key === "touchdown"),
   );
   check("the scoring grid is marked for its own layout", grid.dataset.tone, "score");
+}
+
+{
+  const VOCABULARY_SCORING_ORDER = ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"];
+  const GAME_KEYS = ["halftime-exodus", "last-two-minutes"];
+  const { created } = game3();
+  const grid = created.find(
+    (node) => node.tag === "div" && node.children.some((child) => child.dataset.key === "touchdown"),
+  );
+  check("the scoring grid's children run in the reviewed order", grid.children.map((child) => child.dataset.key), SCORING_KEYS);
+  check(
+    "the scoring grid's labels run First down to Defensive stop",
+    grid.children.map((child) => child.dataset.label),
+    ["First down", "Safety", "Field goal", "Touchdown", "Defensive stop"],
+  );
+  check(
+    "MAIN is Scoring, Timeouts, Game, in that order",
+    created
+      .filter((node) => node.tag === "div" && node.className === "grid")
+      .slice(0, 3)
+      .map((node) => node.children.map((child) => child.dataset.key)),
+    [SCORING_KEYS, TIMEOUT_KEYS, GAME_KEYS],
+  );
+  check(
+    "the vocabulary keeps its own order, independent of the page",
+    SNAPSHOTS["standing-down"].buttons.map((button) => button.key).filter((key) => SCORING_KEYS.includes(key)),
+    VOCABULARY_SCORING_ORDER,
+  );
 }
 
 const iconOf = (node) => node.children[0];

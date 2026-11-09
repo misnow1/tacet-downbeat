@@ -155,11 +155,12 @@ const TONE_ICONS = {
   timeout: svg('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M9.5 2.5h5M12 2.5V6M18.5 6.5L20 5"/>'),
 };
 
-// MAIN: the order is the Game 3 debrief's (#155). The tone belongs to this
+// MAIN: the group order and Timeouts are the Game 3 debrief's (#155); the
+// Scoring order is the Game 4 review's (#203). The tone belongs to this
 // reviewed placement rather than to Category, because GAME covers all three
 // groups; null means grey.
 const MAIN_GROUPS = [
-  ["Scoring", "score", ["touchdown", "field-goal", "safety", "first-down", "defensive-stop"]],
+  ["Scoring", "score", ["first-down", "safety", "field-goal", "touchdown", "defensive-stop"]],
   ["Timeouts", "timeout", ["timeout", "timeout-home", "timeout-away", "timeout-media", "timeout-injury"]],
   ["Game", null, ["halftime-exodus", "last-two-minutes"]],
 ];
