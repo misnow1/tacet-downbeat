@@ -792,6 +792,16 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #strip > #console-reach.fault{display:block;background:var(--warn);color:#fff}
 #strip > #console-reach.note{display:block;color:#ffca7a}
 #strip > #console-reach[data-expanded="1"]{max-width:100%}
+/* #204: where Reaper will record. Present in every state, so it never appears
+   or disappears and nothing in the strip moves. Flex lines break on hypothetical
+   size, which `min-width` sets, so it has none: at `min-width:0` the chip costs
+   only its gap on a line. A deliberate tap to expand it may push the left panel
+   down. */
+#strip > #reaper-project{flex:1 1 0;min-width:0;max-width:340px;cursor:pointer}
+#strip > #reaper-project.saved{color:var(--dim)}
+#strip > #reaper-project.warn{background:var(--attention);color:var(--attention-text);font-weight:700}
+#strip > #reaper-project.note{color:#ffca7a}
+#strip > #reaper-project[data-expanded="1"]{max-width:100%;flex-basis:100%}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
@@ -921,6 +931,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <div id="target-level"></div>
   <div id="provenance"></div>
   <div id="console-reach"></div>
+  <div id="reaper-project"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>

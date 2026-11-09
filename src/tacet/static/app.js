@@ -860,6 +860,34 @@ function consoleChip(c) {
   return null;
 }
 
+// #204: where Reaper will record, from the mirror's report. Plain constants:
+// the runbook tests read them out of this file and look for them in the docs.
+const PROJECT_SAVED = "Recording to";
+const PROJECT_UNSAVED = "Reaper's project is not saved";
+const PROJECT_UNSAVED_LANDS = "recording will land in";
+const PROJECT_UNSAVED_NO_PATH = "and Reaper did not say where recording will land.";
+const PROJECT_UNKNOWN = "Reaper project unknown";
+const PROJECT_NO_REPORT = "no report from the mirror.";
+const PROJECT_STOPPED = "the mirror stopped reporting.";
+const PROJECT_UNREADABLE = "cannot read the mirror's report.";
+
+// The record path is always shown, so a wrong folder is visible. It is shown,
+// not judged: nothing here compares it with anything, and a saved project says
+// nothing about whether the folder is the right one. Warn only; no button here.
+// Null for a box from before #204, which sends no `reaper_project`.
+function projectChip(p) {
+  if (!p) return null;
+  if (p.status === "saved") return ["saved", PROJECT_SAVED + " " + p.record_path];
+  if (p.status === "unsaved") {
+    if (!p.record_path) return ["warn", PROJECT_UNSAVED + ", " + PROJECT_UNSAVED_NO_PATH];
+    return ["warn", PROJECT_UNSAVED + ": " + PROJECT_UNSAVED_LANDS + " " + p.record_path + "."];
+  }
+  let why = PROJECT_UNREADABLE;
+  if (p.reason === "no-report") why = PROJECT_NO_REPORT;
+  else if (p.reason === "stopped") why = PROJECT_STOPPED;
+  return ["note", PROJECT_UNKNOWN + ": " + why];
+}
+
 // Whether annotations are reaching the disk. A full disk leaves the fader
 // buttons working and nothing else on the page looking wrong, while every
 // annotation from then on is lost - the half nothing can recover afterwards
@@ -956,6 +984,10 @@ function render(received) {
   const reachChip = consoleChip(next.console);
   $("console-reach").className = reachChip ? reachChip[0] : "";
   setText($("console-reach"), reachChip ? reachChip[1] : "");
+  // #204: guarded the same way. In the strip, present in every state.
+  const projectNote = projectChip(next.reaper_project);
+  $("reaper-project").className = projectNote ? projectNote[0] : "";
+  setText($("reaper-project"), projectNote ? projectNote[1] : "");
   const saving = savingBanner(next.log, next.mirror);
   $("saving").className = saving ? saving[0] : "";
   $("saving").textContent = saving ? saving[1] : "";
@@ -1241,7 +1273,7 @@ for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-read
 // than a class: the functional colour classes above (loud, failed, fault...)
 // are overwritten wholesale on every render, and a class toggled here would be
 // wiped the next time one of those runs.
-for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach"]) {
+for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach", "reaper-project"]) {
   $(id).onclick = () => {
     const node = $(id);
     node.dataset.expanded = node.dataset.expanded ? "" : "1";

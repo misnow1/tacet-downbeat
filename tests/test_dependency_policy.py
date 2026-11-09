@@ -182,6 +182,25 @@ class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
             self.assertNotIn("reach", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
+class TestTheMirrorReportStaysOutsideTheControlPath(unittest.TestCase):
+    """#204: `mirror_report` reads a file the mirror script writes. Standard
+    library only, no socket, and nothing that moves the fader imports it."""
+
+    def test_it_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "mirror_report.py"):
+            self.assertIn(module, allowed, f"tacet.mirror_report imports {module!r}")
+
+    def test_it_cannot_send_anything(self):
+        self.assertNotIn("socket", _imported_top_level_modules(PACKAGE_ROOT / "mirror_report.py"))
+        for forbidden in ("osc", "net", "dm7", "state", "targets"):
+            self.assertNotIn(forbidden, _imported_tacet_modules(PACKAGE_ROOT / "mirror_report.py"))
+
+    def test_no_control_path_module_imports_it(self):
+        for name in CONTROL_PATH:
+            self.assertNotIn("mirror_report", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
+
+
 class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
     """`tacet.rtd` is not control path, but the live reader (#95) will import it.
 

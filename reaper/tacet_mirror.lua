@@ -17,6 +17,11 @@
   append-only and its history belongs to games that are already mirrored
   elsewhere.
 
+  It also writes `<queue path>.report` every REPORT_SECONDS (#204): which project
+  Reaper has open (empty means unsaved) and where a recording would land, for the
+  box's project chip. Silent on every path, and it never touches the queue offset.
+  Re-copy this file into REAPER/Scripts after every update of the box.
+
   Install: put this in REAPER/Scripts, add it via Actions > Load ReaScript, and
   run it. It will ask for the queue path once and remember it.
 
@@ -35,6 +40,12 @@ local POLL_SECONDS = 0.25
 local DELIMITER    = "\t"
 local ABSENT       = "-"
 local FIELDS       = 3
+-- The status file the box reads (#204): `<queue path>.report`, key<TAB>value lines.
+local REPORT_SUFFIX  = ".report"
+local TEMP_SUFFIX    = ".tmp"
+local REPORT_SECONDS = 2
+local REPORT_VERSION = 1
+local CURRENT_PROJECT = -1
 local PHASE_START  = "start"
 local PHASE_END    = "end"
 -- CATEGORY|key, the same rule as tacet.mirror.NAME_PATTERN. A fragment of a torn
@@ -50,6 +61,8 @@ local queue_path = nil
 local offset = 0
 local open_spans = {}
 local last_poll = 0
+local last_report = nil
+local report_seq = 0
 local running = true
 
 local function log(message)
@@ -251,6 +264,55 @@ handle_safely = function(line)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- the report (#204)
+-- ---------------------------------------------------------------------------
+
+local function one_line(value)
+  return (tostring(value):gsub("[\r\n]", ""))
+end
+
+-- Ordered key/value pairs. The one place a later field is added; `version`
+-- changes only for a breaking change to the format. An empty `project` means
+-- unsaved. No project at all leaves the key out, which the box reads as unknown.
+local function report_fields()
+  local fields = {
+    { "version", REPORT_VERSION },
+    { "seq", report_seq },
+  }
+  local project, filename = reaper.EnumProjects(CURRENT_PROJECT)
+  if project ~= nil then
+    fields[#fields + 1] = { "project", filename or "" }
+  end
+  fields[#fields + 1] = { "record_path", reaper.GetProjectPath("") }
+  return fields
+end
+
+local function write_report()
+  report_seq = report_seq + 1
+  local lines = {}
+  for _, pair in ipairs(report_fields()) do
+    lines[#lines + 1] = pair[1] .. DELIMITER .. one_line(pair[2]) .. "\n"
+  end
+  local path = queue_path .. REPORT_SUFFIX
+  local temp = path .. TEMP_SUFFIX
+  local handle = io.open(temp, "wb")
+  if not handle then return end
+  -- Replace the report only with a whole one: a full disk must not leave a torn file.
+  local wrote = handle:write(table.concat(lines))
+  local closed = handle:close()
+  if wrote and closed then
+    os.rename(temp, path)
+  end
+end
+
+-- Never logs: the runbook's check is that the last console line says mirroring.
+local function report_if_due(now)
+  if last_report ~= nil and now - last_report < REPORT_SECONDS then return end
+  last_report = now
+  pcall(write_report)
+end
+
 local function loop()
   if not running then return end
   local now = reaper.time_precise()
@@ -261,6 +323,7 @@ local function loop()
       log("error polling queue: " .. tostring(err))
     end
   end
+  report_if_due(now)
   reaper.defer(loop)
 end
 

@@ -1039,6 +1039,7 @@ check(
     "faults",
     "open-recording",
     "parked-unreported",
+    "project-unsaved",
     "prompt",
     "prompt-arm",
     "releasing",
@@ -3398,6 +3399,60 @@ for (const name of Object.keys(SNAPSHOTS)) {
   snap.console = { reach: "answered", detail: null, checked_at: 2, trigger: "keepalive" };
   context.render(snap);
   check("an answer afterwards clears it", [nodes.get("console-reach").className, nodes.get("console-reach").textContent], ["", ""]);
+}
+
+// -- where Reaper will record (#204) ----------------------------------------------
+
+{
+  const chip = browser().context.projectChip;
+  const found = (status, reason = null, record_path = null, project = null) => ({ status, reason, record_path, project });
+  check("no block says nothing", [chip(undefined), chip(null)], [null, null]);
+  const table = [
+    ["saved", found("saved", null, "~/Reaper Media/20261114 X/Media", "~/x.RPP"),
+      ["saved", "Recording to ~/Reaper Media/20261114 X/Media"]],
+    ["unsaved", found("unsaved", null, "~/Documents/REAPER Media"),
+      ["warn", "Reaper's project is not saved: recording will land in ~/Documents/REAPER Media."]],
+    ["unsaved, no path", found("unsaved"),
+      ["warn", "Reaper's project is not saved, and Reaper did not say where recording will land."]],
+    ["no report", found("unknown", "no-report"),
+      ["note", "Reaper project unknown: no report from the mirror."]],
+    ["stale", found("unknown", "stopped"),
+      ["note", "Reaper project unknown: the mirror stopped reporting."]],
+    ["unreadable", found("unknown", "unreadable"),
+      ["note", "Reaper project unknown: cannot read the mirror's report."]],
+  ];
+  for (const [label, block, want] of table) check("project chip: " + label, chip(block), want);
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  delete snap.reaper_project;
+  let error = null;
+  try {
+    context.render(snap);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no project block does not throw", error, null);
+  check("and shows no chip", nodes.get("reaper-project").className, "");
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  snap.reaper_project = { status: "unsaved", reason: null, record_path: "~/Documents/REAPER Media", project: null };
+  context.render(snap);
+  check("unsaved shows the warning chip", nodes.get("reaper-project").className, "warn");
+  const fixture = browser();
+  fixture.context.render(structuredClone(SNAPSHOTS["project-unsaved"]));
+  check(
+    "the box's own unsaved snapshot reads as the warning",
+    fixture.nodes.get("reaper-project").textContent,
+    "Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.",
+  );
+  nodes.get("reaper-project").onclick();
+  check("a tap expands the chip", nodes.get("reaper-project").dataset.expanded, "1");
 }
 
 // -- swiping between MAIN and MORE (#156) ----------------------------------

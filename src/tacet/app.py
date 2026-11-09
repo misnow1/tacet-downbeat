@@ -24,10 +24,11 @@ import math
 import time
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, moves, prompts, reach, state, taps, targets
+from . import dm7, mirror_report, moves, prompts, reach, state, taps, targets
 from . import provenance as prov
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, TakeReport, TransportState, clock_reading, record_refusal
@@ -45,6 +46,7 @@ _ACTIONS: Mapping[ann.Action, state.Command] = {
 
 #: Keys the box writes itself when the machine moves.
 ARMED = "armed"
+
 #: Written when the box reaches STANDING DOWN, not when it is asked to. Asked
 #: while the fader is up, it fades first, and a trigger can snap it back before
 #: the fade lands; the request and its cancellation are entries of their own so
@@ -296,8 +298,18 @@ class App:
         stale_tap_seconds: float = taps.DEFAULT_STALE_TAP_SECONDS,
         provenance: prov.Provenance | None = None,
         console_check: reach.Check | None = None,
+        home: str | None = None,
     ) -> None:
         self._console = console
+        #: What the mirror's report says about Reaper's project (#204), and the
+        #: last result the page was told about. Assessed on `_monotonic` at
+        #: snapshot time, so the 1 s state tick carries the stale edge. Not
+        #: logged: an entry would become a Reaper marker.
+        self._project_observed = mirror_report.Observed.empty()
+        #: What the page shows as `~`. Passed in tests so a fixture does not
+        #: depend on the machine that wrote it.
+        self._home = home if home is not None else str(Path.home())
+        self._project_shown = mirror_report.assess(self._project_observed, 0.0, self._home)
         #: What the last ping at the console's address found (#73): the startup
         #: result until the watch reports another. Presence at an address and
         #: nothing more - `fader.confirmed` stays False whatever it says. None
@@ -1243,6 +1255,26 @@ class App:
         if changed:
             self._notify()
 
+    def report_observed(self, observed: mirror_report.Observed) -> None:
+        """What the mirror's report watch has seen (#204). Never raises. The
+        page is told only when what it would show changed."""
+        self._project_observed = observed
+        self._project_changed()
+
+    def report_stopped(self, detail: str) -> None:
+        """The report watch died (#41): the project is unknown, and says so."""
+        observed = mirror_report.observe(self._project_observed, mirror_report.Unreadable(detail), self._monotonic())
+        self.report_observed(observed)
+
+    def _project_check(self) -> mirror_report.ProjectCheck:
+        return mirror_report.assess(self._project_observed, self._monotonic(), self._home)
+
+    def _project_changed(self) -> None:
+        check = self._project_check()
+        if check != self._project_shown:
+            self._project_shown = check
+            self._notify()
+
     @property
     def fader_moving(self) -> bool:
         """Whether a fader move is in flight. The console check waits on it."""
@@ -1549,6 +1581,9 @@ class App:
             # at an IP, never the DM7, the port or a delivered packet:
             # `fader.confirmed` stays False regardless.
             "console": (self._console_check or reach.Check.not_checked("")).as_snapshot(),
+            # Where Reaper's project lives, from the mirror's report (#204).
+            # Assessed now, so a report that stopped ages out on the next tick.
+            "reaper_project": self._project_check().as_snapshot(),
         }
 
     # -- change notification ----------------------------------------------

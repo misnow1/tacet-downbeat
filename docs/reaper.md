@@ -19,7 +19,10 @@ version, in the order it happens on the day, is in [gameday.md](gameday.md).
    assumes; anything else needs `--reaper-port` / `--reaper-feedback-port`, or
    `reaper.send_port` / `reaper.receive_port` in `tacet.toml` so it survives
    into next game.
-3. Copy `reaper/tacet_mirror.lua` into `REAPER/Scripts`.
+3. Copy `reaper/tacet_mirror.lua` into `REAPER/Scripts`, and **copy it again
+   after every update of the box**: Reaper runs its own copy, not the
+   checkout's, and an older one carries on silently without newer features
+   such as the project report below.
 
 ---
 
@@ -194,6 +197,34 @@ what each line needs from you.
 The queue is a transport, not a record. The annotation log is the source of
 truth and every marker is derivable from it, so nothing in the queue is worth
 protecting - only its byte count matters, and only to the script.
+
+### What the mirror reports
+
+Every two seconds the script writes `<queue path>.report` (written beside the
+queue, to a `.tmp` file first and then renamed, so the box never reads half of
+one). It is `key<TAB>value` lines:
+
+```
+version	1
+seq	42
+project	/Users/x/Reaper Media/20261114 X/20261114 X.RPP
+record_path	/Users/x/Reaper Media/20261114 X/Media
+```
+
+`project` is the open project's file; **empty means the project was never
+saved**, and a missing `project` line means the script could not say. `seq`
+rises on every write and restarts each run. `record_path` is where a take would land. Unknown keys are
+ignored, so a field can be added without a new `version`; `version` changes only
+for a breaking change. The script prints nothing about any of this to the
+console. The box shows it as the project chip (`tacet.mirror_report`).
+
+The box believes a report only after it has watched `seq` change in this run,
+and calls it stale after 10 seconds without a change, so a file left from last
+game never reads as current. Nothing blocks recording on it.
+
+**Why the box cannot ask Reaper over OSC instead:** Reaper's OSC has no project
+path or saved state to read, so the mirror script, which runs inside Reaper, is
+the only thing that can say.
 
 ---
 

@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
-from tacet import annotations, disk, dm7, moves, provenance, reach, serve, state, targets
+from tacet import annotations, disk, dm7, mirror_report, moves, provenance, reach, serve, state, targets
 from tacet import app as tacet_app
 from tests.test_app import ClosableFakeSender
 
@@ -246,7 +246,10 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
             listen="127.0.0.1",
             http_port=0,
             reaper_feedback_port=0,
+            queue=self.queue,
         )
+
+    queue = None
 
     def build_app(self, *, fade, slow_open=5.0):
         log = annotations.AnnotationLog(self.root / "game.jsonl").open()
@@ -317,6 +320,67 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.sender.closed)
         self.log_close.assert_called_once()
         self.assertIn("the ride was stopped where it was", self.out.getvalue())
+
+    async def test_the_report_watch_is_cancelled_at_stop(self):
+        # #204: a task left running would outlive the box.
+        self.queue = str(self.root / "queue.tsv")
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def hang(_watch):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        app, log = self.build_app(fade=0.1)
+        with mock.patch.object(mirror_report.Watch, "run", hang):
+            task = await self.running(app, log, signal.SIGTERM)
+            await asyncio.wait_for(started.wait(), 5)
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, 5)
+        self.assertTrue(cancelled.is_set())
+
+    async def test_no_queue_starts_no_report_watch(self):
+        started = asyncio.Event()
+
+        async def note(_watch):
+            started.set()
+
+        app, log = self.build_app(fade=0.1)
+        with mock.patch.object(mirror_report.Watch, "run", note):
+            task = await self.running(app, log, signal.SIGTERM)
+            await asyncio.sleep(0.05)
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, 5)
+        self.assertFalse(started.is_set())
+        self.assertEqual(app.snapshot()["reaper_project"]["reason"], "no-report")
+
+
+class TestADeadReportWatchIsReported(unittest.IsolatedAsyncioTestCase):
+    """#204, with #41's rule: a background task that dies is a fault of its own."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        log_path = Path(self._tmp.name) / "game.jsonl"
+        args = serve.parser().parse_args(["--console-host", "192.0.2.1", "--dca", "3", "--log", str(log_path)])
+        self.app, self.log, _ = serve.build(args, CLEAN_CODE)
+        self.addCleanup(self.log.close)
+
+    async def test_a_task_that_died_says_the_report_cannot_be_read(self):
+        died = asyncio.get_running_loop().create_future()
+        died.set_exception(RuntimeError("boom"))
+        serve._report_watch_stopped(self.app, died)
+        self.assertEqual(self.app.snapshot()["reaper_project"]["reason"], "unreadable")
+
+    async def test_a_cancelled_task_changes_nothing(self):
+        cancelled = asyncio.get_running_loop().create_future()
+        cancelled.cancel()
+        serve._report_watch_stopped(self.app, cancelled)
+        self.assertEqual(self.app.snapshot()["reaper_project"]["reason"], "no-report")
 
 
 FULL = [
