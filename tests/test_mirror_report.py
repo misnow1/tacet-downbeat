@@ -14,19 +14,40 @@ from tacet import mirror_report as mr
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN = FIXTURES / "report-v1.report"
+#: The same report from a script that also says what it is (#223).
+GOLDEN_CHECKSUM = FIXTURES / "report-v1-checksum.report"
+#: Every byte value once; the Lua side hashes the same file (see test_script_check).
+CHECKSUM_INPUT = FIXTURES / "script-checksum-input.bin"
+CHECKSUM_OF_INPUT = "90a458c5"
+SUM = "0badf00d"
+OTHER_SUM = "deadbeef"
 HOME = "/Users/x"
 SAVED = "/Users/x/Reaper Media/20261114 X/20261114 X.RPP"
 MEDIA = "/Users/x/Reaper Media/20261114 X/Media"
 DOCS = "/Users/x/Documents/REAPER Media"
 
 
-def report(seq: int, project: str | None = SAVED, record_path: str | None = MEDIA) -> mr.Report:
+def report(
+    seq: int,
+    project: str | None = SAVED,
+    record_path: str | None = MEDIA,
+    script_checksum: str | None = None,
+) -> mr.Report:
     fields: list[tuple[str, str]] = [("version", "1"), ("seq", str(seq))]
     if project is not None:
         fields.append(("project", project))
     if record_path is not None:
         fields.append(("record_path", record_path))
-    return mr.Report(version=1, seq=seq, project=project, record_path=record_path, fields=tuple(fields))
+    if script_checksum is not None:
+        fields.append(("script_checksum", script_checksum))
+    return mr.Report(
+        version=1,
+        seq=seq,
+        project=project,
+        record_path=record_path,
+        fields=tuple(fields),
+        script_checksum=script_checksum,
+    )
 
 
 def witnessed(*reads: mr.Report | mr.Unreadable | None, start: float = 0.0, step: float = 1.0) -> mr.Observed:
@@ -69,6 +90,79 @@ class TestParsing(unittest.TestCase):
 
     def test_the_path_sits_beside_the_queue(self):
         self.assertEqual(mr.report_path(Path("/q/queue.tsv")), Path("/q/queue.tsv.report"))
+
+
+class TestTheScriptChecksum(unittest.TestCase):
+    def test_the_published_fnv1a_vectors(self):
+        self.assertEqual(mr.source_checksum(b""), "811c9dc5")
+        self.assertEqual(mr.source_checksum(b"a"), "e40c292c")
+        self.assertEqual(mr.source_checksum(b"foobar"), "bf9cf968")
+
+    def test_every_byte_value_file(self):
+        self.assertEqual(mr.source_checksum(CHECKSUM_INPUT.read_bytes()), CHECKSUM_OF_INPUT)
+
+    def test_it_is_eight_lowercase_hex_digits(self):
+        self.assertRegex(mr.source_checksum(b"x" * 1000), r"^[0-9a-f]{8}$")
+
+    def test_the_new_golden_file_carries_it(self):
+        parsed = mr.parse_report(GOLDEN_CHECKSUM.read_text(encoding="utf-8"))
+        self.assertEqual(parsed.script_checksum, CHECKSUM_OF_INPUT)
+        self.assertEqual(parsed.fields[-1], (mr.KEY_SCRIPT_CHECKSUM, CHECKSUM_OF_INPUT))
+        self.assertEqual(parsed.project, SAVED)
+
+    def test_the_old_golden_file_has_no_checksum(self):
+        self.assertIsNone(mr.parse_report(GOLDEN.read_text(encoding="utf-8")).script_checksum)
+
+    def test_an_empty_value_differs_from_an_absent_key(self):
+        empty = mr.parse_report("version\t1\nseq\t1\nscript_checksum\t\n")
+        absent = mr.parse_report("version\t1\nseq\t1\n")
+        self.assertEqual(empty.script_checksum, "")
+        self.assertIsNone(absent.script_checksum)
+
+    def test_the_format_version_is_still_one(self):
+        self.assertEqual(mr.SUPPORTED_VERSION, 1)
+
+
+class TestHowOldTheRunningScriptIs(unittest.TestCase):
+    def age(self, checksum: str | None, expected: str | None, *, project: str | None = SAVED) -> mr.ScriptAge:
+        observed = witnessed(report(1), report(2, project=project, script_checksum=checksum))
+        return mr.assess(observed, 1.0, HOME, expected_script=expected).script
+
+    def test_a_match_is_current(self):
+        self.assertEqual(self.age(SUM, SUM), mr.ScriptAge.CURRENT)
+
+    def test_a_mismatch_is_older(self):
+        self.assertEqual(self.age(OTHER_SUM, SUM), mr.ScriptAge.OLDER)
+
+    def test_no_key_is_older(self):
+        self.assertEqual(self.age(None, SUM), mr.ScriptAge.OLDER)
+
+    def test_an_empty_value_is_unchecked(self):
+        self.assertEqual(self.age("", SUM), mr.ScriptAge.UNCHECKED)
+
+    def test_no_expected_value_is_unchecked(self):
+        self.assertEqual(self.age(SUM, None), mr.ScriptAge.UNCHECKED)
+        self.assertEqual(self.age(None, None), mr.ScriptAge.UNCHECKED)
+
+    def test_it_is_assessed_for_unsaved_too(self):
+        self.assertEqual(self.age(OTHER_SUM, SUM, project=""), mr.ScriptAge.OLDER)
+        self.assertEqual(self.age(SUM, SUM, project=""), mr.ScriptAge.CURRENT)
+
+    def test_unknown_status_is_unchecked_for_every_reason(self):
+        cases = {
+            mr.Reason.NO_REPORT: mr.Observed.empty(),
+            mr.Reason.STOPPED: witnessed(report(1), report(2, script_checksum=OTHER_SUM)),
+            mr.Reason.UNREADABLE: witnessed(report(1), mr.Unreadable("x")),
+        }
+        for reason, observed in cases.items():
+            now = 1.0 + mr.STALE_SECONDS if reason is mr.Reason.STOPPED else 1.0
+            with self.subTest(reason):
+                got = mr.assess(observed, now, HOME, expected_script=SUM)
+                self.assertEqual(got.reason, reason)
+                self.assertEqual(got.script, mr.ScriptAge.UNCHECKED)
+
+    def test_a_report_with_no_project_is_unchecked(self):
+        self.assertEqual(self.age(OTHER_SUM, SUM, project=None), mr.ScriptAge.UNCHECKED)
 
 
 class TestWhatTheBoxBelieves(unittest.TestCase):
@@ -147,6 +241,7 @@ class TestTheSnapshot(unittest.TestCase):
                 "reason": None,
                 "record_path": "~/Reaper Media/20261114 X/Media",
                 "project": "~/Reaper Media/20261114 X/20261114 X.RPP",
+                "script": "unchecked",
             },
         )
         self.assertNotIn("seq", got)
@@ -157,7 +252,13 @@ class TestTheSnapshot(unittest.TestCase):
 
     def test_unknown_carries_a_reason_and_no_paths(self):
         got = mr.assess(mr.Observed.empty(), 0.0, HOME).as_snapshot()
-        self.assertEqual(got, {"status": "unknown", "reason": "no-report", "record_path": None, "project": None})
+        want = {"status": "unknown", "reason": "no-report", "record_path": None, "project": None}
+        self.assertEqual(got, {**want, "script": "unchecked"})
+
+    def test_the_script_age_is_in_the_snapshot(self):
+        observed = witnessed(report(1), report(2, script_checksum=OTHER_SUM))
+        got = mr.assess(observed, 1.0, HOME, expected_script=SUM).as_snapshot()
+        self.assertEqual(got["script"], "older")
 
 
 class TestTheShell(unittest.TestCase):

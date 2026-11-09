@@ -20,7 +20,12 @@
   It also writes `<queue path>.report` every REPORT_SECONDS (#204): which project
   Reaper has open (empty means unsaved) and where a recording would land, for the
   box's project chip. Silent on every path, and it never touches the queue offset.
-  Re-copy this file into REAPER/Scripts after every update of the box.
+
+  The report also carries a checksum of this file as it was when the script
+  started (#223). The box compares it with the checkout's copy, so an old script
+  still running shows on the page. At startup `tacet-serve` also offers to
+  replace the installed copy; after it does, run this script again from Reaper:
+  toggling it off and on is the only thing that loads new code.
 
   Install: put this in REAPER/Scripts, add it via Actions > Load ReaScript, and
   run it. It will ask for the queue path once and remember it.
@@ -46,6 +51,13 @@ local TEMP_SUFFIX    = ".tmp"
 local REPORT_SECONDS = 2
 local REPORT_VERSION = 1
 local CURRENT_PROJECT = -1
+-- FNV-1a, 32 bit: the same function as tacet.mirror_report.source_checksum, and
+-- tests/test_script_check.py holds the two equal.
+local SCRIPT_FILE     = "tacet_mirror.lua"
+local FNV_OFFSET_BASIS = 0x811C9DC5
+local FNV_PRIME        = 0x01000193
+local FNV_MASK         = 0xFFFFFFFF
+local CHECKSUM_FORMAT  = "%08x"
 local PHASE_START  = "start"
 local PHASE_END    = "end"
 -- CATEGORY|key, the same rule as tacet.mirror.NAME_PATTERN. A fragment of a torn
@@ -64,6 +76,8 @@ local last_poll = 0
 local last_report = nil
 local report_seq = 0
 local running = true
+-- Read once in main(). Empty means this script could not read itself.
+local script_checksum = ""
 
 local function log(message)
   reaper.ShowConsoleMsg("[tacet] " .. message .. "\n")
@@ -285,7 +299,30 @@ local function report_fields()
     fields[#fields + 1] = { "project", filename or "" }
   end
   fields[#fields + 1] = { "record_path", reaper.GetProjectPath("") }
+  fields[#fields + 1] = { "script_checksum", script_checksum }
   return fields
+end
+
+local function checksum(data)
+  local hash = FNV_OFFSET_BASIS
+  for index = 1, #data do
+    hash = ((hash ~ data:byte(index)) * FNV_PRIME) & FNV_MASK
+  end
+  return string.format(CHECKSUM_FORMAT, hash)
+end
+
+-- The checksum of this script's own file. Errors if it cannot be read; the
+-- caller decides what that means.
+local function own_checksum()
+  local _, path = reaper.get_action_context()
+  -- Only the installed script file is hashed. Launched some other way (dofile
+  -- from a startup script), the context names another file: report nothing
+  -- rather than a checksum that would read as "older" forever.
+  assert(type(path) == "string" and path:sub(-#SCRIPT_FILE) == SCRIPT_FILE, "not launched as " .. SCRIPT_FILE)
+  local handle = assert(io.open(path, "rb"))
+  local source = handle:read("a")
+  handle:close()
+  return checksum(source)
 end
 
 local function write_report()
@@ -334,6 +371,14 @@ local function main()
     return
   end
   offset = load_offset(queue_path)
+  -- Once, here, and never again: reading the file per report would show a file
+  -- that has since been replaced while this old code is still what runs.
+  local ok, value = pcall(own_checksum)
+  if ok then
+    script_checksum = value
+  else
+    log("could not read this script to checksum it: " .. tostring(value))
+  end
   log("mirroring " .. queue_path .. " from byte " .. offset)
   if file_size(queue_path) == nil then
     log("queue does not exist yet; waiting for the box to create it")

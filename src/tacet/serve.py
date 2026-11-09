@@ -37,6 +37,12 @@ Reaper; one ping goes to the console's address (#73). The log and queue are only
 read. `--check` is a flag and never a config key, since a file that set it
 would stop the box from ever starting.
 
+The box compares Reaper's copy of `reaper/tacet_mirror.lua` with the checkout's
+at startup (#223), says so in the `script` row, and on a fresh log with a
+terminal asks `Replace the Reaper script? [y/N]`. Warn only: no terminal,
+`--check`, a restart of an existing log or any failure is a row and the box
+carries on. Ctrl-C at the question stops the box and changes nothing.
+
 The box refuses to start without room for a whole game's recording (#53): set
 `capture.audio_path` and `capture.channels`, or pass `--no-disk-check`. See
 `tacet.disk`.
@@ -63,6 +69,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import datetime
 import enum
 import functools
 import signal
@@ -74,7 +81,21 @@ from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, mirror_report, moves, provenance, reach, reaper, taps, targets, web
+from . import (
+    config,
+    disk,
+    dm7,
+    mirror,
+    mirror_report,
+    moves,
+    provenance,
+    reach,
+    reaper,
+    script_check,
+    taps,
+    targets,
+    web,
+)
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -206,6 +227,7 @@ def build(
     code: provenance.Provenance,
     *,
     console_check: reach.Check | None = None,
+    expected_script: str | None = None,
 ) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
     # First, so a preset above the cap, or a default that is not one of the
     # presets, raises before the log or the queue is opened. Held here as well
@@ -233,6 +255,7 @@ def build(
         stale_tap_seconds=args.stale_tap,
         target_levels=levels,
         provenance=code,
+        expected_script=expected_script,
     )
     # The run's first entry, before anything is served (#157), and straight
     # after it what the startup ping found (#73). `console_checked` stores it
@@ -270,8 +293,10 @@ async def _run(
     code: provenance.Provenance,
     console_check: reach.Check | None = None,
     tools: reach.Tools | None = None,
+    *,
+    expected_script: str | None = None,
 ) -> None:
-    app, log, queue = build(args, code, console_check=console_check)
+    app, log, queue = build(args, code, console_check=console_check, expected_script=expected_script)
     server = web.create_app(app)
 
     loop = asyncio.get_running_loop()
@@ -565,6 +590,12 @@ def _wrapped_row(label: str, text: str) -> list[str]:
     return [_row(label, first), *(_note(line) for line in rest)]
 
 
+def _script_lines(status: script_check.ScriptStatus) -> list[str]:
+    """The `script` row: Reaper's copy of the mirror script against this checkout (#223)."""
+    first, *notes = status.lines
+    return [*_wrapped_row("script", first), *(_note(note) for note in notes)]
+
+
 def _ping_lines(check: reach.Check | None) -> list[str]:
     """The `ping` row and what it does and does not prove (#73)."""
     if check is None:
@@ -666,6 +697,7 @@ def startup_lines(
     space: disk.Verdict | None = None,
     code: provenance.Provenance | None = None,
     console_check: reach.Check | None = None,
+    script: script_check.ScriptStatus | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -709,6 +741,8 @@ def startup_lines(
     else:
         lines.append(_row("queue", "not set"))
         lines.append(_note("annotations are logged, but no markers reach Reaper"))
+    if script is not None:
+        lines.extend(_script_lines(script))
     if space is not None:
         lines.append(_row("disk", space.summary))
         lines.extend(_note(note) for note in space.notes)
@@ -897,6 +931,15 @@ def _disk_plan(args: argparse.Namespace) -> disk.Plan:
     )
 
 
+def _is_restart(log: Path | str) -> bool:
+    """Whether `--log` already holds a game, so this start is a restart of it.
+    A stat, before the log is opened; a restart never waits on a question."""
+    try:
+        return Path(log).stat().st_size > 0
+    except (OSError, ValueError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     p = parser()
     args, config_path = config.resolve_or_exit(p, CONFIG_MAPPING, argv)
@@ -942,6 +985,17 @@ def main(argv: list[str] | None = None) -> int:
     # a typo'd address is the cheapest thing to catch before the day.
     tools = reach.find_tools(reach.platform_of(sys.platform))
     console_check = reach.probe(args.console_host, tools)
+    # Whether Reaper's copy of the mirror script is this checkout's, and the one
+    # question the box asks at startup (#223). After every refusal and the ping,
+    # before the banner and the loop, so a blocking input() is safe. Only a fresh
+    # log is asked: a restart never waits on an answer. Ctrl-C here changes
+    # nothing and stops the box, like Ctrl-C anywhere before it starts.
+    plan = script_check.Plan(queue=args.queue, check_only=args.check, restart=_is_restart(args.log))
+    try:
+        script = script_check.startup(plan, script_check.StdinTerminal(), datetime.datetime.now)
+    except KeyboardInterrupt:
+        print(script_check.CTRL_C_MESSAGE)
+        return script_check.EXIT_INTERRUPTED
     banner = startup_lines(
         args,
         config_path,
@@ -953,6 +1007,7 @@ def main(argv: list[str] | None = None) -> int:
         space=space,
         code=code,
         console_check=console_check,
+        script=script,
     )
     for line in banner:
         print(line)
@@ -961,7 +1016,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return 0
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run(args, code, console_check, tools))
+        asyncio.run(_run(args, code, console_check, tools, expected_script=script.expected))
     return 0
 
 

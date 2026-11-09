@@ -15,11 +15,18 @@ The file, version 1:
     seq<TAB>42
     project<TAB>/Users/x/Reaper Media/20261114 X/20261114 X.RPP
     record_path<TAB>/Users/x/Reaper Media/20261114 X/Media
+    script_checksum<TAB>0badf00d
 
 An empty `project` is the only thing that means unsaved. A missing `project`
 key means the mirror could not say, which is unknown. Unknown keys are ignored
 and kept, so a later field needs no version bump; `version` changes only for a
 breaking change to the format.
+
+`script_checksum` (#223) is the FNV-1a 32-bit hash of the script's own source, as
+eight lowercase hex digits, read once when the script starts. The box compares
+it with the checkout's copy: a different value, or no key at all (a script from
+before this field), means Reaper is still running older code than the file on
+disk. An empty value means the script could not read itself, which says nothing.
 
 Freshness has no clock in it. A report counts only if this run of the box saw
 its `seq` change: the first read is a baseline, so last game's file left on disk
@@ -50,6 +57,7 @@ KEY_VERSION = "version"
 KEY_SEQ = "seq"
 KEY_PROJECT = "project"
 KEY_RECORD_PATH = "record_path"
+KEY_SCRIPT_CHECKSUM = "script_checksum"
 #: The newest format this box can read. A later one is refused, not guessed at.
 SUPPORTED_VERSION = 1
 
@@ -57,6 +65,13 @@ SUPPORTED_VERSION = 1
 #: every second and calls the report stale after 10 s without a change.
 POLL_SECONDS = 1.0
 STALE_SECONDS = 10.0
+
+#: FNV-1a, 32 bit. Small enough to write in Lua with no library, and it is a
+#: fingerprint against a stale copy, not a defence against anyone.
+FNV_OFFSET_BASIS = 0x811C9DC5
+FNV_PRIME = 0x01000193
+FNV_MASK = 0xFFFFFFFF
+CHECKSUM_DIGITS = 8
 
 HOME_MARK = "~"
 PATH_SEPARATOR = "/"
@@ -80,6 +95,24 @@ class Reason(StrEnum):
     UNREADABLE = "unreadable"
 
 
+class ScriptAge(StrEnum):
+    """Whether the running script is the checkout's. Only asked when the project
+    status is known; otherwise there is no report to ask it of."""
+
+    CURRENT = "current"
+    OLDER = "older"
+    UNCHECKED = "unchecked"
+
+
+def source_checksum(data: bytes) -> str:
+    """FNV-1a 32-bit of `data`, eight lowercase hex digits. The Lua script
+    computes the same value over its own bytes; a test holds the two equal."""
+    value = FNV_OFFSET_BASIS
+    for byte in data:
+        value = ((value ^ byte) * FNV_PRIME) & FNV_MASK
+    return f"{value:0{CHECKSUM_DIGITS}x}"
+
+
 @dataclass(frozen=True)
 class Report:
     version: int
@@ -89,6 +122,8 @@ class Report:
     record_path: str | None
     #: Every pair in file order, known keys and unknown.
     fields: tuple[tuple[str, str], ...]
+    #: None: no key (a script from before #223). "": the script could not read itself.
+    script_checksum: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +163,7 @@ class ProjectCheck:
     project: str | None
     #: What `as_snapshot` shortens to `~`. Empty shortens nothing.
     home: str = ""
+    script: ScriptAge = ScriptAge.UNCHECKED
 
     def as_snapshot(self) -> dict[str, Any]:
         """For the page. `seq` is deliberately absent: it changes every two
@@ -137,6 +173,7 @@ class ProjectCheck:
             "reason": None if self.reason is None else str(self.reason),
             "record_path": _shorten(self.record_path, self.home),
             "project": _shorten(self.project, self.home),
+            "script": str(self.script),
         }
 
 
@@ -176,6 +213,7 @@ def parse_report(text: str) -> Report:
         project=values.get(KEY_PROJECT),
         record_path=values.get(KEY_RECORD_PATH) or None,
         fields=tuple(pairs),
+        script_checksum=values.get(KEY_SCRIPT_CHECKSUM),
     )
 
 
@@ -205,8 +243,11 @@ def observe(prior: Observed | None, read: Read, now: float) -> Observed:
     return Observed(read.seq, read, changed_at, unreadable=False)
 
 
-def assess(observed: Observed, now: float, home: str) -> ProjectCheck:
-    """What the box may say about the project at `now`. Pure."""
+def assess(observed: Observed, now: float, home: str, *, expected_script: str | None = None) -> ProjectCheck:
+    """What the box may say about the project at `now`. Pure.
+
+    `expected_script` is the checksum of the checkout's copy of the script, or
+    None when the box could not read it."""
     if observed.unreadable:
         return _unknown(Reason.UNREADABLE, home)
     report = observed.report
@@ -218,10 +259,16 @@ def assess(observed: Observed, now: float, home: str) -> ProjectCheck:
         return _unknown(Reason.UNREADABLE, home)
     record_path = report.record_path or None
     if report.project == "":
-        return ProjectCheck(Status.UNSAVED, None, record_path, None, home)
+        return ProjectCheck(Status.UNSAVED, None, record_path, None, home, _script_age(report, expected_script))
     if record_path is None:
         return _unknown(Reason.UNREADABLE, home)
-    return ProjectCheck(Status.SAVED, None, record_path, report.project, home)
+    return ProjectCheck(Status.SAVED, None, record_path, report.project, home, _script_age(report, expected_script))
+
+
+def _script_age(report: Report, expected: str | None) -> ScriptAge:
+    if expected is None or report.script_checksum == "":
+        return ScriptAge.UNCHECKED
+    return ScriptAge.CURRENT if report.script_checksum == expected else ScriptAge.OLDER
 
 
 def _unknown(reason: Reason, home: str) -> ProjectCheck:

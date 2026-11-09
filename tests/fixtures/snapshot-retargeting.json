@@ -249,6 +249,7 @@
     "project": null,
     "reason": "no-report",
     "record_path": null,
+    "script": "unchecked",
     "status": "unknown"
   },
   "recording": {

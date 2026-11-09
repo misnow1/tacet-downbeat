@@ -178,6 +178,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         provenance=None,
         console_check=None,
         home="/Users/x",
+        expected_script=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -218,6 +219,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             provenance=provenance,
             console_check=console_check,
             home=home,
+            expected_script=expected_script,
         )
 
     #: The operator's whole cycle, from a cold boot (#107): every move the page asks for.
@@ -1717,7 +1719,7 @@ class TestTheReaperProjectChip(AppTestCase):
         app = self.make()
         self.assertEqual(
             app.snapshot()["reaper_project"],
-            {"status": "unknown", "reason": "no-report", "record_path": None, "project": None},
+            {"status": "unknown", "reason": "no-report", "record_path": None, "project": None, "script": "unchecked"},
         )
 
     async def test_a_witnessed_report_is_shown_with_home_shortened(self):
@@ -1757,6 +1759,36 @@ class TestTheReaperProjectChip(AppTestCase):
         before = len(self.entries())
         app.report_observed(self.seen(self.good(1), self.good(2)))
         self.assertEqual(len(self.entries()), before)
+
+    def reporting(self, seq, checksum):
+        fields = (("version", "1"), ("seq", str(seq)), ("project", "/p.RPP"), ("record_path", "/m"))
+        return mr.Report(1, seq, "/p.RPP", "/m", fields, script_checksum=checksum)
+
+    async def test_the_expected_checksum_reaches_the_snapshot(self):
+        app = self.build(monotonic=lambda: self.clock[0], expected_script="0badf00d")
+        observed = self.seen(self.reporting(1, "0badf00d"), self.reporting(2, "0badf00d"))
+        app.report_observed(observed)
+        self.assertEqual(app.snapshot()["reaper_project"]["script"], "current")
+        app.report_observed(mr.observe(observed, self.reporting(3, "deadbeef"), self.clock[0]))
+        self.assertEqual(app.snapshot()["reaper_project"]["script"], "older")
+
+    async def test_with_no_expected_checksum_nothing_is_claimed(self):
+        app = self.make()
+        app.report_observed(self.seen(self.reporting(1, "deadbeef"), self.reporting(2, "deadbeef")))
+        self.assertEqual(app.snapshot()["reaper_project"]["script"], "unchecked")
+
+    async def test_a_checksum_change_notifies_once(self):
+        app = self.build(monotonic=lambda: self.clock[0], expected_script="0badf00d")
+        app.on_change(self.bump)
+        observed = self.seen(self.reporting(1, "0badf00d"), self.reporting(2, "0badf00d"))
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 1)
+        observed = mr.observe(observed, self.reporting(3, "0badf00d"), self.clock[0])
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 1, "the same checksum is not news")
+        observed = mr.observe(observed, self.reporting(4, "deadbeef"), self.clock[0])
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 2)
 
     async def test_a_dead_watch_is_reported(self):
         app = self.make()

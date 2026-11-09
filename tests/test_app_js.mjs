@@ -3422,6 +3422,29 @@ for (const name of Object.keys(SNAPSHOTS)) {
       ["note", "Reaper project unknown: cannot read the mirror's report."]],
   ];
   for (const [label, block, want] of table) check("project chip: " + label, chip(block), want);
+
+  // The running script is older than the checkout's (#223): a suffix after the
+  // path. Status keeps the class and the first words, so unsaved stays a warning.
+  const OLDER = "Older Reaper script running: run it again from Reaper.";
+  check("the constant is the one the runbook quotes", runInContext("PROJECT_SCRIPT_OLDER", browser().context), OLDER);
+  const older = (status, reason, record_path, project) => ({ ...found(status, reason, record_path, project), script: "older" });
+  const withScript = (block, script) => ({ ...block, script });
+  const ageTable = [
+    ["saved and older", older("saved", null, "~/Media", "~/x.RPP"), ["note", "Recording to ~/Media. " + OLDER]],
+    ["unsaved and older", older("unsaved", null, "~/Documents/REAPER Media"),
+      ["warn", "Reaper's project is not saved: recording will land in ~/Documents/REAPER Media. " + OLDER]],
+    ["unsaved, no path and older", older("unsaved"),
+      ["warn", "Reaper's project is not saved, and Reaper did not say where recording will land. " + OLDER]],
+    ["saved and current", withScript(found("saved", null, "~/Media", "~/x.RPP"), "current"), ["saved", "Recording to ~/Media"]],
+    ["saved and unchecked", withScript(found("saved", null, "~/Media", "~/x.RPP"), "unchecked"), ["saved", "Recording to ~/Media"]],
+    ["unsaved and current", withScript(found("unsaved", null, "~/D"), "current"),
+      ["warn", "Reaper's project is not saved: recording will land in ~/D."]],
+    ["unknown ignores older", older("unknown", "no-report"),
+      ["note", "Reaper project unknown: no report from the mirror."]],
+    ["unknown ignores older, stopped", older("unknown", "stopped"),
+      ["note", "Reaper project unknown: the mirror stopped reporting."]],
+  ];
+  for (const [label, block, want] of ageTable) check("project chip: " + label, chip(block), want);
 }
 
 {

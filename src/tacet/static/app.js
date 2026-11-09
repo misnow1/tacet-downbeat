@@ -870,17 +870,28 @@ const PROJECT_UNKNOWN = "Reaper project unknown";
 const PROJECT_NO_REPORT = "no report from the mirror.";
 const PROJECT_STOPPED = "the mirror stopped reporting.";
 const PROJECT_UNREADABLE = "cannot read the mirror's report.";
+// #223: Reaper is still running an older mirror script than the checkout's.
+const PROJECT_SCRIPT_OLDER = "Older Reaper script running: run it again from Reaper.";
 
 // The record path is always shown, so a wrong folder is visible. It is shown,
 // not judged: nothing here compares it with anything, and a saved project says
 // nothing about whether the folder is the right one. Warn only; no button here.
 // Null for a box from before #204, which sends no `reaper_project`.
+//
+// An older script is only ever a suffix after the path (#223): the project's
+// status owns the class and the first words, so an unsaved project stays a
+// warning and stays first. Saved plus older drops to a note.
 function projectChip(p) {
   if (!p) return null;
-  if (p.status === "saved") return ["saved", PROJECT_SAVED + " " + p.record_path];
+  const older = p.script === "older";
+  if (p.status === "saved") {
+    if (older) return ["note", PROJECT_SAVED + " " + p.record_path + ". " + PROJECT_SCRIPT_OLDER];
+    return ["saved", PROJECT_SAVED + " " + p.record_path];
+  }
   if (p.status === "unsaved") {
-    if (!p.record_path) return ["warn", PROJECT_UNSAVED + ", " + PROJECT_UNSAVED_NO_PATH];
-    return ["warn", PROJECT_UNSAVED + ": " + PROJECT_UNSAVED_LANDS + " " + p.record_path + "."];
+    const suffix = older ? " " + PROJECT_SCRIPT_OLDER : "";
+    if (!p.record_path) return ["warn", PROJECT_UNSAVED + ", " + PROJECT_UNSAVED_NO_PATH + suffix];
+    return ["warn", PROJECT_UNSAVED + ": " + PROJECT_UNSAVED_LANDS + " " + p.record_path + "." + suffix];
   }
   let why = PROJECT_UNREADABLE;
   if (p.reason === "no-report") why = PROJECT_NO_REPORT;

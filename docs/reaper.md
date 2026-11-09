@@ -19,10 +19,12 @@ version, in the order it happens on the day, is in [gameday.md](gameday.md).
    assumes; anything else needs `--reaper-port` / `--reaper-feedback-port`, or
    `reaper.send_port` / `reaper.receive_port` in `tacet.toml` so it survives
    into next game.
-3. Copy `reaper/tacet_mirror.lua` into `REAPER/Scripts`, and **copy it again
-   after every update of the box**: Reaper runs its own copy, not the
-   checkout's, and an older one carries on silently without newer features
-   such as the project report below.
+3. Put `reaper/tacet_mirror.lua` in `REAPER/Scripts` and run it. After that
+   the box keeps it current: Reaper runs its own copy, not the checkout's, so at
+   startup `tacet-serve` compares the two and asks `Replace the Reaper script?
+   [y/N]` (box.md, "The Reaper script row"). **Run the script again from Reaper
+   after it is replaced**: the file on disk is new, but Reaper keeps running the
+   old code until the script is toggled off and on.
 
 ---
 
@@ -209,6 +211,7 @@ version	1
 seq	42
 project	/Users/x/Reaper Media/20261114 X/20261114 X.RPP
 record_path	/Users/x/Reaper Media/20261114 X/Media
+script_checksum	90a458c5
 ```
 
 `project` is the open project's file; **empty means the project was never
@@ -217,6 +220,16 @@ rises on every write and restarts each run. `record_path` is where a take would 
 ignored, so a field can be added without a new `version`; `version` changes only
 for a breaking change. The script prints nothing about any of this to the
 console. The box shows it as the project chip (`tacet.mirror_report`).
+
+`script_checksum` (#223) is the FNV-1a 32-bit hash of the script's own file, eight
+lowercase hex digits. The script reads its own file once, when it starts, through
+`get_action_context`, and never again: reading it per report would show a file
+that has since been replaced while the old code is still what runs, which is the
+very thing the field exists to catch. The box compares it with the checkout's
+copy and the chip says `Older Reaper script running: run it again from Reaper.`
+for a different value, or for none at all (a script from before the field). An
+**empty value** means the script could not read itself (one console line says so
+before `mirroring`); it says nothing about age and the chip claims nothing.
 
 The box believes a report only after it has watched `seq` change in this run,
 and calls it stale after 10 seconds without a change, so a file left from last

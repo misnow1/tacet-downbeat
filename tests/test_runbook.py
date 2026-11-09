@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, app, config, disk, provenance, reach, reaper, serve, state, web
+from tacet import annotations, app, config, disk, provenance, reach, reaper, script_check, serve, state, web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -37,6 +37,7 @@ STARTUP_MESSAGES = (
     "queue is shorter than the stored offset; starting from the beginning",
     "no queue path given; not starting",
     "mirror stopped",
+    "could not read this script to checksum it",
 )
 
 
@@ -94,7 +95,10 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             error=None,
         )
         answered = reach.Check(reach.Reach.ANSWERED, reach.Trigger.STARTUP, "10.0.0.5", 1.0, rtt_ms=0.4)
-        self.lines = serve.startup_lines(serve.parser().parse_args(argv), None, code=clean, console_check=answered)
+        current = script_check.ScriptStatus((script_check.ROW_CURRENT,), "0badf00d")
+        self.lines = serve.startup_lines(
+            serve.parser().parse_args(argv), None, code=clean, console_check=answered, script=current
+        )
         self.gameday = RUNBOOK.read_text(encoding="utf-8")
         self.script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
 
@@ -148,6 +152,30 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
     def test_gameday_quotes_the_saved_and_unsaved_chips(self) -> None:
         self.assertIn(self._chip_words("PROJECT_SAVED"), self.gameday)
         self.assertIn(self._chip_words("PROJECT_UNSAVED"), self.gameday)
+
+    def test_gameday_quotes_the_older_script_chip(self) -> None:
+        # #223
+        self.assertIn(self._chip_words("PROJECT_SCRIPT_OLDER"), self.gameday)
+        self.assertIn(script_check.QUESTION.strip(), self.gameday)
+
+    def test_box_md_quotes_every_script_row_and_note(self) -> None:
+        names = [n for n in dir(script_check) if n.startswith(("ROW_", "NOT_REPLACED_", "NOT_CHECKED_", "NOTE_"))]
+        self.assertGreaterEqual(len(names), 18)
+        for name in names:
+            words = getattr(script_check, name).split("{")[0]
+            with self.subTest(name):
+                self.assertIn(words, self.box)
+
+    def test_troubleshooting_explains_the_script_rows_that_need_action(self) -> None:
+        for words in (
+            script_check.ROW_DIFFERS.split("{")[0],
+            script_check.ROW_MISSING.split("{")[0],
+            script_check.NOT_CHECKED_NO_FOLDER.split("{")[0],
+            script_check.NOTE_COULD_NOT.split("{")[0],
+            script_check.QUESTION.strip(),
+        ):
+            with self.subTest(words):
+                self.assertIn(words, self.troubleshooting)
 
     def test_the_fix_on_the_day_no_longer_promises_157(self) -> None:
         self.assertNotIn("#157 will make", self.gameday)

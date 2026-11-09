@@ -15,16 +15,44 @@ local SCRIPT = HERE .. "tacet_mirror.lua"
 --- Written by the box's own code: see tests/queue_fixtures.py.
 local FIXTURES = HERE .. "../tests/fixtures/"
 
-local markers, console, ext, deferred, now, playpos, project_file, project_dir
+--- Hashed by the script when a test says nothing else: every byte value once.
+local CHECKSUM_INPUT = FIXTURES .. "script-checksum-input.bin"
+local CHECKSUM_OF_INPUT = "90a458c5"
+
+--- The script only hashes a file called tacet_mirror.lua, so the fixtures are
+--- copied into one: `named_script(bytes)` writes it and returns its path.
+local SCRIPT_DIR = os.tmpname()
+os.remove(SCRIPT_DIR)
+os.execute("mkdir '" .. SCRIPT_DIR .. "'")
+local NAMED_SCRIPT = SCRIPT_DIR .. "/tacet_mirror.lua"
+
+local function named_script(bytes)
+  local handle = assert(io.open(NAMED_SCRIPT, "wb"))
+  handle:write(bytes)
+  handle:close()
+  return NAMED_SCRIPT
+end
+
+local function named_copy_of(path)
+  local handle = assert(io.open(path, "rb"))
+  local bytes = handle:read("a")
+  handle:close()
+  return named_script(bytes)
+end
+
+local markers, console, ext, deferred, now, playpos, project_file, project_dir, action_script
 
 local function reset()
   markers, console, ext = {}, {}, {}
   deferred, now, playpos = nil, 0, 0
+  action_script = nil
   project_file, project_dir = "/Users/x/Reaper Media/20261114 X/20261114 X.RPP", "/Users/x/Reaper Media/20261114 X/Media"
 end
 
 reaper = {
   ShowConsoleMsg = function(text) console[#console + 1] = text end,
+  -- (is_new_value, filename, sectionID, cmdID, ...): the script reads `filename`.
+  get_action_context = function() return true, action_script, 0, 0, 0, 0, 0 end,
   GetResourcePath = function() return "/tmp/tacet-resource" end,
   GetExtState = function(section, key) return ext[section .. "/" .. key] or "" end,
   SetExtState = function(section, key, value) ext[section .. "/" .. key] = value end,
@@ -80,9 +108,11 @@ end
 
 local report_paths = {}
 
---- Load the script fresh, pointed at `path`.
-local function start(path)
+--- Load the script fresh, pointed at `path`. `script` is what Reaper says the
+--- running script's file is; by default the every-byte file, so its checksum is known.
+local function start(path, script)
   reset()
+  action_script = script or named_copy_of(CHECKSUM_INPUT)
   report_paths[#report_paths + 1] = path .. ".report"
   report_paths[#report_paths + 1] = path .. ".report.tmp"
   ext["tacet_downbeat/queue_path"] = path
@@ -92,9 +122,9 @@ end
 --- Load the script fresh against an empty queue. This is the order gameday.md
 --- prescribes - the script comes up first, the box then appends - and it is the
 --- only order in which the script mirrors a line at a position it witnessed.
-local function start_empty(path)
+local function start_empty(path, script)
   write(path, "")
-  start(path)
+  start(path, script)
 end
 
 --- Advance past the poll interval and run one iteration.
@@ -348,7 +378,7 @@ local function test_the_report_matches_the_golden_file()
   start_empty(path)
   local text = report_of(path)
   check(text ~= nil, "a report is written at start")
-  local golden = read(FIXTURES .. "report-v1.report")
+  local golden = read(FIXTURES .. "report-v1-checksum.report")
   -- seq is the one field that moves; the golden file pins the rest.
   equal(text and text:gsub("seq\t%d+", "seq\t42"), golden, "bytes equal the golden file")
   os.remove(path)
@@ -385,7 +415,7 @@ local function test_seq_rises_and_the_file_is_replaced()
   local second = seq_of(report_of(path))
   check(second > first, "seq rises")
   local _, lines = report_of(path):gsub("\n", "")
-  equal(lines, 4, "replaced, not appended")
+  equal(lines, 5, "replaced, not appended")
   os.remove(path)
 end
 
@@ -497,6 +527,82 @@ local function test_newlines_in_values_are_stripped()
   os.remove(path)
 end
 
+local function checksum_of(text)
+  return text:match("script_checksum\t([^\n]*)\n")
+end
+
+local function test_the_checksum_is_the_last_field_and_matches_the_input()
+  local path = os.tmpname()
+  start_empty(path)
+  local text = report_of(path)
+  equal(checksum_of(text), CHECKSUM_OF_INPUT, "checksum of the script's own file")
+  check(text:match("record_path\t[^\n]*\nscript_checksum\t") ~= nil, "after record_path")
+  check(text:match("version\t1\n") ~= nil, "the format version is still 1")
+  os.remove(path)
+end
+
+local function test_the_published_vectors_through_the_report()
+  local cases = { { "", "811c9dc5" }, { "a", "e40c292c" }, { "foobar", "bf9cf968" } }
+  for _, case in ipairs(cases) do
+    local queue = os.tmpname()
+    start_empty(queue, named_script(case[1]))
+    equal(checksum_of(report_of(queue)), case[2], "vector for '" .. case[1] .. "'")
+    os.remove(queue)
+  end
+end
+
+local function test_the_script_is_read_once_at_start()
+  local source, queue = named_script("one"), os.tmpname()
+  start_empty(queue, source)
+  local first = checksum_of(report_of(queue))
+  write(source, "a different file, replaced while the old code still runs")
+  for _ = 1, 3 do
+    now = now + 2
+    tick()
+  end
+  equal(checksum_of(report_of(queue)), first, "still the checksum of what was loaded")
+  check(first ~= "", "it had one")
+  os.remove(queue)
+end
+
+local function test_a_script_not_launched_as_itself_reports_empty()
+  local other, queue = os.tmpname(), os.tmpname()
+  write(other, "something else, such as a startup script")
+  start_empty(queue, other)
+  equal(checksum_of(report_of(queue)), "", "a file with another name is not hashed")
+  check(console[#console]:find("mirroring", 1, true) ~= nil, "mirroring is the last console line")
+  os.remove(other)
+  os.remove(queue)
+end
+
+local function test_an_unreadable_self_reports_empty_and_still_mirrors()
+  local path = os.tmpname()
+  start_empty(path, "/nonexistent/tacet_mirror.lua")
+  equal(checksum_of(report_of(path)), "", "empty value, key still present")
+  check(logged("script"), "one line says why")
+  check(console[#console]:find("mirroring", 1, true) ~= nil, "mirroring is the last console line")
+  append(path, "NOTE|note\t-\t-\n")
+  tick()
+  equal(#markers, 1, "the queue is still mirrored")
+  os.remove(path)
+end
+
+local function test_a_raising_or_missing_context_call_reports_empty()
+  local saved = reaper.get_action_context
+  for _, stub in ipairs({ function() error("boom") end, function() return true, nil end, false }) do
+    local path = os.tmpname()
+    reaper.get_action_context = stub or nil
+    start_empty(path)
+    equal(checksum_of(report_of(path)), "", "empty value")
+    check(console[#console]:find("mirroring", 1, true) ~= nil, "mirroring is the last console line")
+    append(path, "NOTE|note\t-\t-\n")
+    tick()
+    equal(#markers, 1, "the queue is still mirrored")
+    os.remove(path)
+  end
+  reaper.get_action_context = saved
+end
+
 local function cleanup_reports()
   for _, p in ipairs(report_paths) do os.remove(p) end
 end
@@ -529,7 +635,26 @@ local tests = {
   test_a_failed_write_does_not_replace_the_report,
   test_the_report_prints_nothing_and_mirroring_stays_last,
   test_newlines_in_values_are_stripped,
+  test_the_checksum_is_the_last_field_and_matches_the_input,
+  test_the_published_vectors_through_the_report,
+  test_the_script_is_read_once_at_start,
+  test_a_script_not_launched_as_itself_reports_empty,
+  test_an_unreadable_self_reports_empty_and_still_mirrors,
+  test_a_raising_or_missing_context_call_reports_empty,
 }
+
+-- `lua reaper/test_tacet_mirror.lua --checksum-of FILE` prints what the script
+-- would report for a script that is FILE. tests/test_script_check.py compares
+-- it with Python's, so the two implementations are pinned to each other.
+if arg[1] == "--checksum-of" then
+  local queue = os.tmpname()
+  start_empty(queue, named_copy_of(arg[2]))
+  print(checksum_of(report_of(queue)))
+  os.remove(queue)
+  cleanup_reports()
+  os.execute("rm -rf '" .. SCRIPT_DIR .. "'")
+  os.exit(0)
+end
 
 for _, test in ipairs(tests) do
   local ok, err = pcall(test)
@@ -540,5 +665,6 @@ for _, test in ipairs(tests) do
 end
 
 cleanup_reports()
+os.execute("rm -rf '" .. SCRIPT_DIR .. "'")
 print(string.format("%d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

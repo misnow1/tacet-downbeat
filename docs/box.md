@@ -142,6 +142,7 @@ Reaper, and where the log and queue are going:
   reaper      127.0.0.1   send 8000   feedback 9000
   log         /Users/you/games/<YYYY-MM-DD>.jsonl
   queue       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
+  script      current: matches this checkout
   page        http://<this box>:8080
               bound to 0.0.0.0; use the box's address on the VLAN
 --------------------------------------------------------------------------
@@ -217,6 +218,35 @@ tacet-serve \
 - Leave `--quantized` off: this console does not round (2026-09-12). `--no-quantized`
   turns it back off when the file sets it and you want it gone for one run.
 
+### The Reaper script row
+
+Reaper runs its own copy of `reaper/tacet_mirror.lua` out of its `Scripts`
+folder (`~/Library/Application Support/REAPER/Scripts` on macOS,
+`~/.config/REAPER/Scripts` on Linux), and `git pull` does not touch it. The
+`script` row compares that copy with the checkout's, byte for byte (#223). It
+only warns: nothing here stops the box or a take.
+
+| The `script` row says | Meaning |
+|---|---|
+| `current: matches this checkout` | Nothing to do |
+| `missing: <path>` or `differs from this checkout: <path>` | The installed copy is absent or not the checkout's. A note below says why it was not replaced, or what was done |
+| `not replaced: answered no` / `not replaced: no answer` | The question was asked and answered no, or the input ended |
+| `not replaced: no terminal to ask` | Nothing could answer |
+| `not replaced: --check only reports` | `--check` never asks and never writes |
+| `not replaced: restart of an existing log` | The question comes only on a fresh `--log`: a restart of the same game's log never asks, because an unanswered question has no timeout |
+| `replaced: <path>` | Written. `old copy kept as <backup>` names the old one, and `run it again from Reaper: the running script is still the old one` is the step that makes it take effect |
+| `could not replace it: <error>` | The write failed and the old file was left as it was; `left as it was; copy reaper/tacet_mirror.lua there by hand` |
+| `not checked: no queue` | No `--queue`, so no mirror runs and nothing is compared |
+| `not checked: no reaper/tacet_mirror.lua in this install` | The box has no checkout copy to compare with |
+| `not checked: no Reaper Scripts folder at <dir>` | Reaper keeps its resources elsewhere here, or is not installed; copy by hand |
+| `not checked: unknown platform <name>` | Only macOS and Linux are known |
+| `not checked: cannot read <path>: <error>` | A file could not be read |
+
+When it is `missing` or `differs` and the box is at a terminal on a fresh log,
+it asks `Replace the Reaper script? [y/N]` first. Enter means no. The question
+is the first one the box asks at startup, and Ctrl-C at it stops the box and
+changes nothing (exit code 130).
+
 ### Checking without starting
 
 Add `--check` to the exact command you will type on the day:
@@ -234,6 +264,9 @@ reported but not repaired. It does send one ping to the console's address, so
 away from the stadium its `ping` row reads `nothing at this address (no ARP
 reply)` with a `WARNING`, which is expected there. Do it the night before, and
 after any edit to `tacet.toml`.
+
+`--check` never asks the script question and never writes the script: the
+`script` row reads `not replaced: --check only reports`.
 
 `--check` is a flag only. A `check` key in the file is refused like any other
 unknown key, because a file that set it would stop the box from ever starting.

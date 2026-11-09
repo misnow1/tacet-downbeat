@@ -155,13 +155,16 @@ git switch main
 git pull --ff-only  # the main checkout carries no local commits; this refuses if it does
 make install        # new dependencies and commands (#193 added tacet-pilot-check)
 make check          # green, or the game does not run this commit
-cp reaper/tacet_mirror.lua ~/"Library/Application Support/REAPER/Scripts/"   # Reaper runs its own copy, not the checkout's (#204)
 ```
 
-Then **run the script again from Reaper**. It is a toggle: if the console's
-last line says `mirror stopped`, run it once more. The last line must end on
-`mirroring`. An older copy keeps running without the project report, and the
-page's project chip will say `Reaper project unknown`.
+Reaper runs its own copy of `reaper/tacet_mirror.lua`, which `git pull` does not
+touch. The box checks it for you (#223): at startup the `script` row says
+`current`, `missing` or `differs`, and when it is not current the box asks
+`Replace the Reaper script? [y/N]`. That question comes at the next start of
+the box on a fresh `--log` (step 3 below says what to do), not here. A restart of
+a log that already holds a run never asks, so a runthrough on a reused log, such
+as `/tmp/preflight.jsonl`, will not ask either: use a dated log. `--check` never
+asks or writes.
 
 At startup the banner's `code` row should read `main @ <that commit>` with no
 `uncommitted changes`; see [box.md](box.md#starting-it).
@@ -222,7 +225,14 @@ else in the console: [troubleshooting.md](troubleshooting.md#the-mirror-console)
 tacet-serve --log ~/games/<YYYY-MM-DD>.jsonl
 ```
 
-A fresh `--log` every game, named for the date. Read the `code` row: a normal
+A fresh `--log` every game, named for the date. Read the `script` row: `current`
+is right. If the box asks `Replace the Reaper script? [y/N]`, answer `y` (Enter
+means no; the old copy is kept beside it), then **run the script again from
+Reaper**: it is a toggle, so if the console's last line says `mirror stopped`,
+run it once more, and check the last line says `mirroring`. Reaper keeps running
+the old code until you do, and the page's chip says `Older Reaper script
+running: run it again from Reaper.` until then. On a restart of the same log it
+never asks: carry on. Read the `code` row: a normal
 game says `main @ <commit>` and no WARNING. Read the `ping` row under the
 console: `answered ping` is right. `nothing at this address (no ARP reply)` is a
 WARNING that the console IP is wrong, the cable is out or the console is off -
@@ -276,7 +286,7 @@ Game 4. `-U` writes each packet out as it arrives, so a crash loses little.
 | Top of the screen | Nothing. No banner is the healthy state |
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
 | Console chip, in the strip | Nothing. `Nothing answered at the console address at the last check` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
-| Project chip, in the strip | `Recording to ~/Reaper Media/<game folder>/Media`, dim, and the folder is this game's. `Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.` in amber means save the project into its game folder now; it only warns, and Start recording still works. Anything starting `Reaper project unknown` means the mirror is not reporting: run the script (step 2) and see [troubleshooting.md](troubleshooting.md#the-page) |
+| Project chip, in the strip | `Recording to ~/Reaper Media/<game folder>/Media`, dim, and the folder is this game's. `Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.` in amber means save the project into its game folder now; it only warns, and Start recording still works. `Older Reaper script running: run it again from Reaper.` after the path means the file was replaced but the running script is still the old code: run it again from Reaper. Anything starting `Reaper project unknown` means the mirror is not reporting: run the script (step 2) and see [troubleshooting.md](troubleshooting.md#the-page) |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
