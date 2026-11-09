@@ -223,5 +223,21 @@ class TestLoggerIntegration(unittest.TestCase):
         self.assertEqual(rebuilt, queue_path.read_text())
 
 
+class TestRetiredFaderKey(unittest.TestCase):
+    def test_a_retired_fader_key_rebuilds_into_the_queue(self):
+        # #202: old logs carry the key, and the queue is rebuilt from logs.
+        line = (
+            '{"category":"FDR","data":{},"event":"score-reversed","kind":"instant",'
+            '"label":"Score reversed","monotonic":1.0,"phase":null,"project_seconds":null,'
+            '"seq":361,"span_id":null,"v":1,"wall":"2026-09-12T14:42:49.512462+00:00"}\n'
+        )
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "game.jsonl"
+            path.write_text(line, encoding="utf-8")
+            queue = mirror.rebuild_queue(ann.read_entries(path))
+        item = mirror.parse_queue_line(queue.splitlines()[0])
+        self.assertEqual(item.name, "FDR|score-reversed")
+
+
 if __name__ == "__main__":
     unittest.main()

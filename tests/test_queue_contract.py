@@ -61,6 +61,13 @@ class TestQueueFixtures(unittest.TestCase):
             with self.subTest(key=event.key):
                 self.assertIn(f"{event.category.value}{ann.MARKER_DELIMITER}{event.key}", names)
 
+    def test_the_vocabulary_fixtures_still_carry_the_retired_fader_key(self):
+        # #202: retired from the page, still read from old logs, so the queue
+        # and the Lua replay keep it.
+        for path in (qf.queue_path(qf.VOCABULARY), qf.marks_path(qf.VOCABULARY)):
+            with self.subTest(fixture=path.name):
+                self.assertIn("FDR|score-reversed", path.read_text(encoding="utf-8"))
+
     def test_every_fixture_line_parses_strictly(self):
         for name in (qf.GAME_2, qf.VOCABULARY):
             for line in qf.queue_path(name).read_text(encoding="utf-8").splitlines():

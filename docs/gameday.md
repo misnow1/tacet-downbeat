@@ -352,6 +352,7 @@ in the log, and it is what will keep the detector out when there is one.
 *and* records why, in one tap. Nothing else does that: the move can be
 reconstructed afterwards from the post-DCA reference channel, but nothing
 reconstructs why.
+The empty gap above **Faded out** is deliberate and does nothing.
 
 | When | Tap |
 |---|---|
@@ -374,7 +375,7 @@ instantly. Ride up to a hold level short of target and wait to see:
 | Order | Tap |
 |---|---|
 | 1 | **Ready (band likely)**. Rides to a hold level below target and waits - the state goes to `READY` |
-| 2 | The band starts: the ordinary up buttons, **Up on whistle** / **Up on drums**, fast, from wherever the ride got to. The play is called back, under review, or the band does not play: **Score reversed** - the same 2 s fade as Faded out, one tap, right next to it |
+| 2 | The band starts: the ordinary up buttons, **Up on whistle** / **Up on drums**, fast, from wherever the ride got to. The play is called back, under review, or the band does not play: **Faded out** - the same 2 s fade |
 | 3 | The reason, when there is a moment: **Touchdown**, **Field goal**, **Safety**, **First down** or **Defensive stop**, in the MAIN tab, not the fader column |
 
 The reason buttons record only. Never hunt for one before moving the fader: the
@@ -453,8 +454,8 @@ ride to its hold level.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
 the box does not know where it really is. Nothing that ramps from a level can be
-trusted, so the four column buttons that ramp - **Up slow**, **Ready (band
-likely)**, **Faded out** and **Score reversed** - go grey where they are, and
+trusted, so the three column buttons that ramp - **Up slow**, **Ready (band
+likely)** and **Faded out** - go grey where they are, and
 the column says `Greyed: they ramp from an unknown level`. They are never hidden
 and never move, so nothing shifts under your thumb when they come back. The two
 snap opens, **Up on whistle** and **Up on drums**, stay live. **Arm** is refused
@@ -480,7 +481,7 @@ fader back there: at game 3 (seq 33, #159) a DCA already closed in the app
 jumped to 0 dB and then faded. Close now cuts nothing the app has not already
 cut, and leaves the box knowing the level. The same goes for any app move,
 raised or lowered: follow it with **Close now**, **Up on whistle** or **Up on
-drums**, which are absolute, and not with **Faded out**, **Score reversed**,
+drums**, which are absolute, and not with **Faded out**,
 **Up slow** or **Ready (band likely)**, which all ramp.
 
 **If you take the fader to StageMix**, tap **StageMix has it** in MORE first

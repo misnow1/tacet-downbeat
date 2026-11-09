@@ -170,13 +170,6 @@
       "label": "Faded out"
     },
     {
-      "action": "release",
-      "category": "FDR",
-      "key": "score-reversed",
-      "kind": "instant",
-      "label": "Score reversed"
-    },
-    {
       "action": null,
       "category": "DET",
       "key": "false-open",

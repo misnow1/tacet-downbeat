@@ -400,7 +400,7 @@ class TestReady(unittest.TestCase):
         self.assertEqual(mid_ride.machine.state, st.State.OPEN)
         self.assertEqual(landed.machine.state, st.State.OPEN)
 
-    def test_score_reversed_fades_like_an_ordinary_close(self):
+    def test_a_plain_release_from_ready_is_the_ordinary_close(self):
         outcome = send(readying(level_known=True), st.Command.RELEASE)
         self.assertEqual(outcome.machine.state, st.State.RELEASING)
         self.assertEqual(outcome.fader, st.FaderCommand.FADE)

@@ -121,11 +121,46 @@ class TestVocabulary(unittest.TestCase):
             "q4",
             "halftime",
             "timeout-official",
+            "score-reversed",
         ):
             with self.subTest(key):
                 self.assertIn(key, ann.EVENTS)
                 self.assertNotIn(key, offered)
                 self.assertFalse(ann.EVENTS[key].button)
+
+    def test_score_reversed_is_retired_and_still_read(self):
+        # #202: no longer on the page, still in the vocabulary because the
+        # Game 3 and Game 4 logs carry it.
+        event = ann.EVENTS["score-reversed"]
+        self.assertEqual(event.label, "Score reversed")
+        self.assertIs(event.category, ann.Category.FADER)
+        self.assertIs(event.kind, ann.Kind.INSTANT)
+        self.assertFalse(event.button)
+        self.assertIsNone(event.action)
+        with self.assertRaises(ann.NotAButtonError):
+            ann.operator_event("score-reversed")
+
+    def test_nothing_off_the_page_carries_a_fader_action(self):
+        # An annotation must never move the fader: a key that is not a button
+        # cannot be tapped, so it must not carry a move either.
+        for event in ann.VOCABULARY:
+            if not event.button:
+                with self.subTest(event.key):
+                    self.assertIsNone(event.action)
+
+    def test_a_game_4_score_reversed_line_still_reads(self):
+        line = (
+            '{"category":"FDR","data":{},"event":"score-reversed","kind":"instant",'
+            '"label":"Score reversed","monotonic":186086.2,"phase":null,"project_seconds":null,'
+            '"seq":361,"span_id":null,"v":1,"wall":"2026-09-12T14:42:49.512462+00:00"}\n'
+        )
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "game.jsonl"
+            path.write_text(line, encoding="utf-8")
+            entries = list(ann.read_entries(path))
+        self.assertEqual([e.event for e in entries], ["score-reversed"])
+        self.assertEqual(entries[0].category, "FDR")
+        self.assertEqual(entries[0].label, "Score reversed")
 
     def test_quarters_and_halftime_are_retired_but_still_read(self):
         # #155: reconstructed offline from the announcer and HokieVision

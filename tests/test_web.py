@@ -201,7 +201,7 @@ class TestPage(WebTestCase):
         # on those grows the row from 43.6px to 64 and the readout gap has no
         # spare, so the difference comes out of the column note above it -
         # measured at 8.8px against a 15px line, i.e. clipped. The floor is
-        # scoped to the two groups holding the six column buttons instead.
+        # scoped to the two groups holding the five column buttons instead.
         body = await (await self.client.get("/")).text()
         self.assertNotIn("min-height", body.split("#fader-column button{", 1)[1].split("}", 1)[0])
         self.assertNotIn("min-height", body.split("#belief button{", 1)[1].split("}", 1)[0])
@@ -223,7 +223,7 @@ class TestPage(WebTestCase):
         self.assertGreaterEqual(floor_px, _min_tap_px())
 
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
-        # The column is six buttons (112 + 112 + 80 + 80 + 72 + 136 = 592), six
+        # The column is five buttons and an empty slot (112 + 112 + 80 + 80 + 72 + 136 = 592, #202), six
         # 12px gaps between its seven children (72) and the readout gap. At
         # 96px that is 592 + 72 + 96 = 760px, which fits a 768px-tall landscape
         # iPad. Raising it to fit the belief row (148px, 812px in all) makes
@@ -843,6 +843,14 @@ class TestAnnotation(WebTestCase):
         )
         self.assertEqual(response.status, 400)
 
+    async def test_a_retired_fader_key_is_a_client_error_and_writes_nothing(self):
+        # #202: a stale page (or a script) posting the old key is refused.
+        sent = len(self.console_sender.packets)
+        response = await self.client.post("/api/annotate", json={"key": "score-reversed"})
+        self.assertEqual(response.status, 400)
+        self.assertNotIn("score-reversed", self.entries())
+        self.assertEqual(len(self.console_sender.packets), sent)
+
     async def test_a_box_only_event_is_a_client_error(self):
         response = await self.client.post("/api/annotate", json={"key": "recording-started"})
         self.assertEqual(response.status, 400)
@@ -895,6 +903,46 @@ class TestAnnotation(WebTestCase):
     async def test_ending_an_unknown_span_is_a_client_error(self):
         response = await self.client.post("/api/span/end", json={"span_id": "q1-999"})
         self.assertEqual(response.status, 400)
+
+
+class TestTheRetiredScoreReversedButton(WebTestCase):
+    """#202: the button is gone, and the empty slot keeps the column's layout."""
+
+    async def body(self):
+        return await (await self.client.get("/")).text()
+
+    def rule(self, body, selector):
+        return body.split(selector + "{", 1)[1].split("}", 1)[0]
+
+    def height(self, body, key):
+        rule = self.rule(body, f'#fader-column button[data-key="{key}"]')
+        return int(rule.split("height:", 1)[1].split("px", 1)[0])
+
+    async def test_the_page_does_not_name_the_retired_button(self):
+        self.assertNotIn("score-reversed", web.PAGE)
+        self.assertNotIn("Score reversed", web.PAGE)
+
+    async def test_an_empty_slot_sits_between_the_readout_and_the_bottom_group(self):
+        body = await self.body()
+        self.assertIn('<div id="fader-spacer"></div>', body)
+        self.assertLess(body.index('id="readout"'), body.index('id="fader-spacer"'))
+        self.assertLess(body.index('id="fader-spacer"'), body.index('id="fader-bottom"'))
+
+    async def test_the_column_still_sums_to_592(self):
+        body = await self.body()
+        heights = [self.height(body, key) for key in ("up-whistle", "up-drums", "up-slow", "up-ready")]
+        slot = int(self.rule(body, "#fader-spacer").split("height:", 1)[1].split("px", 1)[0])
+        heights.append(self.height(body, "out"))
+        self.assertEqual(heights, [112, 112, 80, 80, 136])
+        self.assertEqual(slot, 72)
+        self.assertEqual(sum(heights) + slot, 592)
+
+    async def test_the_slot_shrinks_like_a_button(self):
+        rule = self.rule(await self.body(), "#fader-spacer")
+        self.assertIn("flex:0 1 auto", rule)
+        self.assertIn("min-height:64px", rule)
+        self.assertIn("padding:8px 0", rule)
+        self.assertIn("touch-action:manipulation", rule)
 
 
 class TestPromptRoutes(WebTestCase):
