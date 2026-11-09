@@ -64,15 +64,17 @@ import argparse
 import asyncio
 import contextlib
 import enum
+import functools
 import signal
 import sys
 import textwrap
 import time
+import traceback
 from pathlib import Path
 
 from aiohttp import web as aiohttp_web
 
-from . import config, disk, dm7, mirror, moves, provenance, reach, reaper, taps, targets, web
+from . import config, disk, dm7, mirror, mirror_report, moves, provenance, reach, reaper, taps, targets, web
 from .annotations import (
     AnnotationLog,
     CorruptLogError,
@@ -253,6 +255,16 @@ def _watch_stopped(app: App, host: str, task: asyncio.Future[None]) -> None:
         )
 
 
+def _report_watch_stopped(app: App, task: asyncio.Future[None]) -> None:
+    """A dead report watch is a fault in its own right (#41, #204): say so."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        traceback.print_exception(error)
+        app.report_stopped(f"{type(error).__name__}: {error}")
+
+
 async def _run(
     args: argparse.Namespace,
     code: provenance.Provenance,
@@ -324,6 +336,18 @@ async def _run(
 
     watch_task: asyncio.Future[None] = asyncio.ensure_future(watch.run())
     watch_task.add_done_callback(lambda task: _watch_stopped(app, args.console_host, task))
+    # Beside it, the mirror's report on Reaper's project (#204). Read on a
+    # thread, so a slow disk cannot stall the loop. With no queue there is no
+    # mirror to hear from, and the page says "unknown".
+    report_task: asyncio.Future[None] | None = None
+    if args.queue:
+        report_watch = mirror_report.Watch(
+            functools.partial(mirror_report.read_report, mirror_report.report_path(args.queue)),
+            app.report_observed,
+            clock=app.now,
+        )
+        report_task = asyncio.ensure_future(report_watch.run())
+        report_task.add_done_callback(lambda task: _report_watch_stopped(app, task))
 
     try:
         await stop.wait()
@@ -334,6 +358,10 @@ async def _run(
         watch_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await watch_task
+        if report_task is not None:
+            report_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await report_task
         # The box starts no move on the way out (#44). A ride was left where it
         # was when the stop was confirmed; a fade is let land, after the page
         # has hung up so no tap can start a move behind it. Nested, so a

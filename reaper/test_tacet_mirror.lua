@@ -15,11 +15,12 @@ local SCRIPT = HERE .. "tacet_mirror.lua"
 --- Written by the box's own code: see tests/queue_fixtures.py.
 local FIXTURES = HERE .. "../tests/fixtures/"
 
-local markers, console, ext, deferred, now, playpos
+local markers, console, ext, deferred, now, playpos, project_file, project_dir
 
 local function reset()
   markers, console, ext = {}, {}, {}
   deferred, now, playpos = nil, 0, 0
+  project_file, project_dir = "/Users/x/Reaper Media/20261114 X/20261114 X.RPP", "/Users/x/Reaper Media/20261114 X/Media"
 end
 
 reaper = {
@@ -34,6 +35,8 @@ reaper = {
   defer = function(fn) deferred = fn end,
   atexit = function() end,
   time_precise = function() return now end,
+  EnumProjects = function() if project_file == nil then return nil end return {}, project_file end,
+  GetProjectPath = function() return project_dir end,
   AddProjectMarker2 = function(_, isrgn, pos, rgnend, name)
     markers[#markers + 1] = { isrgn = isrgn, pos = pos, rgnend = rgnend, name = name }
     return #markers
@@ -75,9 +78,13 @@ local function append(path, text)
   handle:close()
 end
 
+local report_paths = {}
+
 --- Load the script fresh, pointed at `path`.
 local function start(path)
   reset()
+  report_paths[#report_paths + 1] = path .. ".report"
+  report_paths[#report_paths + 1] = path .. ".report.tmp"
   ext["tacet_downbeat/queue_path"] = path
   dofile(SCRIPT)
 end
@@ -319,6 +326,181 @@ local function test_missing_queue_is_survivable()
   check(logged("waiting for the box"), "says it is waiting")
 end
 
+
+-- --------------------------------------------------------------------------
+-- the report (#204)
+-- --------------------------------------------------------------------------
+
+local function report_of(path)
+  local handle = io.open(path .. ".report", "rb")
+  if not handle then return nil end
+  local text = handle:read("a")
+  handle:close()
+  return text
+end
+
+local function seq_of(text)
+  return tonumber(text:match("seq\t(%d+)\n"))
+end
+
+local function test_the_report_matches_the_golden_file()
+  local path = os.tmpname()
+  start_empty(path)
+  local text = report_of(path)
+  check(text ~= nil, "a report is written at start")
+  local golden = read(FIXTURES .. "report-v1.report")
+  -- seq is the one field that moves; the golden file pins the rest.
+  equal(text and text:gsub("seq\t%d+", "seq\t42"), golden, "bytes equal the golden file")
+  os.remove(path)
+end
+
+local function test_an_unsaved_project_writes_an_empty_project()
+  local path = os.tmpname()
+  start_empty(path)
+  project_file = ""
+  now = now + 10
+  tick()
+  check(report_of(path):find("project\t\n", 1, true) ~= nil, "empty project value")
+  os.remove(path)
+end
+
+local function test_no_project_omits_the_key()
+  local path = os.tmpname()
+  start_empty(path)
+  project_file = nil
+  now = now + 10
+  tick()
+  local text = report_of(path)
+  check(text:find("project", 1, true) == nil, "no project key")
+  check(text:find("record_path", 1, true) ~= nil, "record_path still reported")
+  os.remove(path)
+end
+
+local function test_seq_rises_and_the_file_is_replaced()
+  local path = os.tmpname()
+  start_empty(path)
+  local first = seq_of(report_of(path))
+  now = now + 2
+  tick()
+  local second = seq_of(report_of(path))
+  check(second > first, "seq rises")
+  local _, lines = report_of(path):gsub("\n", "")
+  equal(lines, 4, "replaced, not appended")
+  os.remove(path)
+end
+
+local function test_the_report_is_throttled()
+  local path = os.tmpname()
+  start_empty(path)
+  local first = seq_of(report_of(path))
+  now = now + 0.5
+  deferred()
+  equal(seq_of(report_of(path)), first, "no write inside the interval")
+  now = now + 2
+  deferred()
+  check(seq_of(report_of(path)) > first, "writes once the interval has passed")
+  os.remove(path)
+end
+
+local function test_an_unwritable_report_still_mirrors()
+  local path = os.tmpname()
+  start_empty(path)
+  os.remove(path .. ".report")
+  -- A directory where the temp file should go makes every write fail.
+  os.execute("mkdir '" .. path .. ".report.tmp'")
+  append(path, "NOTE|note\t-\t-\n")
+  tick()
+  equal(#markers, 1, "the queue is still mirrored")
+  os.execute("rmdir '" .. path .. ".report.tmp'")
+  os.remove(path)
+end
+
+local function test_a_missing_api_still_mirrors()
+  local path = os.tmpname()
+  start_empty(path)
+  local saved = reaper.EnumProjects
+  reaper.EnumProjects = nil
+  reaper.GetProjectPath = nil
+  append(path, "NOTE|note\t-\t-\n")
+  tick()
+  equal(#markers, 1, "the queue is still mirrored")
+  reaper.EnumProjects = saved
+  reaper.GetProjectPath = function() return project_dir end
+  os.remove(path)
+end
+
+local function test_the_report_leaves_offset_and_open_spans_alone()
+  local path = os.tmpname()
+  start_empty(path)
+  append(path, "GAME|q1\tstart\tq1-2\n")
+  playpos = 5.0
+  tick()
+  -- Several report intervals pass with the span open.
+  for _ = 1, 4 do
+    now = now + 2
+    tick()
+  end
+  append(path, "GAME|q1\tend\tq1-2\n")
+  playpos = 30.0
+  tick()
+  equal(#markers, 1, "one region")
+  equal(markers[1].isrgn, true, "it is a region")
+  equal(markers[1].pos, 5.0, "at the original start")
+  append(path, "NOTE|note\t-\t-\n")
+  now = now + 2
+  tick()
+  equal(#markers, 2, "exactly one marker for the instant")
+  local size = #read(path)
+  equal(tonumber(ext["tacet_downbeat/queue_offset"]), size, "stored offset is the queue's byte length")
+  os.remove(path)
+end
+
+local function test_a_failed_write_does_not_replace_the_report()
+  local path = os.tmpname()
+  start_empty(path)
+  local before = report_of(path)
+  local real_open = io.open
+  io.open = function(name, mode)
+    if name == path .. ".report.tmp" then
+      return { write = function() return nil, "no space" end, close = function() return true end }
+    end
+    return real_open(name, mode)
+  end
+  now = now + 2
+  local ok = pcall(tick)
+  io.open = real_open
+  check(ok, "a failed write does not raise")
+  equal(report_of(path), before, "the old report is kept whole")
+  os.remove(path)
+end
+
+local function test_the_report_prints_nothing_and_mirroring_stays_last()
+  local path = os.tmpname()
+  start_empty(path)
+  local said = #console
+  now = now + 2
+  tick()
+  now = now + 2
+  tick()
+  equal(#console, said, "the report prints nothing")
+  check(console[#console]:find("mirroring", 1, true) ~= nil, "mirroring is the last console line")
+  os.remove(path)
+end
+
+local function test_newlines_in_values_are_stripped()
+  local path = os.tmpname()
+  start_empty(path)
+  project_dir = "/a\r\nb"
+  now = now + 10
+  tick()
+  check(report_of(path):find("record_path\t/ab\n", 1, true) ~= nil, "value is one line")
+  os.remove(path)
+end
+
+local function cleanup_reports()
+  for _, p in ipairs(report_paths) do os.remove(p) end
+end
+
 -- --------------------------------------------------------------------------
 
 local tests = {
@@ -336,6 +518,17 @@ local tests = {
   test_the_game_2_queue_replays,
   test_every_event_in_the_vocabulary_replays,
   test_lines_are_read_as_strictly_as_the_box_writes_them,
+  test_the_report_matches_the_golden_file,
+  test_an_unsaved_project_writes_an_empty_project,
+  test_no_project_omits_the_key,
+  test_seq_rises_and_the_file_is_replaced,
+  test_the_report_is_throttled,
+  test_an_unwritable_report_still_mirrors,
+  test_a_missing_api_still_mirrors,
+  test_the_report_leaves_offset_and_open_spans_alone,
+  test_a_failed_write_does_not_replace_the_report,
+  test_the_report_prints_nothing_and_mirroring_stays_last,
+  test_newlines_in_values_are_stripped,
 }
 
 for _, test in ipairs(tests) do
@@ -346,5 +539,6 @@ for _, test in ipairs(tests) do
   end
 end
 
+cleanup_reports()
 print(string.format("%d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

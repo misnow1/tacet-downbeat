@@ -29,7 +29,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tacet import annotations as ann
-from tacet import dm7, moves, osc, provenance, reach, reaper
+from tacet import dm7, mirror_report, moves, osc, provenance, reach, reaper
 from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
@@ -45,6 +45,10 @@ CURVES_PATH = FIXTURES / "move-curves.json"
 #: Stands in for the temporary directory the log was written to, so a fixture
 #: does not change with the machine that generated it.
 LOG_DIR = "/games"
+#: What `~` stands for in a fixture, so it never depends on the machine.
+HOME = "/Users/x"
+#: Where Reaper records when its project was never saved (#204).
+DEFAULT_MEDIA = "/Users/x/Documents/REAPER Media"
 #: Where the injected clock starts. Arbitrary; far from zero like a real one.
 CLOCK_START = 5000.0
 #: How long READY's ride takes in the curves fixture. Arbitrary, but not the
@@ -136,6 +140,7 @@ def _build(
         machine=machine,
         provenance=code,
         console_check=console_check,
+        home=HOME,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
@@ -180,6 +185,20 @@ async def parked_unreported(root: Path) -> dict[str, Any]:
         box.reaper_says(METER, 0.0)
         box.clock[0] += reaper.REFRESH_ANSWER_SECONDS / steps
     box.reaper_says(METER, 0.0)
+    return box.app.snapshot()
+
+
+async def project_unsaved(root: Path) -> dict[str, Any]:
+    """The mirror reports Reaper's project was never saved, so the take would
+    land in the default media folder (#204). Two reads with different seqs: the
+    first is only a baseline, a change is what the box trusts."""
+    box = _build(root, console=_Sender(), machine=_known())
+    observed: mirror_report.Observed | None = None
+    for seq in (1, 2):
+        text = f"version\t1\nseq\t{seq}\nproject\t\nrecord_path\t{DEFAULT_MEDIA}\n"
+        observed = mirror_report.observe(observed, mirror_report.parse_report(text), box.clock[0])
+    assert observed is not None
+    box.app.report_observed(observed)
     return box.app.snapshot()
 
 
@@ -284,6 +303,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
     "parked-unreported": parked_unreported,
+    "project-unsaved": project_unsaved,
     "releasing": releasing,
     "riding": riding,
     "target-stored": target_stored,

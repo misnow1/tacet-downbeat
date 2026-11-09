@@ -232,6 +232,12 @@
     "source": "checkout",
     "where": "main @ 0123456"
   },
+  "reaper_project": {
+    "project": null,
+    "reason": "no-report",
+    "record_path": null,
+    "status": "unknown"
+  },
   "recording": {
     "can_start": true,
     "confirmed": true,

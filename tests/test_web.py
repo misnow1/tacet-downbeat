@@ -442,6 +442,24 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         self.assertIn('id="target-level"', strip)
         self.assertLess(strip.index('id="duty"'), strip.index('id="target-level"'))
 
+    async def test_the_project_chip_follows_the_console_chip_and_is_always_present(self):
+        # #204
+        body = await (await self.client.get("/")).text()
+        strip = body.split('<div id="strip">', 1)[1].split('<div id="prompt">', 1)[0]
+        self.assertLess(strip.index('id="console-reach"'), strip.index('id="reaper-project"'))
+        self.assertLess(strip.index('id="reaper-project"'), strip.index('id="link"'))
+        self.assertNotIn("#reaper-project{display:none", body)
+        self.assertNotIn("#strip > #reaper-project{display:none", body)
+
+    async def test_the_project_chip_cannot_cause_a_wrap_by_itself(self):
+        body = await (await self.client.get("/")).text()
+        rule = body.split("#strip > #reaper-project{", 1)[1].split("}", 1)[0]
+        self.assertIn("flex:1 1 0", rule)
+        self.assertIn("min-width:0", rule)
+        self.assertIn("max-width:340px", rule)
+        for suffix in (".saved", ".warn", ".note"):
+            self.assertIn("#strip > #reaper-project" + suffix + "{", body)
+
     async def test_the_chip_rules_are_scoped_to_the_strip_so_they_win(self):
         # `#strip > div` is an id plus a type: an id alone would lose to it.
         body = await self.body()

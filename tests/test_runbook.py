@@ -137,6 +137,18 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
                 self.assertIn(self._chip_words(name), self.troubleshooting)
         self.assertIn(self._chip_words("CONSOLE_NOTHING_THERE"), self.gameday)
 
+    def test_the_runbook_quotes_every_project_chip_word(self) -> None:
+        # #204: every PROJECT_* constant in the page's script is in troubleshooting.
+        names = re.findall(r"^const (PROJECT_[A-Z_]+) = ", self.script, flags=re.MULTILINE)
+        self.assertGreaterEqual(len(names), 8)
+        for name in names:
+            with self.subTest(name):
+                self.assertIn(self._chip_words(name), self.troubleshooting)
+
+    def test_gameday_quotes_the_saved_and_unsaved_chips(self) -> None:
+        self.assertIn(self._chip_words("PROJECT_SAVED"), self.gameday)
+        self.assertIn(self._chip_words("PROJECT_UNSAVED"), self.gameday)
+
     def test_the_fix_on_the_day_no_longer_promises_157(self) -> None:
         self.assertNotIn("#157 will make", self.gameday)
 

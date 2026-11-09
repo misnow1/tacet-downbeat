@@ -687,6 +687,17 @@ Conventions:
 - **Parseable names** — a delimited prefix (`FDR|up-whistle`, `GAME|q3-start`)
   so the later read is a split rather than a regex.
 
+**The project is a checked fact, not a remembered step (#204).** A project that
+was never saved sends the take to Reaper's default media folder, and the audio
+is then left behind when the project folder is copied away (game 4). Reaper's
+OSC cannot say whether the project is saved, so the mirror script, which already
+runs inside Reaper, writes a small status file beside its queue and the box shows
+it as a chip: where recording will land, or that the project is not saved. It
+warns and never blocks; a take in the wrong folder is recoverable and a missed
+take is not. The chip is shown, not judged: the path is not compared with the
+box's capture path. The file is believed only after the box has watched it
+change, and the page says unknown, never saved, when it cannot tell.
+
 **Transport control is deliberately incomplete.** The UI arms and starts
 recording; it offers no stop. Each home game is a single irreplaceable sample,
 and a stop button does not belong on a screen being tapped by someone watching a

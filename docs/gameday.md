@@ -155,7 +155,13 @@ git switch main
 git pull --ff-only  # the main checkout carries no local commits; this refuses if it does
 make install        # new dependencies and commands (#193 added tacet-pilot-check)
 make check          # green, or the game does not run this commit
+cp reaper/tacet_mirror.lua ~/"Library/Application Support/REAPER/Scripts/"   # Reaper runs its own copy, not the checkout's (#204)
 ```
+
+Then **run the script again from Reaper**. It is a toggle: if the console's
+last line says `mirror stopped`, run it once more. The last line must end on
+`mirroring`. An older copy keeps running without the project report, and the
+page's project chip will say `Reaper project unknown`.
 
 At startup the banner's `code` row should read `main @ <that commit>` with no
 `uncommitted changes`; see [box.md](box.md#starting-it).
@@ -168,6 +174,11 @@ Order matters in two places: the mirror script before the box, and the queue
 path matching between them.
 
 ### 1. Reaper
+
+**Save the new project into its game folder** before anything else
+(File > Save project as, under the recording path in Site values). An unsaved
+project records into `~/Documents/REAPER Media` (game 4: 72.6 GB there). The
+page's project chip says which it is; see Pre-flight.
 
 Open the game project and confirm DVS is the audio device. Check every track on
 [the patch list](reaper.md#tracks-to-record) is there, named, and **armed** -
@@ -265,6 +276,7 @@ Game 4. `-U` writes each packet out as it arrives, so a crash loses little.
 | Top of the screen | Nothing. No banner is the healthy state |
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
 | Console chip, in the strip | Nothing. `Nothing answered at the console address at the last check` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
+| Project chip, in the strip | `Recording to ~/Reaper Media/<game folder>/Media`, dim, and the folder is this game's. `Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.` in amber means save the project into its game folder now; it only warns, and Start recording still works. Anything starting `Reaper project unknown` means the mirror is not reporting: run the script (step 2) and see [troubleshooting.md](troubleshooting.md#the-page) |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |

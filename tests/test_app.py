@@ -11,6 +11,7 @@ from unittest import mock
 from tacet import annotations as ann
 from tacet import app as tacet_app
 from tacet import dm7, mirror, moves, osc, prompts, reach, reaper, state, taps, targets, web
+from tacet import mirror_report as mr
 from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
@@ -176,6 +177,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         tick_hz=200.0,
         provenance=None,
         console_check=None,
+        home="/Users/x",
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -215,6 +217,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             machine=state.Machine(level_known=level_known),
             provenance=provenance,
             console_check=console_check,
+            home=home,
         )
 
     #: The operator's whole cycle, from a cold boot (#107): every move the page asks for.
@@ -1681,6 +1684,85 @@ class TestRecorder(AppTestCase):
         )
         await app.arm()
         self.assertFalse(app.snapshot()["recording"]["known"])
+
+
+class TestTheReaperProjectChip(AppTestCase):
+    """#204: the project the mirror reports, assessed when the snapshot is taken."""
+
+    def setUp(self):
+        super().setUp()
+        self.clock = [1000.0]
+        self.notified = 0
+
+    def make(self):
+        app = self.build(monotonic=lambda: self.clock[0])
+        app.on_change(self.bump)
+        return app
+
+    def bump(self):
+        self.notified += 1
+
+    def seen(self, *reads):
+        observed = None
+        for read in reads:
+            observed = mr.observe(observed, read, self.clock[0])
+            self.clock[0] += 1.0
+        return observed
+
+    def good(self, seq, project="/Users/x/Reaper Media/G/G.RPP"):
+        fields = (("version", "1"), ("seq", str(seq)), ("project", project), ("record_path", "/Users/x/Media"))
+        return mr.Report(1, seq, project, "/Users/x/Media", fields)
+
+    async def test_with_no_report_it_says_so(self):
+        app = self.make()
+        self.assertEqual(
+            app.snapshot()["reaper_project"],
+            {"status": "unknown", "reason": "no-report", "record_path": None, "project": None},
+        )
+
+    async def test_a_witnessed_report_is_shown_with_home_shortened(self):
+        app = self.make()
+        app.report_observed(self.seen(self.good(1), self.good(2)))
+        got = app.snapshot()["reaper_project"]
+        self.assertEqual(got["status"], "saved")
+        self.assertEqual(got["record_path"], "~/Media")
+
+    async def test_an_unsaved_project_is_shown(self):
+        app = self.make()
+        app.report_observed(self.seen(self.good(1, ""), self.good(2, "")))
+        self.assertEqual(app.snapshot()["reaper_project"]["status"], "unsaved")
+
+    async def test_it_goes_stale_with_no_new_read(self):
+        app = self.make()
+        app.report_observed(self.seen(self.good(1), self.good(2)))
+        self.assertEqual(app.snapshot()["reaper_project"]["status"], "saved")
+        self.clock[0] += mr.STALE_SECONDS
+        got = app.snapshot()["reaper_project"]
+        self.assertEqual((got["status"], got["reason"]), ("unknown", "stopped"))
+
+    async def test_it_notifies_only_when_the_assessed_result_changes(self):
+        app = self.make()
+        observed = self.seen(self.good(1))
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 0, "a baseline read changes nothing on the page")
+        observed = mr.observe(observed, self.good(2), self.clock[0])
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 1)
+        observed = mr.observe(observed, self.good(3), self.clock[0])
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 1, "a new seq alone is not news")
+
+    async def test_it_does_not_log(self):
+        app = self.make()
+        before = len(self.entries())
+        app.report_observed(self.seen(self.good(1), self.good(2)))
+        self.assertEqual(len(self.entries()), before)
+
+    async def test_a_dead_watch_is_reported(self):
+        app = self.make()
+        app.report_observed(self.seen(self.good(1), self.good(2)))
+        app.report_stopped("boom")
+        self.assertEqual(app.snapshot()["reaper_project"]["reason"], "unreadable")
 
 
 if __name__ == "__main__":
