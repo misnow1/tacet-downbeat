@@ -299,8 +299,13 @@ class App:
         provenance: prov.Provenance | None = None,
         console_check: reach.Check | None = None,
         home: str | None = None,
+        expected_script: str | None = None,
     ) -> None:
         self._console = console
+        #: The checksum of the checkout's copy of the mirror script (#223), read
+        #: once at startup, or None when it could not be. Compared with what the
+        #: running script reports of itself; no I/O here.
+        self._expected_script = expected_script
         #: What the mirror's report says about Reaper's project (#204), and the
         #: last result the page was told about. Assessed on `_monotonic` at
         #: snapshot time, so the 1 s state tick carries the stale edge. Not
@@ -309,7 +314,9 @@ class App:
         #: What the page shows as `~`. Passed in tests so a fixture does not
         #: depend on the machine that wrote it.
         self._home = home if home is not None else str(Path.home())
-        self._project_shown = mirror_report.assess(self._project_observed, 0.0, self._home)
+        self._project_shown = mirror_report.assess(
+            self._project_observed, 0.0, self._home, expected_script=self._expected_script
+        )
         #: What the last ping at the console's address found (#73): the startup
         #: result until the watch reports another. Presence at an address and
         #: nothing more - `fader.confirmed` stays False whatever it says. None
@@ -1267,7 +1274,9 @@ class App:
         self.report_observed(observed)
 
     def _project_check(self) -> mirror_report.ProjectCheck:
-        return mirror_report.assess(self._project_observed, self._monotonic(), self._home)
+        return mirror_report.assess(
+            self._project_observed, self._monotonic(), self._home, expected_script=self._expected_script
+        )
 
     def _project_changed(self) -> None:
         check = self._project_check()

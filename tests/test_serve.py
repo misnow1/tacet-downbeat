@@ -5,12 +5,14 @@ import io
 import os
 import signal
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
-from tacet import annotations, disk, dm7, mirror_report, moves, provenance, reach, serve, state, targets
+from tacet import annotations, disk, dm7, mirror_report, moves, provenance, reach, script_check, serve, state, targets
 from tacet import app as tacet_app
 from tests.test_app import ClosableFakeSender
 
@@ -38,6 +40,10 @@ def console_check(kind=reach.Reach.ANSWERED, *, detail=None, rtt_ms=1.234):
 
 
 ANSWERED_CHECK = console_check()
+#: What the Reaper script check found. Never the real one: no test here reads
+#: the real REAPER folder or stdin (#223).
+SCRIPT_SUM = "0badf00d"
+SCRIPT_CURRENT = script_check.ScriptStatus((script_check.ROW_CURRENT,), SCRIPT_SUM)
 
 
 class TestStopConfirmation(unittest.TestCase):
@@ -742,10 +748,13 @@ class _RunMain(unittest.TestCase):
             mock.patch("tacet.serve.asyncio.run") as run,
             mock.patch("tacet.serve.provenance.probe", return_value=CLEAN_CODE),
             mock.patch("tacet.serve.reach.probe", return_value=ANSWERED_CHECK),
+            mock.patch("tacet.serve.script_check.startup", return_value=SCRIPT_CURRENT) as asked,
             self.assertRaises(SystemExit) as caught,
         ):
             serve.main(["--config", str(self.config), *argv])
         run.assert_not_called()
+        # A refusal comes before the question: a box that will not start asks nothing.
+        asked.assert_not_called()
         return caught.exception.code, stderr.getvalue()
 
 
@@ -927,6 +936,7 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         self.probe = mock.Mock(side_effect=lambda: self.code)
         self.found = ANSWERED_CHECK
         self.pinged = mock.Mock(side_effect=lambda host, tools: self.found)
+        self.script = mock.Mock(return_value=SCRIPT_CURRENT)
 
     def start(self, argv, *, config=True):
         """(exit code, stdout, stderr) for `serve.main`, which never binds:
@@ -945,6 +955,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
             mock.patch("tacet.serve.provenance.probe", self.probe),
             # Never a real ping either (#73).
             mock.patch("tacet.serve.reach.probe", self.pinged),
+            # Never the real REAPER folder or stdin (#223).
+            mock.patch("tacet.serve.script_check.startup", self.script),
         ):
             code: int | str | None
             try:
@@ -1143,6 +1155,7 @@ class TestGitIsAskedOnceBeforeTheLoop(TestCheckAnswersWithoutStarting):
             mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(PLENTY)),
             mock.patch("tacet.serve.provenance.probe", self.probe),
             mock.patch("tacet.serve.reach.probe", self.pinged),
+            mock.patch("tacet.serve.script_check.startup", self.script),
         ):
             serve.main(["--config", str(self.config), *self.good()])
         self.assertEqual(asked, [1])
@@ -1197,6 +1210,133 @@ class TestGitIsAskedOnceBeforeTheLoop(TestCheckAnswersWithoutStarting):
         with mock.patch("tacet.serve._run", return_value=coroutine) as run:
             self.start(self.good())
         self.assertEqual(run.call_args.args[1], CLEAN_CODE)
+
+
+def noting(calls: list[str], name: str, result: Any) -> Callable[..., Any]:
+    """A stand-in that records that it was called, and returns `result`."""
+
+    def call(*_args: Any, **_kwargs: Any) -> Any:
+        calls.append(name)
+        return result
+
+    return call
+
+
+class TestTheScriptQuestionAtStartup(TestCheckAnswersWithoutStarting):
+    """#223: the Reaper script is compared, and asked about, once, after every
+    refusal and before the banner and the loop."""
+
+    def plan(self) -> script_check.Plan:
+        plan = self.script.call_args.args[0]
+        assert isinstance(plan, script_check.Plan)
+        return plan
+
+    def test_a_start_asks_after_the_ping_and_before_the_banner_and_the_loop(self):
+        calls: list[str] = []
+        self.pinged.side_effect = noting(calls, "ping", self.found)
+        self.script.side_effect = noting(calls, "script", SCRIPT_CURRENT)
+        real_lines = serve.startup_lines
+
+        def lines(*a, **k):
+            calls.append("banner")
+            return real_lines(*a, **k)
+
+        with mock.patch("tacet.serve.startup_lines", lines):
+            self.start(self.good())
+        self.assertEqual(calls, ["ping", "script", "banner"])
+        self.assertEqual(self.script.call_count, 1)
+
+    def test_the_loop_is_entered_after_the_question(self):
+        calls: list[str] = []
+        self.script.side_effect = noting(calls, "script", SCRIPT_CURRENT)
+        with (
+            mock.patch("sys.stdout", io.StringIO()),
+            mock.patch("tacet.serve.asyncio.run", side_effect=lambda c: (noting(calls, "run", None)(), c.close())),
+            mock.patch("tacet.disk.shutil.disk_usage", return_value=_usage(PLENTY)),
+            mock.patch("tacet.serve.provenance.probe", self.probe),
+            mock.patch("tacet.serve.reach.probe", self.pinged),
+            mock.patch("tacet.serve.script_check.startup", self.script),
+        ):
+            serve.main(["--config", str(self.config), *self.good()])
+        self.assertEqual(calls, ["script", "run"])
+
+    def test_check_passes_check_only(self):
+        self.start([*self.good(), "--check"])
+        self.assertTrue(self.plan().check_only)
+        self.start(self.good())
+        self.assertFalse(self.plan().check_only)
+
+    def test_the_queue_is_passed_and_none_when_unset(self):
+        self.start(self.good())
+        self.assertEqual(str(self.plan().queue), str(self.queue))
+        self.start([*self.CONSOLE, "--log", str(self.log), *self.recording()])
+        self.assertIsNone(self.plan().queue)
+
+    def test_a_fresh_or_empty_log_is_not_a_restart(self):
+        self.start(self.good())
+        self.assertFalse(self.plan().restart)
+        self.log.write_text("", encoding="utf-8")
+        self.start(self.good())
+        self.assertFalse(self.plan().restart)
+
+    def test_a_log_with_something_in_it_is_a_restart(self):
+        self.log.write_text('{"event": "x"}\n', encoding="utf-8")
+        with (
+            mock.patch("tacet.serve.find_prior_anchor", return_value=None),
+            mock.patch("tacet.serve.find_clock_reset", return_value=None),
+            mock.patch("tacet.serve.find_open_spans", return_value=[]),
+            mock.patch("tacet.serve.find_torn_tail", return_value=None),
+        ):
+            self.start(self.good())
+        self.assertTrue(self.plan().restart)
+
+    def test_ctrl_c_at_the_question_stops_the_box_with_130(self):
+        self.script.side_effect = KeyboardInterrupt
+        code, stdout, _ = self.start(self.good())
+        self.assertEqual(code, script_check.EXIT_INTERRUPTED)
+        self.assertFalse(self.ran)
+        self.assertIn(script_check.CTRL_C_MESSAGE, stdout)
+        self.assertNotIn("tacet    band DCA", stdout)
+
+    def test_every_state_has_a_script_row_in_the_banner(self):
+        states = (
+            (script_check.ROW_CURRENT,),
+            ("differs from this checkout: /x/tacet_mirror.lua", script_check.NOT_REPLACED_NO_TERMINAL),
+            ("missing: /x/tacet_mirror.lua", script_check.NOT_REPLACED_NO),
+            (script_check.ROW_REPLACED.format(path="/x/tacet_mirror.lua"), script_check.NOTE_RUN_AGAIN),
+            (script_check.NOT_CHECKED_NO_QUEUE,),
+        )
+        for lines in states:
+            self.script.return_value = script_check.ScriptStatus(lines, SCRIPT_SUM)
+            _, stdout, _ = self.start(self.good())
+            rows = [line for line in stdout.splitlines() if line.startswith("  script ")]
+            with self.subTest(lines):
+                self.assertEqual(len(rows), 1)
+                self.assertIn(lines[0][:30], rows[0])
+                for note in lines[1:]:
+                    self.assertIn(note, stdout)
+
+    def test_the_row_sits_after_the_queue_and_before_the_disk(self):
+        _, stdout, _ = self.start(self.good())
+        labels = [line.split()[0] for line in stdout.splitlines() if line.startswith("  ") and line.split()]
+        self.assertLess(labels.index("queue"), labels.index("script"))
+        self.assertLess(labels.index("script"), labels.index("disk"))
+
+    def test_the_checkouts_checksum_is_given_to_the_coroutine(self):
+        async def nothing():
+            pass
+
+        coroutine = nothing()
+        self.addCleanup(coroutine.close)
+        with mock.patch("tacet.serve._run", return_value=coroutine) as run:
+            self.start(self.good())
+        self.assertEqual(run.call_args.kwargs["expected_script"], SCRIPT_SUM)
+
+    def test_build_hands_it_to_the_app(self):
+        argv = ["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)]
+        app, log, _ = serve.build(serve.parser().parse_args(argv), CLEAN_CODE, expected_script=SCRIPT_SUM)
+        log.close()
+        self.assertEqual(app._expected_script, SCRIPT_SUM)
 
 
 class TestStartupBannerSaysWhatThePingProved(unittest.TestCase):
