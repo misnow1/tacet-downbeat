@@ -461,7 +461,7 @@ Reaper's feedback has to survive all of it.
   Never treat the first dump as truth.
 - **Only tracks 1-8 are visible.** The stock surface's bank is 8 tracks; nothing
   above `/track/8` arrived on a 30-track template. Arm, name and meter state for
-  tracks 9-30 cannot be seen over OSC at the default bank size (#167). The mirror script reports every track's arm state instead (#167).
+  tracks 9-30 cannot be seen over OSC at the default bank size. The mirror script reports every track's arm state instead (#167).
 - **`/lastmarker/number/str` is not reset on a project switch.** Name and time
   reset; the number kept the previous project's value. Key on name or time,
   never the number.

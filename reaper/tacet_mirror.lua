@@ -303,13 +303,14 @@ end
 -- name comes from P_NAME, because GetTrackName answers "Track N" for an unnamed
 -- track. Nothing here is judged; see tacet.arming.
 local function track_fields()
-  local count = reaper.CountTracks(CURRENT_PROJECT_INDEX)
+  -- %d, so a float from the API is still written as an integer.
+  local count = math.tointeger(reaper.CountTracks(CURRENT_PROJECT_INDEX))
   local pairs_out = { { KEY_TRACKS, count } }
   for index = 0, count - 1 do
     local track = reaper.GetTrack(CURRENT_PROJECT_INDEX, index)
     local armed = reaper.GetMediaTrackInfo_Value(track, "I_RECARM") ~= 0
     local _, name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
-    local value = (index + 1) .. DELIMITER .. (armed and ARM_ON or ARM_OFF) .. DELIMITER .. one_line(name or "")
+    local value = string.format("%d", index + 1) .. DELIMITER .. (armed and ARM_ON or ARM_OFF) .. DELIMITER .. one_line(name or "")
     pairs_out[#pairs_out + 1] = { KEY_TRACK, value }
   end
   return pairs_out

@@ -3543,6 +3543,21 @@ for (const name of Object.keys(SNAPSHOTS)) {
 {
   const { context, nodes } = browser();
   const snap = snapshot();
+  snap.reaper_tracks = {
+    status: "unarmed", reason: null, armed: 1, tracks: 2, unarmed: [{ number: 2, name: "<b>x</b>" }],
+    pilot_ambiguous: false, channels: null, channels_differ: false,
+  };
+  context.render(snap);
+  check(
+    "a track name is shown literally, never as markup",
+    nodes.get("reaper-tracks").textContent,
+    "Not armed to record: <b>x</b> (2). Arm them in Reaper: an unarmed track records nothing.",
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
   delete snap.reaper_tracks;
   let error = null;
   try {

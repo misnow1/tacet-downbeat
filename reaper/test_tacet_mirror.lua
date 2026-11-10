@@ -670,6 +670,20 @@ local function test_a_missing_or_raising_track_api_still_reports_the_project()
   end
 end
 
+local function test_a_float_count_is_still_written_as_an_integer()
+  local path = os.tmpname()
+  start_empty(path)
+  reaper.CountTracks = function() return 4.0 end
+  now = now + 10
+  tick()
+  local text = report_of(path)
+  check(text:find("\ntracks\t4\n", 1, true) ~= nil, "count has no .0")
+  check(text:find("track\t1\t1\tMV Conductor\n", 1, true) ~= nil, "numbers have no .0")
+  check(text:find("%.0") == nil, "no float anywhere")
+  reaper.CountTracks = function() return #tracks end
+  os.remove(path)
+end
+
 local function test_pilot_is_reported_like_any_other_track()
   local path = os.tmpname()
   start_empty(path)
@@ -779,6 +793,7 @@ local tests = {
   test_no_tracks_writes_a_zero_count_and_no_track_lines,
   test_arm_state_is_read_fresh_every_report,
   test_a_missing_or_raising_track_api_still_reports_the_project,
+  test_a_float_count_is_still_written_as_an_integer,
   test_pilot_is_reported_like_any_other_track,
   test_the_published_vectors_through_the_report,
   test_the_script_is_read_once_at_start,

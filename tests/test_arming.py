@@ -190,6 +190,12 @@ class TestChannels(unittest.TestCase):
         self.assertFalse(arming.judge((), 9).channels_differ)
 
 
+class TestTheReasonsStayInStep(unittest.TestCase):
+    def test_every_freshness_reason_is_an_arm_reason(self):
+        # assess() converts one to the other by value; a new Reason must not raise there.
+        self.assertLessEqual({r.value for r in mr.Reason}, {a.value for a in arming.ArmReason})
+
+
 class TestAssessing(unittest.TestCase):
     def check(self, observed: mr.Observed, now: float = 1.0) -> arming.ArmCheck:
         return arming.assess(observed, now, channels=None)

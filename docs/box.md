@@ -65,7 +65,8 @@ hours needs about 103 GB. The banner's `disk` row shows free space against that.
 It also refuses if `audio_path` is not there (an unmounted share), or not set,
 or if the disk holding the log and queue is nearly full. Each refusal names
 `--no-disk-check`, a flag only, which starts the box anyway and says so in the
-banner. Update `channels` when the patch list changes. The page's tracks chip says when it differs from the tracks Reaper has armed (#167).
+banner. Update `channels` when the patch list changes. The page's tracks chip
+says when it differs from the tracks Reaper has armed (#167).
 
 On Linux, an empty mountpoint directory passes as "there" and reports the local
 disk underneath. Check the share is mounted before trusting the number.
