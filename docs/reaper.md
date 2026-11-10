@@ -80,6 +80,12 @@ Recording from doors, as below (~6 h), plus the box's 10% disk-check margin
 ([box.md](box.md#room-for-the-game)), is about 103 GB - which is why
 `game_hours = 6.0` there, not the on-field game length.
 
+The box checks this itself (#167). The mirror script reports every track's arm
+state and name, and the page's tracks chip names any track but `Pilot` that is
+not armed. Pilot is found by name, never by number or count, so
+keep it exactly `Pilot`. `Pilot Reference` is a different track and must be
+armed. A folder or bus track added to the template will show as not armed.
+
 Ref Primary, Ref BU and HH Red were digital silence for the whole 2026-09-30
 runthrough, while HH Blue carried signal - probably transmitters off on a
 media day, but in a recording a dead feed and a quiet one look the same.
@@ -126,7 +132,7 @@ digital silence (-inf) with it closed, and the DCA's moves in between.
 
 - The tone generator keeps running with Reaper's transport stopped. If it does
   not, arm the track with input monitoring on, which keeps it processing while
-  stopped - and then records it too, so add one to `capture.channels`.
+  stopped - and then records it too, so add one to `capture.channels`. The tracks chip counts an armed Pilot, and says so if `capture.channels` was not updated.
 - **Proof test**: pull the DCA down and watch track 26 go silent in Reaper.
   Then confirm the tone shows on no other console output meter.
 
@@ -212,6 +218,10 @@ seq	42
 project	/Users/x/Reaper Media/20261114 X/20261114 X.RPP
 record_path	/Users/x/Reaper Media/20261114 X/Media
 script_checksum	90a458c5
+tracks	31
+track	1	1	MV Conductor
+...
+track	31	0	Pilot
 ```
 
 `project` is the open project's file; **empty means the project was never
@@ -220,6 +230,14 @@ rises on every write and restarts each run. `record_path` is where a take would 
 ignored, so a field can be added without a new `version`; `version` changes only
 for a breaking change. The script prints nothing about any of this to the
 console. The box shows it as the project chip (`tacet.mirror_report`).
+
+`tracks` (#167) is the number of tracks in the project, and one `track` line per
+track follows it: number, arm state (`1` armed, `0` not) and name, tab-separated,
+with the name last so a tab inside it survives. They are read fresh from Reaper's
+own track state, not from OSC, so neither the 8-track bank nor the launch
+placeholder dump applies. The script judges nothing: the box finds `Pilot` by
+name and holds the rest to being armed (`tacet.arming`). A failing track function
+leaves the lines out and prints nothing, and the project chip is unaffected.
 
 `script_checksum` (#223) is the FNV-1a 32-bit hash of the script's own file, eight
 lowercase hex digits. The script reads its own file once, when it starts, through
@@ -443,7 +461,7 @@ Reaper's feedback has to survive all of it.
   Never treat the first dump as truth.
 - **Only tracks 1-8 are visible.** The stock surface's bank is 8 tracks; nothing
   above `/track/8` arrived on a 30-track template. Arm, name and meter state for
-  tracks 9-30 cannot be seen over OSC at the default bank size (#167).
+  tracks 9-30 cannot be seen over OSC at the default bank size (#167). The mirror script reports every track's arm state instead (#167).
 - **`/lastmarker/number/str` is not reset on a project switch.** Name and time
   reset; the number kept the previous project's value. Key on name or time,
   never the number.

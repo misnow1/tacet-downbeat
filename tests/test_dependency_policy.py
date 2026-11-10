@@ -201,6 +201,25 @@ class TestTheMirrorReportStaysOutsideTheControlPath(unittest.TestCase):
             self.assertNotIn("mirror_report", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
+class TestArmingStaysOutsideTheControlPath(unittest.TestCase):
+    """#167: `arming` judges what the mirror's report says. Standard library
+    and `mirror_report` only, no socket, and nothing that moves the fader imports it."""
+
+    def test_it_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "arming.py"):
+            self.assertIn(module, allowed, f"tacet.arming imports {module!r}")
+
+    def test_it_cannot_send_anything(self):
+        self.assertNotIn("socket", _imported_top_level_modules(PACKAGE_ROOT / "arming.py"))
+        for forbidden in ("osc", "net", "dm7", "state", "targets"):
+            self.assertNotIn(forbidden, _imported_tacet_modules(PACKAGE_ROOT / "arming.py"))
+
+    def test_no_control_path_module_imports_it(self):
+        for name in CONTROL_PATH:
+            self.assertNotIn("arming", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
+
+
 class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
     """`tacet.rtd` is not control path, but the live reader (#95) will import it.
 

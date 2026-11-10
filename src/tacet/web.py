@@ -802,6 +802,14 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
 #strip > #reaper-project.warn{background:var(--attention);color:var(--attention-text);font-weight:700}
 #strip > #reaper-project.note{color:#ffca7a}
 #strip > #reaper-project[data-expanded="1"]{max-width:100%;flex-basis:100%}
+/* #167: whether every track but Pilot is armed to record. Present in every
+   state, so it never appears or disappears, and it has no minimum width for the
+   same reason as the project chip. */
+#strip > #reaper-tracks{flex:1 1 0;min-width:0;max-width:240px;cursor:pointer}
+#strip > #reaper-tracks.ok{color:var(--dim)}
+#strip > #reaper-tracks.warn{background:var(--attention);color:var(--attention-text);font-weight:700}
+#strip > #reaper-tracks.note{color:#ffca7a}
+#strip > #reaper-tracks[data-expanded="1"]{max-width:100%;flex-basis:100%}
 /* Whether annotations are reaching the disk. Up for as long as it is true, and
    not dismissable: a full disk leaves everything else on the page looking fine. */
 #saving{display:none}
@@ -932,6 +940,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <div id="provenance"></div>
   <div id="console-reach"></div>
   <div id="reaper-project"></div>
+  <div id="reaper-tracks"></div>
   <div id="link" class="connecting">Connecting to the box</div>
   <div id="saving"></div>
   <div id="refusal"></div>

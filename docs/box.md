@@ -65,7 +65,7 @@ hours needs about 103 GB. The banner's `disk` row shows free space against that.
 It also refuses if `audio_path` is not there (an unmounted share), or not set,
 or if the disk holding the log and queue is nearly full. Each refusal names
 `--no-disk-check`, a flag only, which starts the box anyway and says so in the
-banner. Update `channels` when the patch list changes.
+banner. Update `channels` when the patch list changes. The page's tracks chip says when it differs from the tracks Reaper has armed (#167).
 
 On Linux, an empty mountpoint directory passes as "there" and reports the local
 disk underneath. Check the share is mounted before trusting the number.
@@ -278,6 +278,10 @@ unknown key, because a file that set it would stop the box from ever starting.
 The page cannot keep the iPad awake itself, which is why gameday.md has you turn
 Auto-Lock off: the browser API for holding the screen on needs HTTPS, and the
 page is plain HTTP.
+
+The tracks chip, in the strip, counts the tracks Reaper has armed to record and
+names any but `Pilot` that is not. It is present in every state; see
+[troubleshooting.md](troubleshooting.md#the-page).
 
 `no feedback` on the recording line before recording is correct, not a fault.
 Reaper says nothing at all while its transport is parked, and announces the

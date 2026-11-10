@@ -899,6 +899,53 @@ function projectChip(p) {
   return ["note", PROJECT_UNKNOWN + ": " + why];
 }
 
+// #167: whether every track but Pilot is armed to record, from the mirror's report.
+// Plain constants again: the runbook tests read them. Always "armed to record",
+// never bare "armed": the duty chip ARMED sits in the same strip.
+const TRACKS_ARMED = "Tracks armed to record:";
+const TRACKS_UNARMED = "Not armed to record:";
+const TRACKS_UNARMED_COST = "Arm them in Reaper: an unarmed track records nothing.";
+const TRACKS_UNNAMED = "unnamed";
+const TRACKS_NONE = "Reaper's project has no tracks.";
+const TRACKS_PILOTS = "More than one track is named Pilot, so none is exempt.";
+const TRACKS_CHANNELS_DIFFER = "but capture.channels says";
+const TRACKS_CHANNELS_FIX = "update tacet.toml.";
+const TRACKS_UNKNOWN = "Track arming unknown";
+const TRACKS_NOT_REPORTED = "the running Reaper script does not report it.";
+const TRACKS_UNREADABLE = "cannot read the tracks in the mirror's report.";
+// Not TRACKS_-prefixed: the runbook test reads every TRACKS_ constant as a string.
+const UNARMED_NAMED_MAX = 3;
+const UNARMED_MORE = "more";
+
+// "name (number)", an empty name as `unnamed`. Names are user data: the caller
+// puts the result in with textContent only.
+function unarmedList(unarmed) {
+  const named = unarmed.slice(0, UNARMED_NAMED_MAX).map((t) => (t.name || TRACKS_UNNAMED) + " (" + t.number + ")");
+  const rest = unarmed.length - UNARMED_NAMED_MAX;
+  return named.join(", ") + (rest > 0 ? " and " + rest + " " + UNARMED_MORE : "");
+}
+
+// Warn only: nothing blocks a take. Null for a box from before #167, which sends
+// no `reaper_tracks`. The project chip says why the report is not believed, so
+// the common unknown is just "unknown".
+function tracksChip(t) {
+  if (!t) return null;
+  if (t.status === "unknown") {
+    if (t.reason === "not-reported") return ["note", TRACKS_UNKNOWN + ": " + TRACKS_NOT_REPORTED];
+    if (t.reason === "tracks-unreadable") return ["note", TRACKS_UNKNOWN + ": " + TRACKS_UNREADABLE];
+    return ["note", TRACKS_UNKNOWN + "."];
+  }
+  if (t.status === "no-tracks") return ["warn", TRACKS_NONE];
+  if (t.status === "unarmed") {
+    const suffix = t.pilot_ambiguous ? " " + TRACKS_PILOTS : "";
+    return ["warn", TRACKS_UNARMED + " " + unarmedList(t.unarmed) + ". " + TRACKS_UNARMED_COST + suffix];
+  }
+  if (t.channels_differ) {
+    return ["note", TRACKS_ARMED + " " + t.armed + ", " + TRACKS_CHANNELS_DIFFER + " " + t.channels + ": " + TRACKS_CHANNELS_FIX];
+  }
+  return ["ok", TRACKS_ARMED + " " + t.armed];
+}
+
 // Whether annotations are reaching the disk. A full disk leaves the fader
 // buttons working and nothing else on the page looking wrong, while every
 // annotation from then on is lost - the half nothing can recover afterwards
@@ -999,6 +1046,10 @@ function render(received) {
   const projectNote = projectChip(next.reaper_project);
   $("reaper-project").className = projectNote ? projectNote[0] : "";
   setText($("reaper-project"), projectNote ? projectNote[1] : "");
+  // #167: guarded the same way, and in the strip in every state.
+  const tracksNote = tracksChip(next.reaper_tracks);
+  $("reaper-tracks").className = tracksNote ? tracksNote[0] : "";
+  setText($("reaper-tracks"), tracksNote ? tracksNote[1] : "");
   const saving = savingBanner(next.log, next.mirror);
   $("saving").className = saving ? saving[0] : "";
   $("saving").textContent = saving ? saving[1] : "";
@@ -1284,7 +1335,7 @@ for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-read
 // than a class: the functional colour classes above (loud, failed, fault...)
 // are overwritten wholesale on every render, and a class toggled here would be
 // wiped the next time one of those runs.
-for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach", "reaper-project"]) {
+for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach", "reaper-project", "reaper-tracks"]) {
   $(id).onclick = () => {
     const node = $(id);
     node.dataset.expanded = node.dataset.expanded ? "" : "1";

@@ -239,6 +239,16 @@
     "script": "unchecked",
     "status": "unknown"
   },
+  "reaper_tracks": {
+    "armed": null,
+    "channels": null,
+    "channels_differ": false,
+    "pilot_ambiguous": false,
+    "reason": "no-report",
+    "status": "unknown",
+    "tracks": null,
+    "unarmed": []
+  },
   "recording": {
     "can_start": false,
     "confirmed": false,

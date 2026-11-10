@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import annotations as ann
-from . import dm7, mirror_report, moves, prompts, reach, state, taps, targets
+from . import arming, dm7, mirror_report, moves, prompts, reach, state, taps, targets
 from . import provenance as prov
 from .net import TransportError
 from .reaper import Liveness, ReaperClient, TakeReport, TransportState, clock_reading, record_refusal
@@ -300,6 +300,7 @@ class App:
         console_check: reach.Check | None = None,
         home: str | None = None,
         expected_script: str | None = None,
+        channels: int | None = None,
     ) -> None:
         self._console = console
         #: The checksum of the checkout's copy of the mirror script (#223), read
@@ -311,12 +312,16 @@ class App:
         #: snapshot time, so the 1 s state tick carries the stale edge. Not
         #: logged: an entry would become a Reaper marker.
         self._project_observed = mirror_report.Observed.empty()
+        #: `capture.channels`, what the disk check sized the game from. The tracks
+        #: chip (#167) says when Reaper's armed count differs. Never re-checks the disk.
+        self._channels = channels
         #: What the page shows as `~`. Passed in tests so a fixture does not
         #: depend on the machine that wrote it.
         self._home = home if home is not None else str(Path.home())
         self._project_shown = mirror_report.assess(
             self._project_observed, 0.0, self._home, expected_script=self._expected_script
         )
+        self._tracks_shown = arming.assess(self._project_observed, 0.0, channels=self._channels)
         #: What the last ping at the console's address found (#73): the startup
         #: result until the watch reports another. Presence at an address and
         #: nothing more - `fader.confirmed` stays False whatever it says. None
@@ -1278,10 +1283,16 @@ class App:
             self._project_observed, self._monotonic(), self._home, expected_script=self._expected_script
         )
 
+    def _tracks_check(self) -> arming.ArmCheck:
+        return arming.assess(self._project_observed, self._monotonic(), channels=self._channels)
+
     def _project_changed(self) -> None:
+        """Both chips read the same report: tell the page once if either moved."""
         check = self._project_check()
-        if check != self._project_shown:
+        tracks = self._tracks_check()
+        if check != self._project_shown or tracks != self._tracks_shown:
             self._project_shown = check
+            self._tracks_shown = tracks
             self._notify()
 
     @property
@@ -1593,6 +1604,9 @@ class App:
             # Where Reaper's project lives, from the mirror's report (#204).
             # Assessed now, so a report that stopped ages out on the next tick.
             "reaper_project": self._project_check().as_snapshot(),
+            # Whether every track but Pilot is armed to record (#167). Not
+            # logged, for the same reason as the project chip.
+            "reaper_tracks": self._tracks_check().as_snapshot(),
         }
 
     # -- change notification ----------------------------------------------

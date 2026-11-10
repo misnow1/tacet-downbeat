@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tacet import annotations, app, config, disk, provenance, reach, reaper, script_check, serve, state, web
+from tacet import annotations, app, arming, config, disk, provenance, reach, reaper, script_check, serve, state, web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -157,6 +157,26 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         # #223
         self.assertIn(self._chip_words("PROJECT_SCRIPT_OLDER"), self.gameday)
         self.assertIn(script_check.QUESTION.strip(), self.gameday)
+
+    def test_the_runbook_quotes_every_tracks_chip_word(self) -> None:
+        # #167: every TRACKS_ constant in the page's script is in troubleshooting.
+        names = re.findall(r"^const (TRACKS_[A-Z_]+) = ", self.script, flags=re.MULTILINE)
+        self.assertGreaterEqual(len(names), 11)
+        for name in names:
+            with self.subTest(name):
+                self.assertIn(self._chip_words(name), self.troubleshooting)
+
+    def test_gameday_quotes_the_tracks_chip(self) -> None:
+        for name in ("TRACKS_ARMED", "TRACKS_UNARMED", "TRACKS_UNKNOWN"):
+            with self.subTest(name):
+                self.assertIn(self._chip_words(name), self.gameday)
+
+    def test_the_pilot_name_is_in_the_sentence_that_says_it(self) -> None:
+        self.assertIn(arming.PILOT_NAME, self._chip_words("TRACKS_PILOTS"))
+
+    def test_reaper_md_tells_the_operator_to_keep_the_pilot_name(self) -> None:
+        reaper_md = REAPER.read_text(encoding="utf-8")
+        self.assertIn(f"keep it exactly `{arming.PILOT_NAME}`", reaper_md)
 
     def test_box_md_quotes_every_script_row_and_note(self) -> None:
         names = [n for n in dir(script_check) if n.startswith(("ROW_", "NOT_REPLACED_", "NOT_CHECKED_", "NOTE_"))]

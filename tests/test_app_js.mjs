@@ -1047,6 +1047,7 @@ check(
     "riding",
     "standing-down",
     "target-stored",
+    "tracks-unarmed",
   ],
 );
 
@@ -3476,6 +3477,101 @@ for (const name of Object.keys(SNAPSHOTS)) {
   );
   nodes.get("reaper-project").onclick();
   check("a tap expands the chip", nodes.get("reaper-project").dataset.expanded, "1");
+}
+
+// -- every track but Pilot armed to record (#167) --------------------------------
+
+{
+  const chip = browser().context.tracksChip;
+  const COST = "Arm them in Reaper: an unarmed track records nothing.";
+  const named = (...entries) => entries.map(([number, name]) => ({ number, name }));
+  const block = (status, extra = {}) => ({
+    status, reason: null, armed: null, tracks: null, unarmed: [], pilot_ambiguous: false,
+    channels: null, channels_differ: false, ...extra,
+  });
+  const unarmed = (list, extra = {}) => block("unarmed", { armed: 10, tracks: 14, unarmed: list, ...extra });
+  check("no block says nothing", [chip(undefined), chip(null)], [null, null]);
+  const table = [
+    ["no report", block("unknown", { reason: "no-report" }), ["note", "Track arming unknown."]],
+    ["stopped", block("unknown", { reason: "stopped" }), ["note", "Track arming unknown."]],
+    ["unreadable", block("unknown", { reason: "unreadable" }), ["note", "Track arming unknown."]],
+    ["not reported", block("unknown", { reason: "not-reported" }),
+      ["note", "Track arming unknown: the running Reaper script does not report it."]],
+    ["tracks unreadable", block("unknown", { reason: "tracks-unreadable" }),
+      ["note", "Track arming unknown: cannot read the tracks in the mirror's report."]],
+    ["no tracks", block("no-tracks", { armed: 0, tracks: 0 }), ["warn", "Reaper's project has no tracks."]],
+    ["one unarmed", unarmed(named([3, "MV Snare"])), ["warn", "Not armed to record: MV Snare (3). " + COST]],
+    ["two unarmed", unarmed(named([3, "MV Snare"], [12, "MV Horns 4"])),
+      ["warn", "Not armed to record: MV Snare (3), MV Horns 4 (12). " + COST]],
+    ["exactly three unarmed", unarmed(named([1, "A"], [2, "B"], [3, "C"])),
+      ["warn", "Not armed to record: A (1), B (2), C (3). " + COST]],
+    ["five unarmed", unarmed(named([1, "A"], [2, "B"], [3, "C"], [4, "D"], [5, "E"])),
+      ["warn", "Not armed to record: A (1), B (2), C (3) and 2 more. " + COST]],
+    ["thirty unarmed", unarmed(Array.from({ length: 30 }, (_, i) => ({ number: i + 1, name: "T" + (i + 1) }))),
+      ["warn", "Not armed to record: T1 (1), T2 (2), T3 (3) and 27 more. " + COST]],
+    ["unnamed", unarmed(named([5, ""])), ["warn", "Not armed to record: unnamed (5). " + COST]],
+    ["two Pilots", unarmed(named([3, "Pilot"], [4, "Pilot"]), { pilot_ambiguous: true }),
+      ["warn", "Not armed to record: Pilot (3), Pilot (4). " + COST
+        + " More than one track is named Pilot, so none is exempt."]],
+    ["unarmed, channels differ", unarmed(named([3, "MV Snare"]), { channels: 22, channels_differ: true }),
+      ["warn", "Not armed to record: MV Snare (3). " + COST]],
+    ["armed, channels differ", block("armed", { armed: 30, tracks: 31, channels: 22, channels_differ: true }),
+      ["note", "Tracks armed to record: 30, but capture.channels says 22: update tacet.toml."]],
+    ["armed, channels null", block("armed", { armed: 30, tracks: 31 }), ["ok", "Tracks armed to record: 30"]],
+    ["armed, channels equal", block("armed", { armed: 30, tracks: 31, channels: 30 }), ["ok", "Tracks armed to record: 30"]],
+  ];
+  for (const [label, found, want] of table) check("tracks chip: " + label, chip(found), want);
+
+  // The words the runbook quotes.
+  const context = browser().context;
+  const words = {
+    TRACKS_ARMED: "Tracks armed to record:",
+    TRACKS_UNARMED: "Not armed to record:",
+    TRACKS_UNARMED_COST: COST,
+    TRACKS_UNNAMED: "unnamed",
+    TRACKS_NONE: "Reaper's project has no tracks.",
+    TRACKS_PILOTS: "More than one track is named Pilot, so none is exempt.",
+    TRACKS_CHANNELS_DIFFER: "but capture.channels says",
+    TRACKS_CHANNELS_FIX: "update tacet.toml.",
+    TRACKS_UNKNOWN: "Track arming unknown",
+    TRACKS_NOT_REPORTED: "the running Reaper script does not report it.",
+    TRACKS_UNREADABLE: "cannot read the tracks in the mirror's report.",
+  };
+  for (const [name, want] of Object.entries(words)) check("the constant " + name + " is the one the runbook quotes", runInContext(name, context), want);
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  delete snap.reaper_tracks;
+  let error = null;
+  try {
+    context.render(snap);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no tracks block does not throw", error, null);
+  check("and shows no chip", nodes.get("reaper-tracks").className, "");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["tracks-unarmed"]));
+  check("the box's own unarmed snapshot is the warning", nodes.get("reaper-tracks").className, "warn");
+  check(
+    "and names the track",
+    nodes.get("reaper-tracks").textContent,
+    "Not armed to record: MV Snare (2). Arm them in Reaper: an unarmed track records nothing.",
+  );
+  nodes.get("reaper-tracks").onclick();
+  check("a tap expands the chip", nodes.get("reaper-tracks").dataset.expanded, "1");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["standing-down"]));
+  check("a box with no report reads as unknown", nodes.get("reaper-tracks").className, "note");
+  check("and says only that", nodes.get("reaper-tracks").textContent, "Track arming unknown.");
 }
 
 // -- swiping between MAIN and MORE (#156) ----------------------------------

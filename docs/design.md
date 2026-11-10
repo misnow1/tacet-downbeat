@@ -698,6 +698,8 @@ take is not. The chip is shown, not judged: the path is not compared with the
 box's capture path. The file is believed only after the box has watched it
 change, and the page says unknown, never saved, when it cannot tell.
 
+**Every track armed is a checked fact too (#167).** An unarmed track records nothing, and nothing recovers it. Reaper's stock OSC bank shows tracks 1-8 only, so the mirror script lists every track's number, arm state and name in the same report, and the box holds every track but the one named `Pilot` (the tone source, which records nothing) to being armed. Pilot is found by name, never by number or count, because the track list grows. The page shows the armed count and says when it differs from `capture.channels`, the disk check's input. It warns and never blocks, like the project chip.
+
 **Transport control is deliberately incomplete.** The UI arms and starts
 recording; it offers no stop. Each home game is a single irreplaceable sample,
 and a stop button does not belong on a screen being tapped by someone watching a

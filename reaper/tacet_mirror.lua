@@ -27,6 +27,10 @@
   replace the installed copy; after it does, run this script again from Reaper:
   toggling it off and on is the only thing that loads new code.
 
+  The report also lists every track's number, arm state and name (#167). This
+  script judges nothing: the box finds Pilot by its name and holds the rest to
+  being armed. It is how arm state beyond the 8-track OSC bank is seen.
+
   Install: put this in REAPER/Scripts, add it via Actions > Load ReaScript, and
   run it. It will ask for the queue path once and remember it.
 
@@ -51,6 +55,14 @@ local TEMP_SUFFIX    = ".tmp"
 local REPORT_SECONDS = 2
 local REPORT_VERSION = 1
 local CURRENT_PROJECT = -1
+-- CountTracks and GetTrack take a project index, where 0 is the current one.
+-- EnumProjects above takes -1 for the same thing.
+local CURRENT_PROJECT_INDEX = 0
+local KEY_TRACKS = "tracks"
+local KEY_TRACK  = "track"
+-- Never tostring the float Reaper returns: Lua 5.4 prints 1.0 as "1.0".
+local ARM_ON  = "1"
+local ARM_OFF = "0"
 -- FNV-1a, 32 bit: the same function as tacet.mirror_report.source_checksum, and
 -- tests/test_script_check.py holds the two equal.
 local SCRIPT_FILE     = "tacet_mirror.lua"
@@ -286,9 +298,27 @@ local function one_line(value)
   return (tostring(value):gsub("[\r\n]", ""))
 end
 
+-- The count, then one `track` pair per track in order: number, arm state and the
+-- raw name, tab-separated with the name last so a tab inside it survives. The
+-- name comes from P_NAME, because GetTrackName answers "Track N" for an unnamed
+-- track. Nothing here is judged; see tacet.arming.
+local function track_fields()
+  local count = reaper.CountTracks(CURRENT_PROJECT_INDEX)
+  local pairs_out = { { KEY_TRACKS, count } }
+  for index = 0, count - 1 do
+    local track = reaper.GetTrack(CURRENT_PROJECT_INDEX, index)
+    local armed = reaper.GetMediaTrackInfo_Value(track, "I_RECARM") ~= 0
+    local _, name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
+    local value = (index + 1) .. DELIMITER .. (armed and ARM_ON or ARM_OFF) .. DELIMITER .. one_line(name or "")
+    pairs_out[#pairs_out + 1] = { KEY_TRACK, value }
+  end
+  return pairs_out
+end
+
 -- Ordered key/value pairs. The one place a later field is added; `version`
 -- changes only for a breaking change to the format. An empty `project` means
 -- unsaved. No project at all leaves the key out, which the box reads as unknown.
+-- A failing track function costs only the track lines (#167).
 local function report_fields()
   local fields = {
     { "version", REPORT_VERSION },
@@ -300,6 +330,10 @@ local function report_fields()
   end
   fields[#fields + 1] = { "record_path", reaper.GetProjectPath("") }
   fields[#fields + 1] = { "script_checksum", script_checksum }
+  local ok, extra = pcall(track_fields)
+  if ok then
+    for _, pair in ipairs(extra) do fields[#fields + 1] = pair end
+  end
   return fields
 end
 
