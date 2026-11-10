@@ -16,6 +16,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN = FIXTURES / "report-v1.report"
 #: The same report from a script that also says what it is (#223).
 GOLDEN_CHECKSUM = FIXTURES / "report-v1-checksum.report"
+#: The same again with every track's arm state and name (#167).
+GOLDEN_TRACKS = FIXTURES / "report-v1-tracks.report"
 #: Every byte value once; the Lua side hashes the same file (see test_script_check).
 CHECKSUM_INPUT = FIXTURES / "script-checksum-input.bin"
 CHECKSUM_OF_INPUT = "90a458c5"
@@ -229,6 +231,59 @@ class TestWhatTheBoxBelieves(unittest.TestCase):
 
     def test_an_unreadable_first_read_is_unreadable(self):
         self.assertEqual(self.check(witnessed(mr.Unreadable("x")), 0.0).reason, mr.Reason.UNREADABLE)
+
+
+class TestTheTracksGolden(unittest.TestCase):
+    def test_it_parses_as_version_one_and_keeps_every_track_pair_in_order(self):
+        parsed = mr.parse_report(GOLDEN_TRACKS.read_text(encoding="utf-8"))
+        self.assertEqual(parsed.version, 1)
+        self.assertEqual(parsed.script_checksum, CHECKSUM_OF_INPUT)
+        tail = parsed.fields[parsed.fields.index((mr.KEY_SCRIPT_CHECKSUM, CHECKSUM_OF_INPUT)) + 1 :]
+        self.assertEqual(
+            tail,
+            (
+                ("tracks", "4"),
+                ("track", "1\t1\tMV Conductor"),
+                ("track", "2\t0\tMV Spare"),
+                ("track", "3\t1\tPilot Reference"),
+                ("track", "4\t0\tPilot"),
+            ),
+        )
+
+
+class TestFreshness(unittest.TestCase):
+    """What every reader of the report shares: whether to believe it at all."""
+
+    def cases(self) -> dict[str, tuple[mr.Observed, float]]:
+        return {
+            "no read": (mr.Observed.empty(), 0.0),
+            "baseline": (witnessed(report(1)), 0.0),
+            "unreadable": (witnessed(mr.Unreadable("x")), 0.0),
+            "stale": (witnessed(report(1), report(2), start=0.0), 1.0 + mr.STALE_SECONDS),
+            "fresh": (witnessed(report(1), report(2), start=0.0), 1.0),
+        }
+
+    def test_each_case_gives_its_reason(self):
+        want = {
+            "no read": mr.Reason.NO_REPORT,
+            "baseline": mr.Reason.NO_REPORT,
+            "unreadable": mr.Reason.UNREADABLE,
+            "stale": mr.Reason.STOPPED,
+            "fresh": None,
+        }
+        for name, (observed, now) in self.cases().items():
+            with self.subTest(name):
+                self.assertEqual(mr.freshness(observed, now), want[name])
+
+    def test_assess_agrees_with_it(self):
+        for name, (observed, now) in self.cases().items():
+            with self.subTest(name):
+                reason = mr.freshness(observed, now)
+                got = mr.assess(observed, now, HOME)
+                if reason is None:
+                    self.assertNotEqual(got.status, mr.Status.UNKNOWN)
+                else:
+                    self.assertEqual((got.status, got.reason), (mr.Status.UNKNOWN, reason))
 
 
 class TestTheSnapshot(unittest.TestCase):

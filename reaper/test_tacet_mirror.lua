@@ -40,12 +40,23 @@ local function named_copy_of(path)
   return named_script(bytes)
 end
 
-local markers, console, ext, deferred, now, playpos, project_file, project_dir, action_script
+local markers, console, ext, deferred, now, playpos, project_file, project_dir, action_script, tracks
+
+--- Floats on purpose: Reaper's arm state is a float, and Lua 5.4 prints 1.0 as "1.0".
+local function default_tracks()
+  return {
+    { name = "MV Conductor", arm = 1.0 },
+    { name = "MV Spare", arm = 0.0 },
+    { name = "Pilot Reference", arm = 1.0 },
+    { name = "Pilot", arm = 0.0 },
+  }
+end
 
 local function reset()
   markers, console, ext = {}, {}, {}
   deferred, now, playpos = nil, 0, 0
   action_script = nil
+  tracks = default_tracks()
   project_file, project_dir = "/Users/x/Reaper Media/20261114 X/20261114 X.RPP", "/Users/x/Reaper Media/20261114 X/Media"
 end
 
@@ -65,6 +76,17 @@ reaper = {
   time_precise = function() return now end,
   EnumProjects = function() if project_file == nil then return nil end return {}, project_file end,
   GetProjectPath = function() return project_dir end,
+  CountTracks = function() return #tracks end,
+  GetTrack = function(_, index) return tracks[index + 1] end,
+  GetMediaTrackInfo_Value = function(track, key)
+    assert(key == "I_RECARM", "unexpected track info " .. tostring(key))
+    return track.arm
+  end,
+  -- GetTrackName is deliberately absent: it answers "Track N" for an unnamed track.
+  GetSetMediaTrackInfo_String = function(track, key, _, set)
+    assert(key == "P_NAME" and not set, "only reads the name")
+    return true, track.name
+  end,
   AddProjectMarker2 = function(_, isrgn, pos, rgnend, name)
     markers[#markers + 1] = { isrgn = isrgn, pos = pos, rgnend = rgnend, name = name }
     return #markers
@@ -378,7 +400,7 @@ local function test_the_report_matches_the_golden_file()
   start_empty(path)
   local text = report_of(path)
   check(text ~= nil, "a report is written at start")
-  local golden = read(FIXTURES .. "report-v1-checksum.report")
+  local golden = read(FIXTURES .. "report-v1-tracks.report")
   -- seq is the one field that moves; the golden file pins the rest.
   equal(text and text:gsub("seq\t%d+", "seq\t42"), golden, "bytes equal the golden file")
   os.remove(path)
@@ -415,7 +437,7 @@ local function test_seq_rises_and_the_file_is_replaced()
   local second = seq_of(report_of(path))
   check(second > first, "seq rises")
   local _, lines = report_of(path):gsub("\n", "")
-  equal(lines, 5, "replaced, not appended")
+  equal(lines, 6 + #tracks, "replaced, not appended")
   os.remove(path)
 end
 
@@ -531,13 +553,141 @@ local function checksum_of(text)
   return text:match("script_checksum\t([^\n]*)\n")
 end
 
-local function test_the_checksum_is_the_last_field_and_matches_the_input()
+local function test_the_checksum_follows_record_path_and_matches_the_input()
   local path = os.tmpname()
   start_empty(path)
   local text = report_of(path)
   equal(checksum_of(text), CHECKSUM_OF_INPUT, "checksum of the script's own file")
   check(text:match("record_path\t[^\n]*\nscript_checksum\t") ~= nil, "after record_path")
   check(text:match("version\t1\n") ~= nil, "the format version is still 1")
+  os.remove(path)
+end
+
+-- --------------------------------------------------------------------------
+-- every track's arm state (#167)
+-- --------------------------------------------------------------------------
+
+local function track_lines_of(text)
+  local lines = {}
+  for line in text:gmatch("track\t([^\n]*)\n") do lines[#lines + 1] = line end
+  return lines
+end
+
+local function test_tracks_follow_the_checksum_in_track_order()
+  local path = os.tmpname()
+  start_empty(path)
+  local text = report_of(path)
+  local count = tonumber(text:match("\ntracks\t(%d+)\n"))
+  equal(count, #tracks, "the count is the number of tracks")
+  local lines = track_lines_of(text)
+  equal(#lines, count, "one line per track")
+  for index, line in ipairs(lines) do
+    equal(tonumber(line:match("^(%d+)\t")), index, "track number " .. index)
+  end
+  check(text:find("script_checksum\t[^\n]*\ntracks\t", 1) ~= nil, "tracks come after script_checksum")
+  os.remove(path)
+end
+
+local function test_arm_is_written_as_0_or_1_not_a_float()
+  local path = os.tmpname()
+  start_empty(path)
+  local text = report_of(path)
+  check(text:find("1.0", 1, true) == nil, "no float in the report")
+  check(text:find("track\t1\t1\tMV Conductor\n", 1, true) ~= nil, "armed is 1")
+  check(text:find("track\t2\t0\tMV Spare\n", 1, true) ~= nil, "unarmed is 0")
+  os.remove(path)
+end
+
+local function test_an_unnamed_track_writes_an_empty_name()
+  local path = os.tmpname()
+  start_empty(path)
+  tracks = { { name = "A", arm = 1.0 }, { name = "B", arm = 1.0 }, { name = "", arm = 1.0 } }
+  now = now + 10
+  tick()
+  check(report_of(path):find("track\t3\t1\t\n", 1, true) ~= nil, "empty name, trailing tab kept")
+  os.remove(path)
+end
+
+local function test_newlines_in_a_name_are_stripped_and_a_tab_is_kept()
+  local path = os.tmpname()
+  start_empty(path)
+  tracks = { { name = "Horns\r\n 4\tB", arm = 1.0 } }
+  now = now + 10
+  tick()
+  check(report_of(path):find("track\t1\t1\tHorns 4\tB\n", 1, true) ~= nil, "one line, tab kept")
+  os.remove(path)
+end
+
+local function test_no_tracks_writes_a_zero_count_and_no_track_lines()
+  local path = os.tmpname()
+  start_empty(path)
+  tracks = {}
+  now = now + 10
+  tick()
+  local text = report_of(path)
+  check(text:find("\ntracks\t0\n", 1, true) ~= nil, "a zero count")
+  equal(#track_lines_of(text), 0, "no track lines")
+  os.remove(path)
+end
+
+local function test_arm_state_is_read_fresh_every_report()
+  local path = os.tmpname()
+  start_empty(path)
+  check(report_of(path):find("track\t2\t0\tMV Spare\n", 1, true) ~= nil, "unarmed at first")
+  tracks[2].arm = 1.0
+  now = now + 10
+  tick()
+  check(report_of(path):find("track\t2\t1\tMV Spare\n", 1, true) ~= nil, "armed on the next report")
+  os.remove(path)
+end
+
+local function test_a_missing_or_raising_track_api_still_reports_the_project()
+  local broken = {
+    { "CountTracks", function() return nil end },
+    { "GetMediaTrackInfo_Value", function() error("boom") end },
+  }
+  for _, case in ipairs(broken) do
+    local path = os.tmpname()
+    start_empty(path)
+    local real = reaper[case[1]]
+    local said = #console
+    reaper[case[1]] = case[2]
+    now = now + 10
+    tick()
+    reaper[case[1]] = real
+    local text = report_of(path)
+    local label = case[1]
+    check(text:find("project\t", 1, true) ~= nil, label .. ": project still reported")
+    check(text:find("record_path\t", 1, true) ~= nil, label .. ": record_path still reported")
+    check(text:find("script_checksum\t", 1, true) ~= nil, label .. ": checksum still reported")
+    check(text:find("tracks", 1, true) == nil, label .. ": no tracks key")
+    equal(#console, said, label .. ": prints nothing")
+    append(path, "NOTE|note\t-\t-\n")
+    now = now + 1
+    tick()
+    equal(#markers, 1, label .. ": the queue still mirrors")
+    os.remove(path)
+  end
+end
+
+local function test_a_float_count_is_still_written_as_an_integer()
+  local path = os.tmpname()
+  start_empty(path)
+  reaper.CountTracks = function() return 4.0 end
+  now = now + 10
+  tick()
+  local text = report_of(path)
+  check(text:find("\ntracks\t4\n", 1, true) ~= nil, "count has no .0")
+  check(text:find("track\t1\t1\tMV Conductor\n", 1, true) ~= nil, "numbers have no .0")
+  check(text:find("%.0") == nil, "no float anywhere")
+  reaper.CountTracks = function() return #tracks end
+  os.remove(path)
+end
+
+local function test_pilot_is_reported_like_any_other_track()
+  local path = os.tmpname()
+  start_empty(path)
+  check(report_of(path):find("track\t4\t0\tPilot\n", 1, true) ~= nil, "Pilot is a plain track line")
   os.remove(path)
 end
 
@@ -635,7 +785,16 @@ local tests = {
   test_a_failed_write_does_not_replace_the_report,
   test_the_report_prints_nothing_and_mirroring_stays_last,
   test_newlines_in_values_are_stripped,
-  test_the_checksum_is_the_last_field_and_matches_the_input,
+  test_the_checksum_follows_record_path_and_matches_the_input,
+  test_tracks_follow_the_checksum_in_track_order,
+  test_arm_is_written_as_0_or_1_not_a_float,
+  test_an_unnamed_track_writes_an_empty_name,
+  test_newlines_in_a_name_are_stripped_and_a_tab_is_kept,
+  test_no_tracks_writes_a_zero_count_and_no_track_lines,
+  test_arm_state_is_read_fresh_every_report,
+  test_a_missing_or_raising_track_api_still_reports_the_project,
+  test_a_float_count_is_still_written_as_an_integer,
+  test_pilot_is_reported_like_any_other_track,
   test_the_published_vectors_through_the_report,
   test_the_script_is_read_once_at_start,
   test_a_script_not_launched_as_itself_reports_empty,

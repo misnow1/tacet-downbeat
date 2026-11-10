@@ -43,6 +43,10 @@ terminal asks `Replace the Reaper script? [y/N]`. Warn only: no terminal,
 `--check`, a restart of an existing log or any failure is a row and the box
 carries on. Ctrl-C at the question stops the box and changes nothing.
 
+The page's tracks chip (#167) holds every track but the one named `Pilot` to
+being armed to record, from the same report, and says when the armed count
+differs from `capture.channels`. Warn only, and nothing is logged.
+
 The box refuses to start without room for a whole game's recording (#53): set
 `capture.audio_path` and `capture.channels`, or pass `--no-disk-check`. See
 `tacet.disk`.
@@ -256,6 +260,9 @@ def build(
         target_levels=levels,
         provenance=code,
         expected_script=expected_script,
+        # The tracks chip compares Reaper's armed count with it (#167), whatever
+        # --no-disk-check says: the chip is a check of its own.
+        channels=args.channels,
     )
     # The run's first entry, before anything is served (#157), and straight
     # after it what the startup ping found (#73). `console_checked` stores it

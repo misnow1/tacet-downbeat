@@ -54,7 +54,8 @@ queue = "~/Library/Application Support/REAPER/tacet/queue.tsv"
 # what an unmounted share looks like. --no-disk-check (a flag, never a key)
 # starts it anyway.
 audio_path = "/Volumes/band"  # --audio-path
-# Tracks this game records. Changes with the patch list, so check it each game.
+# Tracks this game records. Changes with the patch list, so check it each game;
+# the page's tracks chip says when Reaper disagrees.
 channels = 22               # --channels
 game_hours = 5.0            # --game-hours
 

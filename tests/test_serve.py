@@ -1332,6 +1332,18 @@ class TestTheScriptQuestionAtStartup(TestCheckAnswersWithoutStarting):
             self.start(self.good())
         self.assertEqual(run.call_args.kwargs["expected_script"], SCRIPT_SUM)
 
+    def test_build_hands_capture_channels_to_the_tracks_chip(self):
+        argv = ["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)]
+        app, log, _ = serve.build(serve.parser().parse_args([*argv, "--channels", "30"]), CLEAN_CODE)
+        log.close()
+        self.assertEqual(app.snapshot()["reaper_tracks"]["channels"], 30)
+
+    def test_without_channels_the_tracks_chip_has_none(self):
+        argv = ["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)]
+        app, log, _ = serve.build(serve.parser().parse_args(argv), CLEAN_CODE)
+        log.close()
+        self.assertIsNone(app.snapshot()["reaper_tracks"]["channels"])
+
     def test_build_hands_it_to_the_app(self):
         argv = ["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)]
         app, log, _ = serve.build(serve.parser().parse_args(argv), CLEAN_CODE, expected_script=SCRIPT_SUM)

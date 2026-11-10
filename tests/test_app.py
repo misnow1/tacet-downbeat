@@ -179,6 +179,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         console_check=None,
         home="/Users/x",
         expected_script=None,
+        channels=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -220,6 +221,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             console_check=console_check,
             home=home,
             expected_script=expected_script,
+            channels=channels,
         )
 
     #: The operator's whole cycle, from a cold boot (#107): every move the page asks for.
@@ -1795,6 +1797,110 @@ class TestTheReaperProjectChip(AppTestCase):
         app.report_observed(self.seen(self.good(1), self.good(2)))
         app.report_stopped("boom")
         self.assertEqual(app.snapshot()["reaper_project"]["reason"], "unreadable")
+
+
+class TestTheReaperTracksChip(AppTestCase):
+    """#167: whether every track but Pilot is armed to record, from the same report."""
+
+    def setUp(self):
+        super().setUp()
+        self.clock = [1000.0]
+        self.notified = 0
+
+    def make(self, **options):
+        app = self.build(monotonic=lambda: self.clock[0], **options)
+        app.on_change(self.bump)
+        return app
+
+    def bump(self):
+        self.notified += 1
+
+    def seen(self, *reads):
+        observed = None
+        for read in reads:
+            observed = mr.observe(observed, read, self.clock[0])
+            self.clock[0] += 1.0
+        return observed
+
+    def report(self, seq, *specs, project="/p.RPP"):
+        pairs = [("version", "1"), ("seq", str(seq)), ("project", project), ("record_path", "/m")]
+        pairs.append(("tracks", str(len(specs))))
+        for number, (armed, name) in enumerate(specs, start=1):
+            pairs.append(("track", f"{number}\t{int(armed)}\t{name}"))
+        return mr.Report(1, seq, project, "/m", tuple(pairs))
+
+    SPECS = ((True, "MV Conductor"), (False, "MV Snare"), (True, "Pilot"))
+
+    async def test_with_no_report_it_says_so(self):
+        got = self.make().snapshot()["reaper_tracks"]
+        self.assertEqual((got["status"], got["reason"]), ("unknown", "no-report"))
+
+    async def test_a_witnessed_unarmed_report_lists_the_unarmed(self):
+        app = self.make()
+        app.report_observed(self.seen(self.report(1, *self.SPECS), self.report(2, *self.SPECS)))
+        got = app.snapshot()["reaper_tracks"]
+        self.assertEqual(got["status"], "unarmed")
+        self.assertEqual(got["unarmed"], [{"number": 2, "name": "MV Snare"}])
+
+    async def test_it_notifies_when_arming_changes_and_not_for_a_new_seq(self):
+        app = self.make()
+        observed = self.seen(self.report(1, *self.SPECS))
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 0, "a baseline read changes nothing")
+        observed = mr.observe(observed, self.report(2, *self.SPECS), self.clock[0])
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 1)
+        observed = mr.observe(observed, self.report(3, *self.SPECS), self.clock[0])
+        app.report_observed(observed)
+        self.assertEqual(self.notified, 1, "a new seq alone is not news")
+        armed = ((True, "MV Conductor"), (True, "MV Snare"), (True, "Pilot"))
+        app.report_observed(mr.observe(observed, self.report(4, *armed), self.clock[0]))
+        self.assertEqual(self.notified, 2)
+        self.assertEqual(app.snapshot()["reaper_tracks"]["status"], "armed")
+
+    async def test_a_change_to_both_chips_notifies_once(self):
+        app = self.make()
+        observed = self.seen(self.report(1, *self.SPECS), self.report(2, *self.SPECS))
+        app.report_observed(observed)
+        before = self.notified
+        moved = mr.observe(observed, self.report(3, (True, "A"), project=""), self.clock[0])
+        app.report_observed(moved)
+        self.assertEqual(self.notified, before + 1)
+
+    async def test_it_goes_stale_with_no_new_read(self):
+        app = self.make()
+        app.report_observed(self.seen(self.report(1, *self.SPECS), self.report(2, *self.SPECS)))
+        self.assertEqual(app.snapshot()["reaper_tracks"]["status"], "unarmed")
+        self.clock[0] += mr.STALE_SECONDS
+        got = app.snapshot()["reaper_tracks"]
+        self.assertEqual((got["status"], got["reason"]), ("unknown", "stopped"))
+
+    async def test_capture_channels_reaches_the_snapshot(self):
+        armed = tuple((True, f"T{i}") for i in range(30))
+        app = self.make(channels=22)
+        app.report_observed(self.seen(self.report(1, *armed), self.report(2, *armed)))
+        got = app.snapshot()["reaper_tracks"]
+        self.assertEqual((got["armed"], got["channels"], got["channels_differ"]), (30, 22, True))
+
+    async def test_it_does_not_log(self):
+        app = self.make()
+        before = len(self.entries())
+        app.report_observed(self.seen(self.report(1, *self.SPECS), self.report(2, *self.SPECS)))
+        self.assertEqual(len(self.entries()), before)
+
+    async def test_a_dead_watch_is_reported(self):
+        app = self.make()
+        app.report_observed(self.seen(self.report(1, *self.SPECS), self.report(2, *self.SPECS)))
+        app.report_stopped("boom")
+        self.assertEqual(app.snapshot()["reaper_tracks"]["reason"], "unreadable")
+
+    async def test_the_project_chip_notifies_as_before(self):
+        app = self.make()
+        observed = self.seen(self.report(1, *self.SPECS))
+        app.report_observed(observed)
+        app.report_observed(mr.observe(observed, self.report(2, *self.SPECS), self.clock[0]))
+        self.assertEqual(self.notified, 1)
+        self.assertEqual(app.snapshot()["reaper_project"]["status"], "saved")
 
 
 if __name__ == "__main__":

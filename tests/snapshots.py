@@ -47,6 +47,9 @@ CURVES_PATH = FIXTURES / "move-curves.json"
 LOG_DIR = "/games"
 #: What `~` stands for in a fixture, so it never depends on the machine.
 HOME = "/Users/x"
+#: A saved project and the media folder beside it (#167).
+SAVED_PROJECT = "/Users/x/Reaper Media/20261114 X/20261114 X.RPP"
+SAVED_MEDIA = "/Users/x/Reaper Media/20261114 X/Media"
 #: Where Reaper records when its project was never saved (#204).
 DEFAULT_MEDIA = "/Users/x/Documents/REAPER Media"
 #: Where the injected clock starts. Arbitrary; far from zero like a real one.
@@ -119,6 +122,7 @@ def _build(
     machine: Machine | None = None,
     code: provenance.Provenance = CLEAN,
     console_check: reach.Check = ANSWERED,
+    channels: int | None = None,
 ) -> Box:
     clock = [CLOCK_START]
 
@@ -141,6 +145,7 @@ def _build(
         provenance=code,
         console_check=console_check,
         home=HOME,
+        channels=channels,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
@@ -197,6 +202,27 @@ async def project_unsaved(root: Path) -> dict[str, Any]:
     for seq in (1, 2):
         text = f"version\t1\nseq\t{seq}\nproject\t\nrecord_path\t{DEFAULT_MEDIA}\n"
         observed = mirror_report.observe(observed, mirror_report.parse_report(text), box.clock[0])
+    assert observed is not None
+    box.app.report_observed(observed)
+    return box.app.snapshot()
+
+
+#: Four tracks: two armed, MV Snare not, and Pilot (exempt) not. Pilot Reference is a track of its own.
+TRACK_LINES = (
+    "tracks\t4\ntrack\t1\t1\tMV Conductor\ntrack\t2\t0\tMV Snare\ntrack\t3\t1\tPilot Reference\ntrack\t4\t0\tPilot\n"
+)
+#: What `capture.channels` says in the tracks-unarmed fixture.
+TRACKS_CHANNELS = 3
+
+
+async def tracks_unarmed(root: Path) -> dict[str, Any]:
+    """The mirror reports a saved project with one track not armed to record
+    (#167). Two reads with different seqs, as for the project chip."""
+    box = _build(root, console=_Sender(), machine=_known(), channels=TRACKS_CHANNELS)
+    observed: mirror_report.Observed | None = None
+    for seq in (1, 2):
+        head = f"version\t1\nseq\t{seq}\nproject\t{SAVED_PROJECT}\nrecord_path\t{SAVED_MEDIA}\n"
+        observed = mirror_report.observe(observed, mirror_report.parse_report(head + TRACK_LINES), box.clock[0])
     assert observed is not None
     box.app.report_observed(observed)
     return box.app.snapshot()
@@ -304,6 +330,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "open-recording": open_recording,
     "parked-unreported": parked_unreported,
     "project-unsaved": project_unsaved,
+    "tracks-unarmed": tracks_unarmed,
     "releasing": releasing,
     "riding": riding,
     "target-stored": target_stored,

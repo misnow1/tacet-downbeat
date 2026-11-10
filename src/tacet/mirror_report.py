@@ -16,6 +16,9 @@ The file, version 1:
     project<TAB>/Users/x/Reaper Media/20261114 X/20261114 X.RPP
     record_path<TAB>/Users/x/Reaper Media/20261114 X/Media
     script_checksum<TAB>0badf00d
+    tracks<TAB>4
+    track<TAB>1<TAB>1<TAB>MV Conductor
+    track<TAB>2<TAB>0<TAB>MV Spare
 
 An empty `project` is the only thing that means unsaved. A missing `project`
 key means the mirror could not say, which is unknown. Unknown keys are ignored
@@ -27,6 +30,10 @@ eight lowercase hex digits, read once when the script starts. The box compares
 it with the checkout's copy: a different value, or no key at all (a script from
 before this field), means Reaper is still running older code than the file on
 disk. An empty value means the script could not read itself, which says nothing.
+
+`track` (#167) repeats, once per track: number, arm state and raw name. `fields`
+keeps every pair in order, and `tacet.arming` reads them; this module only
+keeps them.
 
 Freshness has no clock in it. A report counts only if this run of the box saw
 its `seq` change: the first read is a baseline, so last game's file left on disk
@@ -243,18 +250,28 @@ def observe(prior: Observed | None, read: Read, now: float) -> Observed:
     return Observed(read.seq, read, changed_at, unreadable=False)
 
 
+def freshness(observed: Observed, now: float) -> Reason | None:
+    """Why the report is not to be believed at `now`, or None if it is. Pure.
+
+    Shared by every reader of the report, so they all agree on what unknown means."""
+    if observed.unreadable:
+        return Reason.UNREADABLE
+    if observed.report is None or observed.changed_at is None:
+        return Reason.NO_REPORT
+    if now - observed.changed_at >= STALE_SECONDS:
+        return Reason.STOPPED
+    return None
+
+
 def assess(observed: Observed, now: float, home: str, *, expected_script: str | None = None) -> ProjectCheck:
     """What the box may say about the project at `now`. Pure.
 
     `expected_script` is the checksum of the checkout's copy of the script, or
     None when the box could not read it."""
-    if observed.unreadable:
-        return _unknown(Reason.UNREADABLE, home)
+    stale = freshness(observed, now)
     report = observed.report
-    if report is None or observed.changed_at is None:
-        return _unknown(Reason.NO_REPORT, home)
-    if now - observed.changed_at >= STALE_SECONDS:
-        return _unknown(Reason.STOPPED, home)
+    if stale is not None or report is None:
+        return _unknown(stale or Reason.NO_REPORT, home)
     if report.project is None:
         return _unknown(Reason.UNREADABLE, home)
     record_path = report.record_path or None
