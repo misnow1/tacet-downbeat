@@ -662,6 +662,14 @@ _DESCRIPTIONS = {
 }
 
 
+#: Added to the why line after an operator open armed the box; quoted in
+#: docs/troubleshooting.md (#48).
+WHY_ARMED_BY_OPERATOR = "Armed by that: the box was standing down."
+#: Added to the why line while a fader move has not finished; quoted in
+#: docs/troubleshooting.md (#48).
+WHY_STALLED = "The last fader move did not finish; tap it again to retry."
+
+
 def describe(machine: Machine) -> str:
     """The plain-language why line for the UI (design.md 5.5)."""
     text = _DESCRIPTIONS[machine.state]
@@ -673,9 +681,9 @@ def describe(machine: Machine) -> str:
             " asked for, never what the console did with it; close it now, or open, to say where it is."
         )
     if machine.armed_by_operator:
-        text += " Armed by that: the box was standing down."
+        text += " " + WHY_ARMED_BY_OPERATOR
     if machine.stalled:
-        text += " The last fader move did not finish; tap it again to retry."
+        text += " " + WHY_STALLED
     if machine.pending_stand_down:
         text += " Standing down once the fade lands."
     if machine.allow_detector:

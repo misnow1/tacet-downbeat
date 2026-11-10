@@ -284,10 +284,13 @@ The tracks chip, in the strip, counts the tracks Reaper has armed to record and
 names any but `Pilot` that is not. It is present in every state; see
 [troubleshooting.md](troubleshooting.md#the-page).
 
-`no feedback` on the recording line before recording is correct, not a fault.
-Reaper says nothing at all while its transport is parked, and announces the
-record state only when it changes, so the box has genuinely not been told
-anything yet.
+`no feedback` on the recording line means the box has heard nothing from Reaper:
+Reaper is not open, its audio device is off, or its OSC device is not sending to
+the box. Start recording is grey, and the line under the Recording panel says
+why. A parked Reaper that is open with its audio device running is heard (its
+meters stream) and answers the box's question about its transport (#172), so
+before the take the line should read `stopped`, tagged **confirmed**: see
+gameday.md's Pre-flight.
 
 **The counter beside the state is the one thing that says the page is
 alive.** It reads seconds since the box last said anything, so it climbs to

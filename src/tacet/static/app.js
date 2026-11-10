@@ -248,6 +248,9 @@ function renderMainTab(buttons) {
   }
 }
 
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const EARLIER_RUN_HEADING = "OPEN FROM AN EARLIER RUN";
+
 function renderMoreTab(buttons, orphans) {
   const rest = buttons.filter((item) => !PLACED_ELSEWHERE.has(item.key));
   const byCategory = {};
@@ -262,7 +265,7 @@ function renderMoreTab(buttons, orphans) {
   }
   if (!orphans.length) return;
   const heading = document.createElement("h2");
-  heading.textContent = "OPEN FROM AN EARLIER RUN";
+  heading.textContent = EARLIER_RUN_HEADING;
   host.appendChild(heading);
   const grid = document.createElement("div");
   grid.className = "grid";
@@ -338,11 +341,15 @@ function renderButtons(buttons, orphans) {
 const NOT_MOVED = "The fader did not move.";
 // No `closed` entry: the box never sends one, because a tap while the fader is
 // closed has no note (#153).
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const STORED_RELEASING = "The fade carries on to -inf.";
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const STORED_UNKNOWN = "The fader did not move: the box does not know where it is.";
 const STORED_COPY = {
   open: NOT_MOVED,
   ready: NOT_MOVED,
-  releasing: "The fade carries on to -inf.",
-  unknown: "The fader did not move: the box does not know where it is.",
+  releasing: STORED_RELEASING,
+  unknown: STORED_UNKNOWN,
 };
 // Reasons whose note wants attention, and whose chip says (next open).
 const STORED_ATTENTION = new Set(["open", "ready", "releasing", "unknown"]);
@@ -359,22 +366,32 @@ function targetBlocked(stateName, fader) {
   return !fader.level_known && RETARGET_RIDES.has(stateName);
 }
 
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const STORED_LEAD = "Stored:";
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const STORED_ALREADY = "Already the target:";
+
 // Pure: the note under the segments, `{text, attention}`. A reason this page
 // does not know (a newer box) reads as not-moved, which is true of every
 // store-only case and the safe side, as MOVE_TAG_FALLBACK is.
 function storedNote(stored) {
   if (!stored) return {text: "", attention: false};
   if (stored.because === "unchanged") {
-    return {text: "Already the target: " + String(stored.db) + " dB. Nothing changed.", attention: false};
+    return {text: STORED_ALREADY + " " + String(stored.db) + " dB. Nothing changed.", attention: false};
   }
   const copy = STORED_COPY[stored.because] || NOT_MOVED;
-  return {text: "Stored: " + String(stored.db) + " dB on the next open. " + copy, attention: true};
+  return {text: STORED_LEAD + " " + String(stored.db) + " dB on the next open. " + copy, attention: true};
 }
+
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const TARGET_CHIP_WORD = "target";
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const TARGET_NEXT_OPEN = "(next open)";
 
 // Pure: the chip's text. `nextOpenOnly` is true while a ride is heading
 // somewhere other than the standing target.
 function targetChipText(db, nextOpenOnly = false) {
-  return "target " + String(db) + " dB" + (nextOpenOnly ? " (next open)" : "");
+  return TARGET_CHIP_WORD + " " + String(db) + " dB" + (nextOpenOnly ? " " + TARGET_NEXT_OPEN : "");
 }
 
 // What the segments on screen were built from, compared before any rebuild for
@@ -812,10 +829,22 @@ function recordReason(rec) {
 // is under the readout (#172). Quoted in docs/troubleshooting.md.
 const RECORDER_ERROR_PREFIX = "Reaper unreachable: ";
 
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const RECORDING_LINK_LOST = "LINK LOST";
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const RECORDING_NO_FEEDBACK = "no feedback";
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const RECORDING_NOT_REPORTED = "not yet reported";
+// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+const RECORDING_ROLLING = "ROLLING";
+
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const FADER_SEND_FAILED = "Console unreachable: ";
+
 function recordingTag(liveness, known) {
-  if (liveness === "lost") return ["unknown", "LINK LOST"];
-  if (liveness === "unknown") return ["unknown", "no feedback"];
-  if (!known) return ["unknown", "not yet reported"];
+  if (liveness === "lost") return ["unknown", RECORDING_LINK_LOST];
+  if (liveness === "unknown") return ["unknown", RECORDING_NO_FEEDBACK];
+  if (!known) return ["unknown", RECORDING_NOT_REPORTED];
   return ["confirmed", liveness === "quiet" ? "confirmed (idle)" : "confirmed"];
 }
 
@@ -946,6 +975,13 @@ function tracksChip(t) {
   return ["ok", TRACKS_ARMED + " " + t.armed];
 }
 
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const SAVING_LOG_FAILED = "Log not saving: ";
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const SAVING_MIRROR_FAILED = "Reaper markers not updating: ";
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const SAVING_LOST_EARLIER = "not saved earlier";
+
 // Whether annotations are reaching the disk. A full disk leaves the fader
 // buttons working and nothing else on the page looking wrong, while every
 // annotation from then on is lost - the half nothing can recover afterwards
@@ -954,16 +990,16 @@ function tracksChip(t) {
 // which are rebuilt from it; a fault now outranks entries lost earlier.
 function savingBanner(log, mirror) {
   if (!log.healthy) {
-    return ["fault", "Log not saving: " + log.error
+    return ["fault", SAVING_LOG_FAILED + log.error
       + ". The fader buttons still work, but annotations are being lost."];
   }
   if (!mirror.healthy) {
-    return ["warn", "Reaper markers not updating: " + mirror.error
+    return ["warn", SAVING_MIRROR_FAILED + mirror.error
       + ". The log is still saving; markers can be rebuilt from it."];
   }
   if (log.failures > 0) {
     const entries = log.failures === 1 ? " log entry was" : " log entries were";
-    return ["note", log.failures + entries + " not saved earlier. Saving again now."];
+    return ["note", log.failures + entries + " " + SAVING_LOST_EARLIER + ". Saving again now."];
   }
   return null;
 }
@@ -1057,7 +1093,7 @@ function render(received) {
   const fader = next.fader;
   paintLevel();
   scheduleMoveFrame();
-  $("fader-error").textContent = fader.healthy ? "" : "Console unreachable: " + fader.error;
+  $("fader-error").textContent = fader.healthy ? "" : FADER_SEND_FAILED + fader.error;
   // Said once, in the column, rather than on each button: see RAMPING_ACTIONS.
   // Suppressed while a refusal is showing - that line says the same thing in
   // more words, and the readout gap has room for one of them, not both.
@@ -1092,7 +1128,7 @@ function render(received) {
 
   const rec = next.recording;
   const [recClass, recLabel] = recordingTag(rec.liveness, rec.known);
-  $("rec").textContent = !rec.known ? "unknown" : (rec.recording ? "ROLLING" : "stopped");
+  $("rec").textContent = !rec.known ? "unknown" : (rec.recording ? RECORDING_ROLLING : "stopped");
   const tag = $("rec-tag");
   tag.textContent = recLabel;
   tag.className = "tag " + recClass;
@@ -1422,6 +1458,15 @@ function secondsSince(stamp, at) {
 // delivered a frame has not proven anything yet.
 let link = {open: false, staleAfter: null, seen: null};
 
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const LINK_DOWN = "Not connected to the box";
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const LINK_CONNECTING = "Connecting to the box";
+// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+const LINK_SILENT = "No word from the box for";
+// #48: the tail on the link banner; its head words are what docs/troubleshooting.md quotes.
+const LINK_STALE = " \u2014 what you see may be stale";
+
 // An open socket does not prove a working link, and that is the failure that
 // matters in a stadium. Wifi degrades as the stands fill, TCP half-opens,
 // `onclose` never fires, and the page goes on showing a snapshot from six
@@ -1435,12 +1480,12 @@ let link = {open: false, staleAfter: null, seen: null};
 // keepalive that did not arrive is. Hence the threshold rather than a timer on
 // any silence at all.
 function linkBanner(open, silence, staleAfter) {
-  if (!open) return ["lost", "Not connected to the box \u2014 what you see may be stale"];
-  if (staleAfter === null) return ["connecting", "Connecting to the box"];
+  if (!open) return ["lost", LINK_DOWN + LINK_STALE];
+  if (staleAfter === null) return ["connecting", LINK_CONNECTING];
   if (silence >= staleAfter) {
     return ["stale",
-            "No word from the box for " + Math.round(silence)
-              + "s \u2014 what you see may be stale"];
+            LINK_SILENT + " " + Math.round(silence)
+              + "s" + LINK_STALE];
   }
   return null;
 }
