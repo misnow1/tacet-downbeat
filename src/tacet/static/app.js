@@ -248,7 +248,7 @@ function renderMainTab(buttons) {
   }
 }
 
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const EARLIER_RUN_HEADING = "OPEN FROM AN EARLIER RUN";
 
 function renderMoreTab(buttons, orphans) {
@@ -339,12 +339,12 @@ function renderButtons(buttons, orphans) {
 // The sentences under the segments when a tap stored and did not move (#153).
 // The box sends only the reason. ASCII only: `-inf`, not the infinity sign.
 const NOT_MOVED = "The fader did not move.";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const STORED_RELEASING = "The fade carries on to -inf.";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const STORED_UNKNOWN = "The fader did not move: the box does not know where it is.";
 // No `closed` entry: the box never sends one, because a tap while the fader is
 // closed has no note (#153).
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
-const STORED_RELEASING = "The fade carries on to -inf.";
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
-const STORED_UNKNOWN = "The fader did not move: the box does not know where it is.";
 const STORED_COPY = {
   open: NOT_MOVED,
   ready: NOT_MOVED,
@@ -366,9 +366,9 @@ function targetBlocked(stateName, fader) {
   return !fader.level_known && RETARGET_RIDES.has(stateName);
 }
 
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const STORED_LEAD = "Stored:";
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const STORED_ALREADY = "Already the target:";
 
 // Pure: the note under the segments, `{text, attention}`. A reason this page
@@ -383,9 +383,9 @@ function storedNote(stored) {
   return {text: STORED_LEAD + " " + String(stored.db) + " dB on the next open. " + copy, attention: true};
 }
 
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const TARGET_CHIP_WORD = "target";
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const TARGET_NEXT_OPEN = "(next open)";
 
 // Pure: the chip's text. `nextOpenOnly` is true while a ride is heading
@@ -829,16 +829,16 @@ function recordReason(rec) {
 // is under the readout (#172). Quoted in docs/troubleshooting.md.
 const RECORDER_ERROR_PREFIX = "Reaper unreachable: ";
 
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_LINK_LOST = "LINK LOST";
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_NO_FEEDBACK = "no feedback";
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_NOT_REPORTED = "not yet reported";
-// #48: quoted in docs/gameday.md and docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_ROLLING = "ROLLING";
 
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const FADER_SEND_FAILED = "Console unreachable: ";
 
 function recordingTag(liveness, known) {
@@ -975,11 +975,11 @@ function tracksChip(t) {
   return ["ok", TRACKS_ARMED + " " + t.armed];
 }
 
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const SAVING_LOG_FAILED = "Log not saving: ";
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const SAVING_MIRROR_FAILED = "Reaper markers not updating: ";
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const SAVING_LOST_EARLIER = "not saved earlier";
 
 // Whether annotations are reaching the disk. A full disk leaves the fader
@@ -1458,13 +1458,13 @@ function secondsSince(stamp, at) {
 // delivered a frame has not proven anything yet.
 let link = {open: false, staleAfter: null, seen: null};
 
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const LINK_DOWN = "Not connected to the box";
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const LINK_CONNECTING = "Connecting to the box";
-// #48: quoted in docs/troubleshooting.md; tests/test_runbook.py reads it.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const LINK_SILENT = "No word from the box for";
-// #48: the tail on the link banner; its head words are what docs/troubleshooting.md quotes.
+// #48: the tail on the link banner; the head words are quoted, see PAGE_QUOTES in tests/test_runbook.py.
 const LINK_STALE = " \u2014 what you see may be stale";
 
 // An open socket does not prove a working link, and that is the failure that

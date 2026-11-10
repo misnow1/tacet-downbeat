@@ -662,11 +662,11 @@ _DESCRIPTIONS = {
 }
 
 
-#: Added to the why line after an operator open armed the box; quoted in
-#: docs/troubleshooting.md (#48).
+#: Added to the why line after an operator open armed the box; quoted in the
+#: runbook (#48), BOX_QUOTES in tests/test_runbook.py says where.
 WHY_ARMED_BY_OPERATOR = "Armed by that: the box was standing down."
-#: Added to the why line while a fader move has not finished; quoted in
-#: docs/troubleshooting.md (#48).
+#: Added to the why line while a fader move has not finished; quoted in the
+#: runbook (#48), BOX_QUOTES in tests/test_runbook.py says where.
 WHY_STALLED = "The last fader move did not finish; tap it again to retry."
 
 

@@ -529,7 +529,7 @@ def _checklist(args: argparse.Namespace) -> list[str]:
     return lines
 
 
-#: Quoted in docs/troubleshooting.md (#48); tests/test_runbook.py reads it.
+#: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
 REUSED_LOG_WARNING = "this log already contains a recording"
 
 
@@ -636,7 +636,7 @@ def _ping_warning_lines(check: reach.Check | None) -> list[str]:
     ]
 
 
-#: Quoted in docs/troubleshooting.md (#48); tests/test_runbook.py reads it.
+#: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
 CLOCK_RESTARTED_WARNING = "the clock has restarted since this log was written"
 
 
@@ -680,7 +680,7 @@ def _open_span_lines(spans: list[AnnotationEntry]) -> list[str]:
     return lines
 
 
-#: Quoted in docs/troubleshooting.md (#48); tests/test_runbook.py reads it.
+#: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
 TORN_WRITE_WARNING = "ends in a torn write"
 
 

@@ -494,10 +494,10 @@ answer. A tap works in every state, even while the fader reads `unknown`, but
 `Greyed: a new target would ride from an unknown level. Close it now, or open,
 first.` under them: a ride from a level the box cannot vouch for would be a
 guess. A tap that still reaches the box stores the level, moves nothing, and
-the note ends `The fader did not move: the box does not know where it is.` An open button while
-open still does nothing. Otherwise, `(next open)` means a move in flight is heading somewhere
-other than the target: a ride that began before you changed it, or Ready's own
-ride to its hold level.
+the note ends `The fader did not move: the box does not know where it is.` An
+open button while open still does nothing. Otherwise, `(next open)` means a move
+in flight is heading somewhere other than the target: a ride that began before
+you changed it, or Ready's own ride to its hold level.
 
 **If the fader reads `unknown`** - at boot, or after you took it to StageMix -
 the box does not know where it really is. Nothing that ramps from a level can be
