@@ -529,6 +529,10 @@ def _checklist(args: argparse.Namespace) -> list[str]:
     return lines
 
 
+#: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
+REUSED_LOG_WARNING = "this log already contains a recording"
+
+
 def _prior_anchor_lines(prior: AnnotationEntry) -> list[str]:
     """The loud block for a log that already holds a recording.
 
@@ -543,7 +547,7 @@ def _prior_anchor_lines(prior: AnnotationEntry) -> list[str]:
     """
     return [
         _rule(),
-        _row("WARNING", "this log already contains a recording"),
+        _row("WARNING", REUSED_LOG_WARNING),
         _note(f"the earlier one started {prior.wall}"),
         _note("markers derived from this log anchor to THAT recording, so"),
         _note("today's entries would be placed wrong, and nothing downstream"),
@@ -632,6 +636,10 @@ def _ping_warning_lines(check: reach.Check | None) -> list[str]:
     ]
 
 
+#: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
+CLOCK_RESTARTED_WARNING = "the clock has restarted since this log was written"
+
+
 def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
     """The block for a log written before this machine's clock last restarted.
 
@@ -641,7 +649,7 @@ def _clock_reset_lines(last: AnnotationEntry) -> list[str]:
     """
     return [
         _rule(),
-        _row("WARNING", "the clock has restarted since this log was written"),
+        _row("WARNING", CLOCK_RESTARTED_WARNING),
         _note(f"its last entry was at {last.wall}; the machine has rebooted since"),
         _note("entries placed by arithmetic across the reboot will be wrong;"),
         _note("ones stamped with Reaper's playhead are not affected"),
@@ -672,6 +680,10 @@ def _open_span_lines(spans: list[AnnotationEntry]) -> list[str]:
     return lines
 
 
+#: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
+TORN_WRITE_WARNING = "ends in a torn write"
+
+
 def _torn_lines(name: str, path: Path | str, torn: TornTail, *, keeps_entries: bool) -> list[str]:
     """The block for a file whose last run ended mid-write.
 
@@ -681,7 +693,7 @@ def _torn_lines(name: str, path: Path | str, torn: TornTail, *, keeps_entries: b
     """
     lines = [
         _rule(),
-        _row("WARNING", f"{name} ends in a torn write ({len(torn.tail)} bytes)"),
+        _row("WARNING", f"{name} {TORN_WRITE_WARNING} ({len(torn.tail)} bytes)"),
         _note("the last run stopped mid-write: a crash, a kill, or a full disk"),
     ]
     if keeps_entries and torn.is_entry():

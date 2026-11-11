@@ -10,11 +10,17 @@ all.
 Both directions are asserted: every message below appears verbatim in the code
 and verbatim in the doc that explains it. Renaming one without the other fails
 here. So does a link between the docs that no longer lands anywhere.
+
+PAGE_QUOTES (the page's script) and BOX_QUOTES (the box's Python) are read out
+of their source and looked for in each doc that quotes them (#48). Every named
+string in app.js is quoted or says why not. Every line the mirror script logs is
+in troubleshooting.md. A new quoted message is one line in either registry.
 """
 
 import re
 import unittest
 from pathlib import Path
+from types import ModuleType
 
 from tacet import annotations, app, arming, config, disk, provenance, reach, reaper, script_check, serve, state, web
 
@@ -26,11 +32,12 @@ RUNBOOK = DOCS / "gameday.md"
 TROUBLESHOOTING = DOCS / "troubleshooting.md"
 BOX = DOCS / "box.md"
 REAPER = DOCS / "reaper.md"
+APP_JS = REPO_ROOT / "src" / "tacet" / "static" / "app.js"
 
-#: What the mirror script says at startup. Each of these decides whether the
-#: operator has to do anything, so each is documented (docs/troubleshooting.md,
-#: "The mirror console").
-STARTUP_MESSAGES = (
+#: Every line the mirror script logs, at startup and while running. Each of
+#: these decides whether the operator has to do anything, so each is documented
+#: (docs/troubleshooting.md, "The mirror console").
+MIRROR_MESSAGES = (
     "mirroring ",
     "queue does not exist yet; waiting for the box to create it",
     "no remembered position in a queue with history; starting at its end",
@@ -38,36 +45,244 @@ STARTUP_MESSAGES = (
     "no queue path given; not starting",
     "mirror stopped",
     "could not read this script to checksum it",
+    "ignoring malformed queue line (",
+    "no start for span ",
+    "error handling line: ",
+    "error polling queue: ",
 )
 
+#: Every `log("...` literal in the mirror script. It does not match the
+#: definition, `local function log(message)`.
+LUA_LOG = re.compile(r'\blog\("([^"]*)"')
 
-class StartupMessagesAreDocumented(unittest.TestCase):
+
+class MirrorMessagesAreDocumented(unittest.TestCase):
     def setUp(self) -> None:
         self.script = MIRROR_SCRIPT.read_text(encoding="utf-8")
         self.troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")
 
     def test_every_documented_message_is_one_the_script_emits(self) -> None:
-        for message in STARTUP_MESSAGES:
+        for message in MIRROR_MESSAGES:
             with self.subTest(message=message):
                 self.assertIn(f'log("{message}', self.script)
 
     def test_every_documented_message_appears_in_the_runbook(self) -> None:
-        for message in STARTUP_MESSAGES:
+        for message in MIRROR_MESSAGES:
             with self.subTest(message=message):
                 self.assertIn(message.strip(), self.troubleshooting)
 
-    def test_the_script_logs_nothing_at_startup_that_is_undocumented(self) -> None:
-        """Guards the gap the other two cannot: a new startup message that is
-        never added to the table."""
-        startup = self.script.split("local function main()")[1]
-        logged = [line.split('log("')[1].split('"')[0] for line in startup.splitlines() if 'log("' in line]
+    def test_the_script_logs_nothing_that_is_undocumented(self) -> None:
+        """Guards the gap the other two cannot: a new message, at startup or
+        later, that is never added to the table."""
+        logged = LUA_LOG.findall(self.script)
+        # Every call, plus the definition, so one that does not start with a
+        # string literal cannot slip past the scan above.
+        self.assertEqual(
+            len(re.findall(r"\blog\(", self.script)),
+            len(logged) + 1,
+            "every log call must start with a string literal so the runbook test can read it",
+        )
+        self.assertGreaterEqual(len(logged), len(MIRROR_MESSAGES))
         for message in logged:
             with self.subTest(message=message):
                 self.assertTrue(
-                    any(message.startswith(known) for known in STARTUP_MESSAGES),
-                    f"main() logs {message!r}, which is not in STARTUP_MESSAGES "
+                    any(message.startswith(known) for known in MIRROR_MESSAGES),
+                    f"the script logs {message!r}, which is not in MIRROR_MESSAGES "
                     f"and so is probably not in the runbook either",
                 )
+
+    def test_the_console_lines_read_as_the_runbook_shows_them(self) -> None:
+        found = re.search(r'ShowConsoleMsg\("([^"]*)" \.\. message', self.script)
+        self.assertIsNotNone(found, "the script no longer prefixes its console lines")
+        assert found is not None
+        prefix = found[1]
+        self.assertIn('.. " from byte " ..', self.script)
+        for doc in (RUNBOOK, REAPER):
+            with self.subTest(doc=doc.name):
+                self.assertIn(f"{prefix}mirroring <path> from byte N", doc.read_text(encoding="utf-8"))
+        self.assertIn(f"{prefix}mirror stopped", REAPER.read_text(encoding="utf-8"))
+
+
+#: What joins a message's fixed words to the value after it, stripped so the
+#: runbook can quote `Console unreachable` for "Console unreachable: <why>".
+JOINERS = " ,:("
+
+#: Every top-level string constant in the page's script.
+PAGE_STRING_CONSTANT = re.compile(r'^const ([A-Z][A-Z0-9_]*) = "', re.MULTILINE)
+#: Families with tests of their own that read every member (#204, #167).
+PAGE_FAMILIES = ("PROJECT_", "TRACKS_")
+#: How many string constants the page names today; fewer means the scan broke.
+NAMES_FLOOR = 59
+
+
+def fixed_words(message: str) -> str:
+    """The part of a message the runbook quotes verbatim: up to the first value
+    filled in (`{`), without what joins it to that value. Raises when nothing is
+    left, since an empty quote is found in any document."""
+    words = message.split("{")[0].rstrip(JOINERS)
+    if not words:
+        raise ValueError(f"no fixed words before the first value in {message!r}")
+    return words
+
+
+def collapsed(text: str) -> str:
+    """Whitespace collapsed: a quote wrapped across a line break still reads as one."""
+    return " ".join(text.split())
+
+
+def page_constant(script: str, name: str) -> str:
+    """`const NAME = "...` in the page's script. For a constant built with `+`,
+    the first literal, which is the head the runbook quotes."""
+    found = re.search(rf'^const {re.escape(name)} = "([^"]*)"', script, re.MULTILINE)
+    if found is None:
+        raise LookupError(f"app.js defines no string constant {name}")
+    return found[1]
+
+
+#: (constant in app.js, the docs that quote its fixed words).
+PAGE_QUOTES: tuple[tuple[str, tuple[Path, ...]], ...] = (
+    ("TAP_FAILED", (TROUBLESHOOTING,)),
+    ("TAP_UNTIMED", (TROUBLESHOOTING,)),
+    ("RAMPING_BLOCKED", (RUNBOOK, BOX)),
+    ("NOT_MOVED", (TROUBLESHOOTING,)),
+    ("STORED_LEAD", (RUNBOOK, TROUBLESHOOTING)),
+    ("STORED_ALREADY", (TROUBLESHOOTING,)),
+    ("STORED_RELEASING", (RUNBOOK, TROUBLESHOOTING)),
+    ("STORED_UNKNOWN", (RUNBOOK, TROUBLESHOOTING)),
+    ("TARGET_NEXT_OPEN", (RUNBOOK, TROUBLESHOOTING)),
+    ("TARGET_BLOCKED", (RUNBOOK, TROUBLESHOOTING)),
+    ("EARLIER_RUN_HEADING", (RUNBOOK, TROUBLESHOOTING)),
+    ("RECORDER_ERROR_PREFIX", (TROUBLESHOOTING,)),
+    ("RECORDING_LINK_LOST", (TROUBLESHOOTING, REAPER)),
+    ("RECORDING_NO_FEEDBACK", (RUNBOOK, TROUBLESHOOTING, BOX)),
+    ("RECORDING_NOT_REPORTED", (RUNBOOK, TROUBLESHOOTING, REAPER)),
+    ("RECORDING_ROLLING", (RUNBOOK, TROUBLESHOOTING)),
+    ("PROVENANCE_DIRTY", (RUNBOOK, TROUBLESHOOTING, BOX)),
+    ("PROVENANCE_UNKNOWN", (TROUBLESHOOTING, BOX)),
+    ("CONSOLE_NOTHING_THERE", (RUNBOOK, TROUBLESHOOTING, BOX)),
+    ("CONSOLE_NO_ANSWER", (RUNBOOK, TROUBLESHOOTING, BOX)),
+    ("CONSOLE_NOT_CHECKED", (TROUBLESHOOTING, BOX)),
+    ("PROJECT_SCRIPT_OLDER", (RUNBOOK, TROUBLESHOOTING, REAPER)),
+    ("FADER_SEND_FAILED", (TROUBLESHOOTING, BOX)),
+    ("SAVING_LOG_FAILED", (TROUBLESHOOTING,)),
+    ("SAVING_MIRROR_FAILED", (TROUBLESHOOTING,)),
+    ("SAVING_LOST_EARLIER", (TROUBLESHOOTING,)),
+    ("LINK_DOWN", (TROUBLESHOOTING,)),
+    ("LINK_CONNECTING", (TROUBLESHOOTING,)),
+    ("LINK_SILENT", (TROUBLESHOOTING,)),
+)
+
+#: (module, constant in it, the docs that quote its fixed words).
+BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
+    (state, "WHY_ARMED_BY_OPERATOR", (TROUBLESHOOTING,)),
+    (state, "WHY_STALLED", (TROUBLESHOOTING,)),
+    (app, "RECORD_SEND_FAILED", (TROUBLESHOOTING,)),
+    (serve, "REUSED_LOG_WARNING", (TROUBLESHOOTING,)),
+    (serve, "CLOCK_RESTARTED_WARNING", (TROUBLESHOOTING,)),
+    (serve, "TORN_WRITE_WARNING", (TROUBLESHOOTING,)),
+    (script_check, "QUESTION", (RUNBOOK, TROUBLESHOOTING, BOX, REAPER)),
+    (reach, "ANSWERED", (RUNBOOK, TROUBLESHOOTING, BOX)),
+    (reach, "NOTHING_THERE", (RUNBOOK, TROUBLESHOOTING, BOX)),
+)
+
+#: String constants in app.js that the runbook does not quote, and why not.
+PAGE_NOT_QUOTED: dict[str, str] = {
+    "TAP_FAILED_ADVICE": "the advice after the reason; the runbook quotes the head, TAP_FAILED",
+    "SVG_CLOSE": "markup, not words",
+    "TARGET_SET_KEY": "a vocabulary key, not words",
+    "MOVE_TAG_FALLBACK": "only for a move kind this page predates; a reload fixes it",
+    "MOVE_LATE_WORD": "quoted as the readout's `s late`, in test_the_runbook_quotes_the_move_words",
+    "RECORD_REASON_MISSING": "only from a box older than #163; a reload fixes it",
+    "UNARMED_MORE": "the word in `and N more`, after a count",
+    "LINK_STALE": "the tail after the link banner's head words",
+    "TARGET_CHIP_WORD": "quoted with its level, in test_the_runbook_quotes_the_target_chip",
+    "WAKE_HELD": "a reassurance, not a fault",
+    "WAKE_ADVICE": "gameday.md Pre-flight names it as the Auto-Lock advice",
+}
+
+
+class QuotedMessagesExist(unittest.TestCase):
+    """The words the docs quote are read out of the source, never typed here (#48)."""
+
+    def setUp(self) -> None:
+        self.script = APP_JS.read_text(encoding="utf-8")
+        self.docs = {
+            path: collapsed(path.read_text(encoding="utf-8")) for path in (RUNBOOK, TROUBLESHOOTING, BOX, REAPER)
+        }
+        self.box_source = "\n".join(
+            path.read_text(encoding="utf-8") for path in (REPO_ROOT / "src" / "tacet").glob("*.py")
+        )
+
+    def test_every_page_message_the_runbook_quotes_exists(self) -> None:
+        for name, docs in PAGE_QUOTES:
+            quoted = fixed_words(page_constant(self.script, name))
+            for doc in docs:
+                with self.subTest(name=name, doc=doc.name):
+                    self.assertIn(quoted, self.docs[doc])
+
+    def test_every_quoted_page_constant_is_used(self) -> None:
+        for name, _ in PAGE_QUOTES:
+            with self.subTest(name=name):
+                self.assertGreaterEqual(
+                    len(re.findall(rf"\b{name}\b", self.script)), 2, f"{name} is declared and never used"
+                )
+
+    def test_every_box_message_the_runbook_quotes_exists(self) -> None:
+        for module, name, docs in BOX_QUOTES:
+            quoted = fixed_words(getattr(module, name))
+            for doc in docs:
+                with self.subTest(name=name, doc=doc.name):
+                    self.assertIn(quoted, self.docs[doc])
+
+    def test_every_quoted_box_constant_is_used(self) -> None:
+        for _, name, _ in BOX_QUOTES:
+            with self.subTest(name=name):
+                self.assertGreaterEqual(
+                    len(re.findall(rf"\b{name}\b", self.box_source)), 2, f"{name} is defined and never used"
+                )
+
+    def test_every_page_string_constant_is_quoted_or_says_why_not(self) -> None:
+        names = PAGE_STRING_CONSTANT.findall(self.script)
+        self.assertGreaterEqual(len(names), NAMES_FLOOR)
+        quoted = {name for name, _ in PAGE_QUOTES}
+        for name in names:
+            with self.subTest(name=name):
+                self.assertTrue(
+                    name in quoted or name in PAGE_NOT_QUOTED or name.startswith(PAGE_FAMILIES),
+                    f"app.js names {name}: add it to PAGE_QUOTES with the docs that quote it, "
+                    f"or to PAGE_NOT_QUOTED with why not",
+                )
+
+    def test_every_excused_page_constant_still_exists_and_is_not_also_quoted(self) -> None:
+        names = set(PAGE_STRING_CONSTANT.findall(self.script))
+        quoted = {name for name, _ in PAGE_QUOTES}
+        for name in PAGE_NOT_QUOTED:
+            with self.subTest(name=name):
+                self.assertIn(name, names)
+                self.assertNotIn(name, quoted)
+
+    def test_the_runbook_quotes_the_target_chip(self) -> None:
+        word = page_constant(self.script, "TARGET_CHIP_WORD")
+        for doc in (RUNBOOK, TROUBLESHOOTING):
+            with self.subTest(doc=doc.name):
+                self.assertRegex(self.docs[doc], rf"`{re.escape(word)} -?\d+(?:\.\d+)? dB")
+
+    def test_the_banner_and_the_page_name_the_same_earlier_run_section(self) -> None:
+        self.assertIn(page_constant(self.script, "EARLIER_RUN_HEADING"), serve.RETIRED_SPAN_NOTE)
+
+    def test_the_runbook_quotes_the_note_length_refusal(self) -> None:
+        length = annotations.MAX_DATA_TEXT + 1
+        with self.assertRaises(annotations.DataError) as raised:
+            annotations.operator_data({"text": "x" * length})
+        quoted = str(raised.exception).replace(f" {length} ", " N ")
+        self.assertIn(quoted, self.docs[TROUBLESHOOTING])
+
+    def test_fixed_words_stops_at_the_first_value_and_its_joiner(self) -> None:
+        self.assertEqual(fixed_words("Could not send the start ({error})."), "Could not send the start")
+        self.assertEqual(fixed_words("Console unreachable: "), "Console unreachable")
+        self.assertEqual(fixed_words("Sent before the box, "), "Sent before the box")
+        with self.assertRaises(ValueError):
+            fixed_words("{x} only")
 
 
 class TheBannerMatchesTheRunbook(unittest.TestCase):
@@ -214,10 +429,6 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertIn(label, self.box)
 
-    def test_the_runbook_documents_the_reused_log_warning(self) -> None:
-        # The warning is only useful if the table says what to do about it.
-        self.assertIn("this log already contains a recording", self.troubleshooting)
-
     def test_the_runbook_documents_the_carried_over_spans_warning(self) -> None:
         self.assertIn("still open from an earlier run", "\n".join(self._banner_with_an_open_span()))
         self.assertIn("still open from an earlier run", self.troubleshooting)
@@ -313,19 +524,6 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         assert found is not None
         runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
         self.assertIn(found[1], runbook)
-
-    def test_the_runbook_quotes_the_stored_note(self) -> None:
-        # #153: the sentence the page shows under the target segments when a tap
-        # stored and moved nothing. Read out of app.js rather than typed twice,
-        # the same discipline as RAMPING_BLOCKED above.
-        script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
-        found = re.search(r'^const NOT_MOVED = "([^"]+)";$', script, re.MULTILINE)
-        self.assertIsNotNone(found, "app.js no longer defines NOT_MOVED")
-        assert found is not None
-        for doc in ("gameday.md", "troubleshooting.md"):
-            with self.subTest(doc=doc):
-                text = " ".join((DOCS / doc).read_text(encoding="utf-8").split())
-                self.assertIn(found[1], text)
 
     def test_the_runbook_quotes_the_arm_stand_down_question_copy(self) -> None:
         # #19: the page's own translation of the box's prompt kinds (PROMPT_COPY
