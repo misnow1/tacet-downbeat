@@ -390,8 +390,9 @@ second of them. #103 covers the operator-facing mechanism in detail.
 
 ### 5.4 Game data (RTD)
 
-Scoreboard and PA were replaced by Daktronics this year. See §8 for what the
-stream is, as the Game 4 capture showed it, and what is still asked of Daktronics.
+Scoreboard and PA were replaced by Daktronics this year. See §8 for what
+the stream is, as the Game 4 capture showed it, and what is still asked of
+Daktronics.
 
 RTD is used as **context, not interlock**:
 
@@ -956,8 +957,8 @@ supplementary fixed-digit displays. Classic RTD over RS-232 is 19200 8N1.
 **Seen on a wire, 2026-10-17 (Game 4).** This section was first written on
 2026-09-08 from open-source decoders. On Game 4's day it was checked against
 three captures: two morning sniffs in the booth and the whole game, 14:24:53 to
-18:42:32 local, 27,737 frames with no fault. Where the decoders and the wire
-disagreed the wire wins, and so does the decoder built on it (`tacet.rtd`,
+18:42:32 local, 27,737 frames in all, with no fault. Where the decoders and the
+wire disagreed the wire wins, and so does the decoder built on it (`tacet.rtd`,
 #210), whose tests carry real frames from the game. The captures are not in
 git; they are filed with the game (game-4.md, "Filing").
 
@@ -1067,8 +1068,8 @@ decoder's tripwire for a change outside every field never fired. The fields
 | `TIMEOUT_CLOCK` | 31 | 8 | 32 | Timeouts | ` 1:00`, then ` 0:59` for a second or three, at each team timeout |
 | `HOME_SCORE` | 107 | 4 | 108 | Logging; #95 | Right-aligned, `  34` |
 | `GUEST_SCORE` | 111 | 4 | 112 | Logging | Right-aligned |
-| `HOME_TIMEOUTS` | 116 | 1 | 117 | Whose timeout (#205) | Timeouts left, `3` down to `0` |
-| `GUEST_TIMEOUTS` | 124 | 1 | 125 | Whose timeout (#205) | Timeouts left |
+| `HOME_TIMEOUTS` | 116 | 1 | 117 | Whose timeout (#205) | Timeouts left, `3` then `2` |
+| `GUEST_TIMEOUTS` | 124 | 1 | 125 | Whose timeout (#205) | Timeouts left, `3` down to `0` |
 | `HOME_TIMEOUT_TEXT` | 131 | 5 | 132 | Timeouts | `<TIME` for a second or three at a home timeout, else blank |
 | `GUEST_TIMEOUT_TEXT` | 136 | 5 | 137 | Timeouts | `>TIME`, the same at a guest timeout |
 | `QUARTER` | 141 | 2 | 142 | Quarter breaks, halftime, halftime exodus arming | ` 1` to ` 4`; blank before the game and at halftime |
@@ -1131,8 +1132,8 @@ reader attaches during the countdown rather than at kickoff. Two consequences:
   starts 150 minutes out, as observed from the press box, it began near 13:05
   at `150:00`, which does not fit. The game capture began with 70 minutes left
   and the morning source sat frozen at `87:46`, so neither shows it. A capture
-  started more than 100 minutes before kickoff answers it for free. Do not
-  assume the field is idle, or a game clock, before kickoff.
+  started while the countdown still reads more than 100 minutes answers it for
+  free. Do not assume the field is idle, or a game clock, before kickoff.
 - **Halftime-exodus arming must not fire on it.** The rule in 5.4 is Q2 under
   5:00. A pregame countdown passing 5:00 is a different fact wearing the same
   digits, so the quarter field has to be a positive term in that test rather
@@ -1179,7 +1180,8 @@ The original asks, with what Game 4 answered:
    field set and that the play clock is populated.*
 4. **A network path** from the scoreboard VLAN to the audio control VLAN, or
    provision for a second NIC in the receiving machine. *Answered: at Game 4
-   VLAN 4 reached the laptop on the control network's cable (gameday.md).*
+   VLAN 4 reached the laptop on the control network's cable (game-4.md, Q4; the
+   interface is in gameday.md, "The RTD capture").*
 
 ### Still to ask
 

@@ -523,9 +523,12 @@ the capture, not faults.
 tcpdump -i <interface> -U -w game.pcap 'broadcast and not port 5353'
 ```
 
-Classic pcap and pcapng are both read, as Ethernet or as Linux cooked, so
-`tcpdump -i any` on Linux is fine. Any other link type is refused. A pcapng
-with several interfaces is decoded with the first interface's link type.
+Classic pcap and pcapng are both read, as Ethernet or as Linux cooked. The
+`broadcast` filter needs an Ethernet interface, so name the scoring VLAN's
+interface rather than `-i any`. `udp port 21000` works on any interface, but it
+keeps RTD only and loses the other broadcasts that told the booth's outages from
+the laptop's own at Game 4. Any other link type is refused. A pcapng with
+several interfaces is decoded with the first interface's link type.
 
 **Install.** It needs dpkt, an optional extra kept off the box's control path:
 `make install` includes it; with a plain `pip install -e .` run

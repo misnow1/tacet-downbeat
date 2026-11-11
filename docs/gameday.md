@@ -80,8 +80,9 @@ that snoops IGMP passes a multicast group only to a port that has joined it,
 and a passive capture never joins. Game 3's in-game capture of the console's
 metering saw nothing for that reason, most likely, after soundcheck's capture
 on a different switch saw all of it. Test with a listener that joins the
-group, on the port that will be used on the day. RTD does not need this: it
-is broadcast, not multicast (design.md 8), and Game 4's passive capture saw all of it.
+group, on the port that will be used on the day. RTD does not need this: it is
+broadcast, not multicast (design.md 8), and Game 4's passive capture saw all of
+it.
 
 ---
 

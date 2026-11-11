@@ -17,9 +17,12 @@ capture could not be read at all. A gap or a source change is a fact about the
 capture, not a fault.
 
 Capture with
-`tcpdump -i <interface> -U -w game.pcap 'broadcast and not port 5353'`. Classic pcap
-and pcapng are read, as Ethernet or Linux cooked (`-i any`); another link type
-is refused. This tool reads no `tacet.toml`: it is not run on the box.
+
+    tcpdump -i <interface> -U -w game.pcap 'broadcast and not port 5353'
+
+Classic pcap and pcapng are read, as Ethernet or Linux cooked; the `broadcast`
+filter needs an Ethernet interface, so not `-i any`. Another link type is
+refused. This tool reads no `tacet.toml`: it is not run on the box.
 
 The decoder (`tacet.rtd`) is standard library only. Reading the capture needs
 dpkt, from the `analysis` extra, which `tacet.pcap` alone imports; without it the
