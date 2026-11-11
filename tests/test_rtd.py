@@ -1,8 +1,21 @@
+import re
 import unittest
+from pathlib import Path
 
-from tacet import rtd
+from tacet import rtd, rtd_replay
 
 from . import rtd_frames as real
+
+DESIGN = Path(__file__).resolve().parent.parent / "docs" / "design.md"
+#: A row of design.md 8's field table: the `tacet.rtd` constant, wire offset, width, published offset.
+FIELD_ROW = re.compile(r"^\| `([A-Z][A-Z0-9_]*)` \| (\d+) \| (\d+) \| (\d+) \|", re.MULTILINE)
+#: Any line that looks like the start of one, so a row in another shape cannot slip past.
+FIELD_ROW_START = re.compile(r"^\| `[A-Z]", re.MULTILINE)
+
+
+def design_section_8() -> str:
+    text = DESIGN.read_text(encoding="utf-8")
+    return text.split("\n## 8. ", 1)[1].split("\n## 9. ", 1)[0]
 
 
 def parse(raw: bytes) -> rtd.Frame | rtd.FrameFault:
@@ -50,8 +63,8 @@ class TestChecksum(unittest.TestCase):
         self.assertEqual(len(real.TIME_OF_DAY), 33)
 
     def test_checksum_covers_header_through_eot_not_payload_only(self):
-        # design.md 8 says payload only; the wire says otherwise (#206). The
-        # payload-only sum of this frame's text would be 99.
+        # The published notes say payload only, as design.md 8 did before #206; the
+        # wire says otherwise. The payload-only sum of this frame's text would be 99.
         payload_only = real.TIME_OF_DAY.replace(b"0F\x17", b"99\x17")
         self.assertEqual(fault_of(payload_only), rtd.Fault.CHECKSUM)
 
@@ -376,6 +389,30 @@ class TestFieldMap(unittest.TestCase):
             (9, 10, 16, 20, 21, 4),
         )
         self.assertEqual(rtd.MIN_FRAME_LENGTH, 25)
+
+
+class TestDesignSection8(unittest.TestCase):
+    """design.md 8 quotes the field map, the port and the buffer length; the decoder is where they live (#206)."""
+
+    def setUp(self) -> None:
+        self.section = design_section_8()
+
+    def test_every_field_row_matches_the_field_map(self) -> None:
+        rows = FIELD_ROW.findall(self.section)
+        self.assertEqual(len(rows), len(FIELD_ROW_START.findall(self.section)), "a field row is not in the read form")
+        self.assertGreaterEqual(len(rows), 10)
+        for name, offset, width, published in rows:
+            with self.subTest(field=name):
+                found = getattr(rtd, name)
+                self.assertIn(found, rtd.FIELDS)
+                self.assertEqual(
+                    (int(offset), int(width), int(published)),
+                    (found.offset, found.width, found.offset + rtd.PUBLISHED_OFFSET_BASE),
+                )
+
+    def test_the_port_and_the_buffer_length_are_the_decoders(self) -> None:
+        self.assertIn(f"port {rtd_replay.DEFAULT_PORT}", self.section)
+        self.assertIn(f"{rtd.BUFFER_SIZE}-byte", self.section)
 
 
 if __name__ == "__main__":

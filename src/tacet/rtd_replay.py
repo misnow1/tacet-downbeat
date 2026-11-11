@@ -16,7 +16,8 @@ faulted, the file ends mid-record, or no RTD datagram was found. Exit 2: the
 capture could not be read at all. A gap or a source change is a fact about the
 capture, not a fault.
 
-Capture with `tcpdump -i <interface> -w game.pcap udp port 21000`. Classic pcap
+Capture with
+`tcpdump -i <interface> -U -w game.pcap 'broadcast and not port 5353'`. Classic pcap
 and pcapng are read, as Ethernet or Linux cooked (`-i any`); another link type
 is refused. This tool reads no `tacet.toml`: it is not run on the box.
 

@@ -520,7 +520,7 @@ the capture, not faults.
 **Capturing.**
 
 ```
-tcpdump -i <interface> -w game.pcap udp port 21000
+tcpdump -i <interface> -U -w game.pcap 'broadcast and not port 5353'
 ```
 
 Classic pcap and pcapng are both read, as Ethernet or as Linux cooked, so
@@ -702,12 +702,13 @@ Honest state of things, so nothing here reads as more settled than it is.
 - **RTD.** The decoder exists and replays the Game 4 capture (`tacet-rtd`,
   above); timeout ends now come from it, offline (`tacet-timeouts`, above). The
   live reader is #95, and game timing during the game is operator-tapped for now.
-  One thing about it is known in advance and will bite on the first attempt: the
-  scoreboard console **does not send its state when something connects**. It
-  sends only changes, so a reader started mid-game shows blanks until each field
-  first moves - no score until someone scores. Pressing `STOP` on the scoreboard
-  console forces a full dump. So either the capture starts before the console
-  comes up, or someone presses `STOP` once during pregame. See design.md 8.
+  Two things about the stream are known from Game 4 and will matter to it. The
+  scoreboard console rewrites its whole buffer about every 10 s, so a reader
+  started mid-game, or back after an outage, has every field within about 10 s;
+  until then a field it has not seen reads as never written, not as blank, and
+  nobody needs to press `STOP` on the scoreboard console. And the sending
+  address moves (`.30`, `.26` and `.31` in one game), so the reader listens on
+  port 21000 from any source and logs each change. See design.md 8.
 - **The DCA reference channel.** Not captured yet; it is what supplies the
   ground-truth fader labels. Planned for game 3 as a pilot tone, not the band
   PA - see [reaper.md](reaper.md#the-dca-reference-a-pilot-tone).
