@@ -80,8 +80,9 @@ that snoops IGMP passes a multicast group only to a port that has joined it,
 and a passive capture never joins. Game 3's in-game capture of the console's
 metering saw nothing for that reason, most likely, after soundcheck's capture
 on a different switch saw all of it. Test with a listener that joins the
-group, on the port that will be used on the day. The same goes for RTD if it
-turns out to be multicast.
+group, on the port that will be used on the day. RTD does not need this: it is
+broadcast, not multicast (design.md 8), and Game 4's passive capture saw all of
+it.
 
 ---
 
@@ -269,12 +270,15 @@ game. Since #216 a timeout has no tapped end, so a game with no capture has no
 timeout ends at all, and they cannot be recovered afterwards.
 
 ```
-sudo tcpdump -i vlan0 -U -w data/rtd-<date>-<opponent>.pcap udp port 21000
+sudo tcpdump -i vlan0 -U -w data/rtd-<date>-<opponent>.pcap 'broadcast and not port 5353'
 ```
 
-`vlan0` was the interface at Game 4; confirm it on the day. Filter on the port
-and never on an address, because the RTD source address moved twice during
-Game 4. `-U` writes each packet out as it arrives, so a crash loses little.
+`vlan0` was the interface at Game 4; confirm it on the day. This is the filter
+Game 4 ran. Take every broadcast on the scoring VLAN, not only port 21000: the
+other broadcasts are what told the booth's outages from the laptop's own
+(game-4.md). Never filter on an address, because the RTD source address moved
+twice during Game 4. `-U` writes each packet out as it arrives, so a crash loses
+little.
 
 ---
 

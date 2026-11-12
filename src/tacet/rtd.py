@@ -10,8 +10,8 @@ One frame is
     SYN "00000000" SOH "004210" NNNN STX <text> EOT <2 hex digits> ETB
 
 A write puts `<text>` into the display buffer starting at cell NNNN. Two things
-the published notes and design.md 8 get wrong, both settled against Game 4's
-27,356 frames (#206):
+a reader of the published notes gets wrong, both settled against Game 4's
+27,356 frames and recorded in design.md 8 (#206):
 
 - The checksum is the sum of every byte after SYN through EOT inclusive, mod
   256, as two uppercase hex digits. It is not payload-only.

@@ -78,6 +78,10 @@ window is roughly the last 10–15 seconds. **A hard interlock on "play clock
 running" would silence the band for nearly the entire play cycle** and would be
 substantially worse than current manual operation.
 
+Game 4 (2026-10-17), the first game with RTD on a wire, adds a reason that has
+nothing to do with the rule: the stream was wrong for seconds at a time and
+absent for minutes (§8, "RTD is context: Game 4 showed why").
+
 ---
 
 ## 3. Existing signal path
@@ -386,8 +390,9 @@ second of them. #103 covers the operator-facing mechanism in detail.
 
 ### 5.4 Game data (RTD)
 
-Scoreboard and PA were replaced by Daktronics this year. See §8 for the specific
-ask.
+Scoreboard and PA were replaced by Daktronics this year. See §8 for what
+the stream is, as the Game 4 capture showed it, and what is still asked of
+Daktronics.
 
 RTD is used as **context, not interlock**:
 
@@ -938,7 +943,8 @@ confirms the band is in the stands.
 
 ## 8. Daktronics / scoreboard ask
 
-*(This section is intended to be extractable for email.)*
+*(The asks at the end of this section, from "Asked, and answered", are intended
+to be extractable for email.)*
 
 The scoreboard and PA were replaced by Daktronics this year. Scoring is now
 operated from an iPad; a serial controller was previously in place.
@@ -948,15 +954,21 @@ All Sport Pro interface box broadcasts RTD over UDP with configurable ports per
 data source, and can also drive an additional serial or USB MDP output for
 supplementary fixed-digit displays. Classic RTD over RS-232 is 19200 8N1.
 
+**Seen on a wire, 2026-10-17 (Game 4).** This section was first written on
+2026-09-08 from open-source decoders. On Game 4's day it was checked against
+three captures: two morning sniffs in the booth and the whole game, 14:24:53 to
+18:42:32 local, 27,737 frames in all, with no fault. Where the decoders and the
+wire disagreed the wire wins, and so does the decoder built on it (`tacet.rtd`,
+#210), whose tests carry real frames from the game. The captures are not in
+git; they are filed with the game (game-4.md, "Filing").
+
 ### What the protocol actually is
 
-Verified 2026-09-08 against open-source decoders. Not verified against this
-stadium, and nothing below has been seen on a wire here.
-
 RTD is not a semantic protocol. It is a **display-buffer write protocol**: the
-console holds one flat buffer of ASCII, and each packet says *write these
-characters at this offset*. Only changed regions are transmitted, so a reader
-has to accumulate state rather than parse events.
+console holds one flat buffer of ASCII, 353 bytes for football here, and each
+frame says *write these characters at this offset*. Most frames carry only a
+changed region, so a reader has to accumulate state rather than parse events.
+The whole buffer is also rewritten every ten seconds or so (below).
 
 ```
 0x16  "00000000"  0x01  "004210" NNNN   0x02  <ascii>  0x04  <2 hex>   0x17
@@ -966,98 +978,227 @@ SYN   header      SOH   prefix, offset  STX   payload  EOT   checksum  ETB
 - The `004210` prefix is what identifies an RTD data packet. Other packet types
   share the framing and are not this — `004010` is the Venus display
   position-text command, which is what most of the community write-ups on the
-  0x16/0x17 framing are actually describing.
+  0x16/0x17 framing are actually describing. Game 4 sent nothing but `004210`.
 - `NNNN` is a decimal offset and is **zero-based**. The published field offsets
-  are **one-based**. Play clock at documented offset 201 is buffer index 200.
-- The checksum is a wrapping byte sum over the payload, including the 0x04
-  separator, rendered as two uppercase hex digits.
+  are **one-based**. Play clock at documented offset 201 is buffer index 200,
+  and that is where Game 4 wrote it.
+- The checksum is the **byte sum of everything after SYN through EOT
+  inclusive** - header, SOH, prefix, offset, STX, payload and EOT - mod 256,
+  rendered as two uppercase hex digits. It is not the payload alone, as the
+  community notes have it and as this section said until the capture: all
+  27,737 frames match the first and none the second. `tests/test_rtd.py` pins
+  it against a real frame.
 
 The framing is public. **The offset-to-meaning map is not.** It is per sport
 "field set", it lives in Daktronics' own manuals, and the open-source decoders
-carry it as tables transcribed by hand from a vendor PDF.
+carry it as tables transcribed by hand from a vendor PDF. Here the map now
+comes from the capture (below).
+
+### Transport: broadcast on port 21000, from an address that moves
+
+RTD here is **UDP broadcast** to `255.255.255.255`, port 21000, from port
+21000, on the scoring VLAN (VLAN 4, a flat `192.168.0.x`), one frame per
+datagram. It is **not multicast**. Nothing has to join a group, so a passive
+capture anywhere on the VLAN sees all of it, and a switch that snoops IGMP does
+not filter it the way it filtered the console's metering (gameday.md,
+"Network"). At Game 4 the scoring VLAN reached the laptop on the same cable as
+the control network.
+
+**The source address is not stable.** In one day:
+
+| When (local) | Source | What |
+|---|---|---|
+| Morning sniffs | `.28` | The main clock frozen at `87:46` |
+| From 14:24:53 | `.30` | The live feed |
+| From 18:06:34 | `.26` | Back after 53 s of silence: the booth fault that broke the stadium clocks |
+| From 18:24:40 | `.31` | Back after 5 min of silence from 18:19:28 |
+
+Nobody on this side changed anything. So **a reader accepts port 21000 from
+any source, never pins an address, and logs every change of source.**
+`tacet-rtd` reports each change as a `source` row, and `tacet.stoppages` will
+not vouch for a hold that spans one. Two sources at once was not seen; a frozen
+`.28` beside a live `.30` is the case to expect. Which machines these are is
+still to ask (below).
+
+### The whole buffer, every ten seconds
+
+This section used to say the console does not dump its state on connect, so a
+reader that attached mid-game would see a buffer full of holes, possibly all
+night. The capture says otherwise. As well as the small writes, the console
+**rewrites the whole 353-byte buffer at offset 0 about every 10 s** (median
+10.05 s, and never more than 10.07 s at Game 4 outside the outages). Between
+those:
+
+- the time of day, 8 bytes at 39, every second;
+- the main clock and its three copies, 26 bytes at 0, every second while the
+  clock runs;
+- the play clock, 8 bytes at 200, on every tick;
+- any other region as it changes.
+
+The first datagram from each new source at Game 4 was a full write.
+
+So **a gap in RTD costs about 10 s once the stream is back**, and a reader that
+attaches mid-game has every field within about 10 s. Nobody needs to press
+`STOP` on the scoreboard console to fill it (the community notes say that
+forces a full dump; it has not been tried here). After an outage the reader's
+copy still holds the values from before it, and they may be stale until that
+next full write.
+
+One thing does not change: the log has to distinguish *field is blank* from
+*field has never been written*. It costs ten seconds now rather than a night,
+but collapsing the two quietly still poisons the Phase 3 analysis, and it
+cannot be recovered afterwards. `tacet.rtd` reads a field as never written
+until every one of its cells has been. The operational half of this is in
+box.md, "Not yet proven".
 
 ### The football field set
 
-From those transcribed tables. Every context use in §5.4 is covered by six
-fields:
+The published tables were the prior, and Game 4 confirmed their shape. The
+field map in `src/tacet/rtd.py` is what the wire showed: 34 fields, each with a
+comment saying what was seen. **That file is the one place the offsets live.**
+In all three captures every cell outside those fields stayed blank, so the
+decoder's tripwire for a change outside every field never fired. The fields
+§5.4 and the offline tools use:
 
-| Use in §5.4 | Field | Offset | Width |
-|---|---|---|---|
-| Play-clock-low caution | Play Clock Time | 201 | 8 |
-| Permissive: clock stopped | Main Clock Stopped (`' '` or `'s'`) | 28 | 1 |
-| Quarter breaks | Quarter / Quarter Description | 142 / 148 | 2 / 12 |
-| Timeouts | Home/Guest Time Out Indicator and Text | 132–141 | 1 / 4 |
-| Halftime exodus arming | Quarter and Main Clock Time | 142, 1 | 2 / 5 |
+| Field (`tacet.rtd`) | Wire offset | Width | Published | Used for | Game 4 showed |
+|---|---|---|---|---|---|
+| `MAIN_CLOCK` | 0 | 5 | 1 | Halftime exodus arming; logging | Right-aligned `m:ss`, ` 2:00`; also the pregame countdown |
+| `CLOCK_AT_ZERO` | 26 | 1 | 27 | The end of each period (#212) | `z` at the end of each period and of the countdown, else blank |
+| `MAIN_CLOCK_STOPPED` | 27 | 1 | 28 | Permissive: clock stopped | `s` or blank |
+| `TIMEOUT_CLOCK` | 31 | 8 | 32 | Timeouts | ` 1:00`, then ` 0:59` for a second or three, at each team timeout |
+| `HOME_SCORE` | 107 | 4 | 108 | Logging; #95 | Right-aligned, `  34` |
+| `GUEST_SCORE` | 111 | 4 | 112 | Logging | Right-aligned |
+| `HOME_TIMEOUTS` | 116 | 1 | 117 | Whose timeout (#205) | Timeouts left, `3` then `2` |
+| `GUEST_TIMEOUTS` | 124 | 1 | 125 | Whose timeout (#205) | Timeouts left, `3` down to `0` |
+| `HOME_TIMEOUT_TEXT` | 131 | 5 | 132 | Timeouts | `<TIME` for a second or three at a home timeout, else blank |
+| `GUEST_TIMEOUT_TEXT` | 136 | 5 | 137 | Timeouts | `>TIME`, the same at a guest timeout |
+| `QUARTER` | 141 | 2 | 142 | Quarter breaks, halftime, halftime exodus arming | ` 1` to ` 4`; blank before the game and at halftime |
+| `QUARTER_DESCRIPTION` | 147 | 12 | 148 | Quarter breaks | `Pregame`, `1ST Quarter`, `Halftime` |
+| `PLAY_CLOCK` | 200 | 8 | 201 | Play-clock-low caution; logging; timeout ends (#205) | Two digits at 203 and 204, `40` down to `0` |
+| `HOME_POSSESSION` | 209 | 5 | 210 | #95 | `<POSS` or blank |
+| `GUEST_POSSESSION` | 214 | 5 | 215 | #95 | `>POSS` or blank |
+| `DOWN` | 221 | 3 | 222 | Logging; #95 | `1st` to `4th`, or blank |
+| `TO_GO` | 224 | 2 | 225 | Logging | Right-aligned, `10` |
 
-**The play clock is present in the football field set.** That settles the
-original question in the abstract; what remains is whether it is populated on
-this install. Clock-stopped arriving as a literal one-byte flag, rather than
-something inferred from clock deltas, is better than was assumed.
+The wire offset is the one a reader uses; the published offset is one more.
+`tests/test_rtd.py` holds this table to the field map, and the port and the
+buffer length above to the decoder's constants.
 
-Two hedges. The transcribed tables carry their own warning that they were
-generated semi-automatically and may contain errors; and they are **All Sport
-5000**-era, while this install is an All Sport **Pro**. The framing should
-survive that gap — backward compatibility with existing dumb displays is the
-entire reason RTD exists — but field sets are likelier to have drifted. Treat
-the offsets as a strong prior to validate against a capture, not as settled. The
-8-byte `mm:ss` play clock is the first thing to check; that is a strange shape
-for a 40-second clock.
+**The play clock is populated here**, and it is not the 8-byte `mm:ss` its
+width suggested: two digits in the middle of the field, counting down from 40.
+When play is stopped it holds, at 40, at 25 or wherever it froze, and
+ready-for-play is the moment it counts down again (`tacet.stoppages`).
 
-### The console does not dump state on connect
+**Clock-stopped arrives as a literal one-byte flag**, as the tables promised. It
+is weaker than it looks as a permissive: Game 4's main clock stopped 77 times
+after kickoff, because it stops for every incomplete pass. On its own it says
+the clock is stopped, not that the band is clear, which is why
+`tacet.stoppages` reads the play clock and never the main clock.
 
-A reader that attaches mid-game sees a **buffer full of holes**, filling in only
-as each field first changes: no score until someone scores, possibly no team
-names all night. Pressing `STOP` on the scoreboard console forces a full dump.
+**The All Sport 5000 hedge is settled for these fields.** The transcribed
+tables carry their own warning that they were generated semi-automatically and
+may contain errors, and they are All Sport 5000-era while this install is an
+All Sport **Pro**. For every field the old table here gave - main clock, clock
+stopped, quarter, quarter description, the timeout indicators at 132-141, the
+play clock - the published offset is the wire offset plus one. The rest of the
+map came from the capture alone.
 
-Consequence for capture: the log has to distinguish *field is blank* from *field
-has never been written*. Those are different facts, collapsing them quietly
-poisons the Phase 3 analysis, and it cannot be recovered afterwards. The
-operational half of this is in box.md, "Not yet proven".
+**Not in this stream.** At Game 4 the operator saw stat fields on the board:
+red zone (visits, field goals, touchdowns), yards (rushing, passing, total),
+penalties and penalty yards, time of possession, first downs, third and fourth
+down conversions, sacks, interceptions and fumbles recovered. None of them is
+in this buffer: every cell outside the mapped fields was blank all day, and the
+other broadcasts on VLAN 4 that day were not RTD. Where they come from is still
+to ask.
+
+**Unexplained, and not read.** `c` at 160 and `66016001001` at 183 did not
+change all game. The main clock has three copies (at 5, 13 and 18), each
+team's timeouts left has one (122, 130), and the ball-on yard line has one at
+337, with `H` or `V` at 334.
 
 ### The pregame countdown occupies a clock
 
-Observed from the press box, not yet seen on a wire. The stadium clock runs a
-countdown to kickoff from around the time doors open, roughly 150 minutes out.
-It ends at the team entrance, resets, and restarts at the top of the first
-quarter.
+Seen on the wire at Game 4: the countdown **is** the main clock. It read
+`70:07` when the capture began at 14:24:53 and reached ` 0:00` at 15:35:00,
+with the clock-at-zero flag set. It reset to `15:00` at 15:35:07, the quarter
+went from blank (`PRE `, `Pregame`) to ` 1` at 15:35:09, and the first
+quarter's clock started at 15:36:32.
 
 Capture will normally already be running through all of that (reaper.md), so a
 reader attaches during the countdown rather than at kickoff. Two consequences:
 
-- **A 150-minute countdown does not fit the shape of a game clock.** Main Clock
-  Time is 5 wide at offset 1, which holds `mm:ss` for a quarter and cannot hold
-  `150:00`. Whether pregame drives that field in some other format, drives a
-  separate timer, or leaves it alone entirely is unknown. It is a question for
-  the Data Monitor capture requested below, and it is free to answer there -
-  the same capture settles it. Do not assume the field is idle before kickoff.
+- **What the field holds above `99:59` is still unknown.** Main Clock Time is 5
+  wide at wire offset 0, which holds `m:ss` for a quarter. If the countdown
+  starts 150 minutes out, as observed from the press box, it began near 13:05
+  at `150:00`, which does not fit. The game capture began with 70 minutes left
+  and the morning source sat frozen at `87:46`, so neither shows it. A capture
+  started while the countdown still reads more than 100 minutes answers it for
+  free. Do not assume the field is idle, or a game clock, before kickoff.
 - **Halftime-exodus arming must not fire on it.** The rule in 5.4 is Q2 under
   5:00. A pregame countdown passing 5:00 is a different fact wearing the same
   digits, so the quarter field has to be a positive term in that test rather
-  than an assumed one. This is the same discipline as 5.4 generally: RTD is
+  than an assumed one: through the countdown `QUARTER` is blank and the quarter
+  text reads `PRE `. This is the same discipline as 5.4 generally: RTD is
   context, and a permissive has to be asserted, not inferred from absence.
 
 The countdown reaching zero is also the cheapest kickoff anchor available. It
-is machine-visible and does not depend on anyone tapping a button.
+is machine-visible and does not depend on anyone tapping a button. At Game 4 it
+came 92 s before the first quarter's clock started.
 
-### Requested
+### RTD is context: Game 4 showed why
+
+§2 and §5.4 argue it from the rule. The first game on the wire adds evidence
+from the stream itself:
+
+- **The clock was set wrong.** At the fourth-quarter two-minute timeout the
+  clock was reset to `20:00` instead of `2:00`. RTD carried it faithfully: the
+  main clock read `20:00` for 8 s, 18:35:48 to 18:35:57, before ` 2:00`.
+- **The score was wrong.** The board read VT 35 for 7 s at 18:09:28 before
+  going back to 34 (game-4.md).
+- **The feed went away.** The booth fault took RTD off the wire for 53 s at
+  18:05:41 and for 5 min at 18:19:28, in the fourth quarter, and each time it
+  came back from a different address.
+
+An interlock on any of those would have acted on a fact that was false or not
+there. As context they cost nothing: the operator kept the fader, and the
+offline tools read flags and transitions rather than the clock's digits (#212
+is to read the clock-at-zero flag and the quarter, never the main clock's
+value). RTD is context, never an interlock.
+
+### Asked, and answered
+
+The original asks, with what Game 4 answered:
 
 1. **A read-only RTD feed reachable from the press box.** UDP on the scoreboard
    network is preferred over serial. This is one-way and consumes no scoreboard
-   resources.
-2. **The UDP port and data source configuration** for football.
+   resources. *Answered: it was already there. RTD is broadcast on the scoring
+   VLAN, and a laptop on VLAN 4 receives it.*
+2. **The UDP port and data source configuration** for football. *The port is
+   21000. The data source configuration is still to ask.*
 3. **A capture of the live stream during a game**, using Daktronics' **Data
-   Monitor**. This is the highest-value item on the list and the cheapest to
-   supply — it settles the port, the field set, and whether the play clock is
-   populated, in one artifact, without anyone having to go find a manual. The
-   published field tables already say the play clock exists; only a capture says
-   it is populated here.
+   Monitor**. *Superseded: our own capture of Game 4 settled the port, the
+   field set and that the play clock is populated.*
 4. **A network path** from the scoreboard VLAN to the audio control VLAN, or
-   provision for a second NIC in the receiving machine.
+   provision for a second NIC in the receiving machine. *Answered: at Game 4
+   VLAN 4 reached the laptop on the control network's cable (game-4.md, Q4; the
+   interface is in gameday.md, "The RTD capture").*
+
+### Still to ask
+
+1. **Why the source address moves**, which machines `.26`, `.28`, `.30` and
+   `.31` are, and whether two can send at once. A reader copes either way;
+   knowing saves guessing at the next outage.
+2. **Where the stat fields come from** (red zone, yards, penalties and the rest
+   above): another data source, on which port, and whether it can be broadcast
+   on VLAN 4 too.
+3. What `c` at 160 and `66016001001` at 183 mean. Low priority: nothing reads
+   them.
 
 ### Timing
 
-Worth requesting **during the current punchline window**. This is a
-configuration change now and a change order later.
+The feed itself needed no change: it was already on the wire. Item 2 may need a
+data source configured, and that is cheaper asked now than as a change order
+later.
 
 ### Reference
 
@@ -1070,6 +1211,10 @@ configuration change now and a change order later.
   (`sports_data/`, `src/sports/football.rs`)
 - RTD framing, community reference —
   https://timingguys.com/topic/daktronics-rtd-protocol-reference
+- The field map, framing and checksum as Game 4 showed them —
+  `src/tacet/rtd.py`; real frames in `tests/rtd_frames.py`
+- The Game 4 review: the capture, the outages and the source changes —
+  `docs/game-4.md`
 
 ---
 
