@@ -613,10 +613,9 @@ one team's mark gets that team's key on both lines, and keeps the id. No
 hold give one span and `repeat-tap` for the later one; **different kinds** in
 one hold each get a span, as nested spans do. A tap with no trusted hold
 (`untrusted`, `no-stoppage`, `outside-capture`) proposes nothing and fails the
-run, as a span's tap does. `last-two-minutes-tap` is ignored here: `tacet-quarters` gives
-its end, the end of the period (#212, below). `halftime-exodus-tap`
-has no end and is never a span. The header adds `, N single taps` when there are
-any.
+run, as a span's tap does. `last-two-minutes-tap` is ignored here: `tacet-quarters` gives its end,
+the end of the period (#212, below). `halftime-exodus-tap` has no end and is
+never a span. The header adds `, N single taps` when there are any.
 
 **Kind.** When exactly one team's timeouts-left value dropped during a trusted
 hold, a generic `timeout` tap is proposed as `timeout-home` or `timeout-away`
@@ -680,8 +679,11 @@ are read.
 nothing. `interrupted` is a gap in the capture near the boundary and
 `source-changed` is the sending address moving there; both look back 11 s from
 the boundary, because the console rewrites the whole buffer about every 10 s, so
-a change an outage hid shows within that of the stream coming back. A gap in the
-middle of a quarter does not matter when the flag was seen at its end. Also
+a change an outage hid shows within that of the stream coming back. A gap or
+new source between the flag and the quarter field changing also counts (a later
+rise could have been hidden). Where no flag was seen, a gap or new source
+anywhere in the period counts. A gap in the middle of a quarter does not matter
+when the flag was seen at its end. Also
 `out-of-order` (a period skipped) and `repeated` (the board showed the same
 period twice).
 
@@ -783,9 +785,9 @@ Honest state of things, so nothing here reads as more settled than it is.
   StageMix, whose refresh is slower than the ramp, so a fine stagger would not
   have shown. No reason to think there is one.
 - **RTD.** The decoder exists and replays the Game 4 capture (`tacet-rtd`,
-  above); timeout ends, quarters and halftime now come from it, offline (`tacet-timeouts` and
-  `tacet-quarters`, above). The
-  live reader is #95, and game timing during the game is operator-tapped for now.
+  above); timeout ends, quarters and halftime now come from it, offline
+  (`tacet-timeouts` and `tacet-quarters`, above). The live reader is #95; until
+  then RTD is read only after the game.
   Two things about the stream are known from Game 4 and will matter to it. The
   scoreboard console rewrites its whole buffer about every 10 s, so a reader
   started mid-game, or back after an outage, has every field within about 10 s;

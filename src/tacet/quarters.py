@@ -74,7 +74,6 @@ from .annotations import Entry
 from .corrections import Add, Correction
 from .periods import Board, Edge, Period, PeriodSpan
 from .taps import delay_of
-from .timeouts import _ascii, _clock, _listed, _plural, _span_text, wall_time
 
 DPKT_MODULE = "dpkt"
 DPKT_HINT = "tacet-quarters needs dpkt: pip install -e '.[analysis]'"
@@ -153,6 +152,35 @@ TAP_ATTENTION = (
 )
 
 
+def wall_time(entry: Entry) -> float:
+    return datetime.fromisoformat(entry.wall).timestamp()
+
+
+def tap_start(tap: Entry) -> float:
+    """The tap's own time less its logged delay; a negative or missing delay moves nothing."""
+    return wall_time(tap) - max(0.0, delay_of(tap.data) or 0.0)
+
+
+def _ascii(text: str) -> str:
+    return text.encode("ascii", "backslashreplace").decode("ascii")
+
+
+def _clock(time: float, tz: tzinfo | None) -> str:
+    return datetime.fromtimestamp(time, tz).strftime(CLOCK_FORMAT)
+
+
+def _span_text(start: float, end: float | None, tz: tzinfo | None) -> str:
+    return f"{_clock(start, tz)}-{NOT_APPLICABLE if end is None else _clock(end, tz)}"
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" + ("" if count == 1 else "s")
+
+
+def _listed(label: str, lines: Sequence[str]) -> list[str]:
+    return [f"{label}:", *(INDENT + line for line in lines)] if lines else [f"{label}: {NONE_WORD}"]
+
+
 def period_span_id(key: str) -> str:
     return f"{key}-{PERIOD_SPAN_SUFFIX}"
 
@@ -176,8 +204,7 @@ class TapMatch:
 
     @property
     def start_time(self) -> float:
-        """The tap's own time less its logged delay; a negative or missing delay moves nothing."""
-        return wall_time(self.tap) - max(0.0, delay_of(self.tap.data) or 0.0)
+        return tap_start(self.tap)
 
 
 @dataclass(frozen=True)
@@ -263,7 +290,7 @@ def compare(
     tapped: set[int] = set()
     matches: list[TapMatch] = []
     for tap in l2m_taps(entries):
-        time = wall_time(tap)
+        time = tap_start(tap)
         if not capture_start <= time <= capture_end:
             matches.append(TapMatch(tap, TapVerdict.OUTSIDE_CAPTURE))
             continue
@@ -346,17 +373,13 @@ def propose(comparison: Comparison, *, capture: str) -> tuple[Add, ...]:
     for period in comparison.periods:
         if period.verdict is PeriodVerdict.SPAN_ADDED and period.span is not None:
             pair = _period_adds(period, capture)
-            found.append((_wall_of(pair[0]), pair))
+            found.append((period.span.start.time if period.span.start else 0.0, pair))
     for tap in comparison.taps:
         if tap.verdict is TapVerdict.SPAN_ADDED:
             pair = _tap_adds(tap, capture)
-            found.append((_wall_of(pair[0]), pair))
+            found.append((tap_start(tap.tap), pair))
     found.sort(key=lambda item: item[0])
     return tuple(add for _, pair in found for add in pair)
-
-
-def _wall_of(add: Add) -> float:
-    return datetime.fromisoformat(add.wall).timestamp()
 
 
 # -- the report -------------------------------------------------------------
@@ -373,7 +396,6 @@ class Report:
     fresh: tuple[Correction, ...]
     #: Covered by a line already in the sidecar, whoever wrote it.
     already: tuple[Correction, ...]
-    taps: int = 0
 
     @property
     def sidecar(self) -> Path:
@@ -399,7 +421,7 @@ def build_report(
         capture_end=0.0 if last is None else last,
     )
     fresh, already = corrections.unrecorded(propose(comparison, capture=capture.name), existing)
-    return Report(log, capture, board, comparison, summary, tuple(fresh), tuple(already), len(l2m_taps(entries)))
+    return Report(log, capture, board, comparison, summary, tuple(fresh), tuple(already))
 
 
 def exit_code(report: Report) -> int:
@@ -456,7 +478,8 @@ def _tap_cells(match: TapMatch, tz: tzinfo | None) -> list[str]:
     end = NOT_APPLICABLE if span is None or span.end is None else _clock(span.end.time, tz)
     text = match.verdict.value
     if match.verdict is TapVerdict.UNTRUSTED and span is not None:
-        text += f" ({', '.join(span.end.doubts if span.end else ())})"
+        doubts = sorted(set(span.end.doubts if span.end else ()) | set(span.own_doubts))
+        text += f" ({', '.join(doubts)})"
     return [str(match.tap.seq), _clock(wall_time(match.tap), tz), key, end, text]
 
 
@@ -467,7 +490,7 @@ def _header(report: Report, tz: tzinfo | None) -> list[str]:
     zone = NOT_APPLICABLE if first is None else datetime.fromtimestamp(first, tz).astimezone(tz).tzname()
     lines = [
         f"log: {_ascii(report.log.name)}",
-        f"{INDENT}{_plural(report.taps, 'last two minutes tap')}",
+        f"{INDENT}{_plural(len(report.comparison.taps), 'last two minutes tap')}",
         f"capture: {_ascii(report.capture.name)}",
         f"{INDENT}{window} ({zone}), {_plural(sum(summary.faults.values()), 'fault')}, "
         f"{_plural(len(summary.gaps), 'gap')}, {_plural(len(summary.sources), 'source')}",

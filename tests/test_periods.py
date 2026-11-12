@@ -229,8 +229,9 @@ class TestRises(unittest.TestCase):
 class TestBoundaries(unittest.TestCase):
     def test_changes_in_one_datagram_settle_together(self):
         # Quarter first, text second, one datagram: no showing of a blank quarter with "2ND".
-        board = board_of(*shown(at(0), "q1"), rise(at(100)), *shown(at(110), "q2"))
-        self.assertEqual([s.period for s in board.spans], [Period.Q1, Period.Q2])
+        board = board_of(*shown(at(0), "q2"), rise(at(100)), *shown(at(110), "half"))
+        self.assertEqual([s.period for s in board.spans], [Period.Q2, Period.HALFTIME])
+        self.assertNotIn(Period.OTHER, [s.period for s in board.spans])
 
     def test_a_rise_in_the_same_datagram_as_the_quarter_change_ends_the_old_period(self):
         board = board_of(*shown(at(0), "q1"), rise(at(110)), *shown(at(110), "q2"))
@@ -306,6 +307,13 @@ class TestDoubts(unittest.TestCase):
         self.assertEqual(len(q1s), 2)
         for span in q1s:
             self.assertIn(Doubt.REPEATED, span.doubts)
+
+    def test_other_showings_are_never_repeated(self):
+        board = board_of(*shown(at(0), "ot"), *shown(at(10), "q4"), *shown(at(20), "final"))
+        others = [s for s in board.spans if s.period is Period.OTHER]
+        self.assertEqual(len(others), 2)
+        for span in others:
+            self.assertNotIn(Doubt.REPEATED, span.doubts)
 
     def test_a_skipped_period_is_out_of_order(self):
         board = board_of(*shown(at(0), "q1"), rise(at(100)), *shown(at(110), "q3"))

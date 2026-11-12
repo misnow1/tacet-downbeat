@@ -154,7 +154,8 @@ entries are good fader labels for the whole game** except 15:13:27 to 15:15:13.
   stand down, so the box stayed armed through halftime. No consequence in
   Phase 1 (#207).
 - **Last two minutes** spans 18:36:15 to 18:40:26. The game clock was reset to
-  20:00 instead of 2:00 at that timeout (operator's note); RTD shows the period ending at 18:40:49 (`tacet-quarters`, #212).
+  20:00 instead of 2:00 at that timeout (operator's note); RTD shows the period ending at 18:40:49
+  (`tacet-quarters`, #212).
 - **Target level** changed three times: +3.0 at 15:11:45 (rode, open), 0.0 at
   17:15:09 (stored, closed), +3.0 at 17:31:05 (rode, open).
 - **Other band** on the field 15:16:16 to 15:35:24, pregame.

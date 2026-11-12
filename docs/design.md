@@ -518,7 +518,8 @@ Initial event vocabulary (extend freely — unknown-unknowns are the point):
 
 Plus, standing in for RTD until it exists (§5.4), the game-timing events an
 operator can see from the box. Quarters and halftime were retired as buttons
-in #155 and are derived offline from the RTD capture (`tacet-quarters`, #212). The timeouts, `last-two-minutes` and
+in #155 and are derived offline from the RTD capture (`tacet-quarters`,
+#212). The timeouts, `last-two-minutes` and
 `halftime-exodus` were spans until #216: the operator missed the second tap, so
 each is now a single-tap instant (`timeout-tap`, `timeout-home-tap`,
 `timeout-away-tap`, `timeout-media-tap`, `timeout-injury-tap`,
@@ -687,7 +688,7 @@ Conventions:
   the timeouts of Games 2 to 4 are intervals; a fader move is a point. Since
   #216 a Game 5 timeout, last-two-minutes or halftime exodus is one point
   marker (`GAME|timeout-tap`, `GAME|last-two-minutes-tap`) from the tap; a
-  timeout's span is derived afterwards into the sidecar (`tacet-timeouts`),
+  timeout's span is derived afterwards into the sidecar (`tacet-timeouts`);
   Last two minutes' span is derived the same way with its period's end
   (`tacet-quarters`), and Halftime exodus never has one.
 - **Parseable names** — a delimited prefix (`FDR|up-whistle`, `GAME|q3-start`)

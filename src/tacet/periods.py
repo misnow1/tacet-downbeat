@@ -171,7 +171,7 @@ class _Board:
             self._quarter = change.new
         elif change.field == rtd.QUARTER_TEXT:
             self._text = change.new
-        elif is_rise(change.old, change.new):
+        elif change.field == rtd.CLOCK_AT_ZERO and is_rise(change.old, change.new):
             self._rises.append(time)
 
     def settle(self, time: float) -> None:

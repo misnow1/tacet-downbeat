@@ -142,6 +142,7 @@ class TestKeys(unittest.TestCase):
         self.assertEqual(quarters.period_span_id("q1"), "q1-rtd")
         self.assertNotEqual(quarters.period_span_id("q1"), ann.span_id_for("q1", 1))
         self.assertEqual(quarters.SOURCE, "rtd")
+        self.assertFalse(quarters.PERIOD_SPAN_SUFFIX.isdigit())
 
     def test_every_quarter_is_one_of_the_periods(self):
         self.assertEqual(quarters.QUARTERS, (Period.Q1, Period.Q2, Period.Q3, Period.Q4))
@@ -167,7 +168,7 @@ class TestPeriods(unittest.TestCase):
             found = verdicts(build([], game(q3=pspan(Period.Q3, 300, 400, end_doubts=(doubt,)))))
             self.assertEqual(found["q3"], PeriodVerdict.UNTRUSTED, doubt)
 
-    def test_a_doubt_at_a_boundary_taints_both_periods_beside_it(self):
+    def test_an_end_doubt_makes_it_untrusted(self):
         found = verdicts(build([], game(q2=pspan(Period.Q2, 100, 200, end_doubts=(Doubt.INTERRUPTED,)))))
         self.assertEqual(found["q2"], PeriodVerdict.UNTRUSTED)
 
@@ -326,6 +327,19 @@ class TestLastTwoMinutes(unittest.TestCase):
         spans = game(q4=pspan(Period.Q4, 400, None))
         self.assertEqual(build([tap(1, 450)], spans).comparison.taps[0].verdict, TapVerdict.NO_END)
 
+    def test_a_tap_delivered_after_the_zero_counts_in_its_quarter(self):
+        match = build([tap(1, 503, delay=5.0)], game()).comparison.taps[0]
+        self.assertEqual(match.verdict, TapVerdict.SPAN_ADDED)
+        found = [a for a in adds(build([tap(1, 503, delay=5.0)], game())) if a.event == "last-two-minutes"]
+        self.assertEqual((found[0].wall, found[1].wall), (rtd_replay.iso(at(498)), rtd_replay.iso(at(500))))
+
+    def test_a_delayed_tap_belongs_to_the_quarter_its_start_fell_in(self):
+        report = build([tap(1, 405, delay=10.0)], game())
+        self.assertEqual(report.comparison.taps[0].verdict, TapVerdict.SPAN_ADDED)
+        found = [a for a in adds(report) if a.event == "last-two-minutes"]
+        self.assertEqual((found[0].wall, found[1].wall), (rtd_replay.iso(at(395)), rtd_replay.iso(at(400))))
+        self.assertEqual(found[0].evidence and found[0].evidence["period"], "q3")
+
     def test_a_tap_outside_the_capture_is_outside_capture(self):
         report = build([tap(1, -5000), tap(2, 9000)], game())
         self.assertEqual({t.verdict for t in report.comparison.taps}, {TapVerdict.OUTSIDE_CAPTURE})
@@ -343,7 +357,6 @@ class TestLastTwoMinutes(unittest.TestCase):
         report = build(log, game())
         self.assertEqual(report.comparison.taps, ())
         self.assertEqual(len(adds(report)), 10)
-        self.assertEqual(report.taps, 0)
 
     def test_a_second_write_is_already_in(self):
         first = build([tap(1, 450)], game())
@@ -404,6 +417,17 @@ class TestRender(unittest.TestCase):
         self.assertIn("q4", row)
         self.assertTrue(row.endswith("span-added"))
         self.assertIn("(attention: seq 813)", text)
+
+    def test_a_repeated_quarter_names_its_doubt_on_the_tap_row(self):
+        spans = game(q4=pspan(Period.Q4, 400, 500, own=(Doubt.REPEATED,)))
+        self.assertIn("untrusted (repeated)", self.text(build([tap(812, 450)], spans)))
+
+    def test_every_verdict_is_explained_in_box_md(self):
+        text = " ".join((REPO_ROOT / "docs" / "box.md").read_text(encoding="utf-8").split())
+        start = text.index("## After the game: quarters and halftime from RTD")
+        section = text[start : text.index("## The corrections sidecar", start)]
+        for verdict in [*PeriodVerdict, *TapVerdict]:
+            self.assertIn(f"`{verdict.value}`", section, verdict)
 
     def test_no_taps_says_none(self):
         self.assertIn("last two minutes taps: none", self.text(build([], game())))

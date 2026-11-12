@@ -22,9 +22,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Offline analysis only (tacet-pilot-check, #191; tacet-rtd, #210; tacet-timeouts, #205; tacet-quarters, #212). The box never
-# imports numpy or dpkt, so a plain `pip install -e .` there stays as small as
-# it was; `make install` includes this. tests/test_dependency_policy.py keeps it
+# Offline analysis only (tacet-pilot-check, #191; tacet-rtd, #210; tacet-timeouts, #205;
+# tacet-quarters, #212). The box never imports numpy or dpkt, so a plain
+# `pip install -e .` there stays as small as it was; `make install` includes this. tests/test_dependency_policy.py keeps it
 # that way.
 analysis = [
   "numpy>=2.2,<3",  # post-game pilot envelope; never on the control path
