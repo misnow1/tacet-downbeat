@@ -317,8 +317,8 @@ VOCABULARY: tuple[EventType, ...] = (
     # is still a detector hard case - a broadband simultaneous onset on all 14
     # mics - and #15 says where that gets labelled.
     # Game timing. Stood in for RTD until it exists (design.md 5.4). Quarters
-    # and halftime were retired as buttons in #155: they are reconstructed
-    # offline from `Announcer Mic Dry` and `HokieVision` (#159). The keys are
+    # and halftime were retired as buttons in #155: `tacet-quarters` derives
+    # them offline from the RTD capture as sidecar adds (#212). The keys are
     # never deleted: a span an older log left open is still ended through the
     # page's OPEN FROM AN EARLIER RUN.
     _span("q1", "Q1", Category.GAME, button=False),
@@ -328,7 +328,8 @@ VOCABULARY: tuple[EventType, ...] = (
     _span("halftime", "Halftime", Category.GAME, button=False),
     # Retired as buttons in #216: the operator missed the second tap, and a
     # better source now exists for every end that matters (the RTD play clock
-    # for timeouts, #205; the end of the period for Last two minutes, #212).
+    # for timeouts, #205; the end of the period for Last two minutes, #212,
+    # which `tacet-quarters` derives as sidecar adds).
     # Each has a single-tap instant just below, with the same label. The span
     # keys stay, with `button=False`, because `end_span` looks up the event of
     # a span an older log left open (Games 2 to 4 carry them) and old logs

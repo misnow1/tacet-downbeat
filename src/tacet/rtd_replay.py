@@ -312,6 +312,20 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def read_capture(capture: Path, *, port: int) -> tuple[list[Event], Summary]:
+    """Every event in a capture, and its summary: for the offline tools that need them all at once."""
+    from . import pcap
+
+    replay = Replay(port=port)
+    events: list[Event] = []
+    with capture.open("rb") as handle:
+        reader = pcap.Capture(handle)
+        for item in reader:
+            events += replay.feed(item)
+        replay.summary.truncated_file = reader.truncated
+    return events, replay.summary
+
+
 def _replayed(args: argparse.Namespace, out: TextIO) -> Replay:
     from . import pcap
 

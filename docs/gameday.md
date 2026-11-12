@@ -447,11 +447,11 @@ the fold on the press-box iPad. **Every timeout, Halftime exodus and Last two
 minutes is a single tap (#216): tap once when it starts, and there is no second
 tap.** The end of a timeout is read afterwards from the scoreboard's play
 clock, so without an RTD capture a timeout is only a start marker; Halftime exodus has no end; the end of Last two minutes is the end of
-the period, found offline (#212). Tapping again adds a second mark, so tap
+the period, found offline (`tacet-quarters`). Tapping again adds a second mark, so tap
 once. **Official timeout** is the timeout to tap whenever you cannot
 tell which kind; the typed ones are for when it is obvious. Quarters and
-halftime are no longer tapped: they are recovered afterwards from the
-announcer and HokieVision recordings. Colour and icon say what a button is:
+halftime are no longer tapped: they come afterwards from the RTD capture
+(`tacet-quarters`). Colour and icon say what a button is:
 green with an up arrow means the fader goes up; blue with a down arrow means
 it fades; violet is scoring; the quiet stopwatch buttons are timeouts; grey is
 everything else. Amber and red only ever mean a state on this page, never a
@@ -609,6 +609,10 @@ recording nor the log depends on the page or the markers working.
    timeout is only a start marker and its end cannot be recovered. Read it,
    then rerun with `--write`; copy the `.corrections.jsonl` with the log
    ([how to read it](box.md#after-the-game-timeouts-from-rtd)).
+8. Run `tacet-quarters <log> <capture>` on the same capture. It proposes the
+   quarters, halftime and the end of Last two minutes. Read it, then rerun with
+   `--write`; copy the `.corrections.jsonl` with the log
+   ([how to read it](box.md#after-the-game-quarters-and-halftime-from-rtd)).
 
 Four streams have to end up on the NAS together (design.md 9): the DVS
 multitrack, the DCA reference (a pilot tone, not the band PA), the RTD capture,

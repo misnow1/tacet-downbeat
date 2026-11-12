@@ -16,7 +16,7 @@ of a span event needs a phase and a span id, and an instant forbids them) and
 a span id built from the tap's seq. The start is the tap's own time less its
 logged delay; the end is where the hold ends. A second tap of the same kind in
 the same hold is `repeat-tap`: no proposal, and not a failure. `last-two-minutes-tap`
-is ignored here; its end is #212's.
+is ignored here; `tacet-quarters` gives its end (#212).
 
 For every tapped timeout this finds the stoppage (`tacet.stoppages`) its start
 fell in, says what RTD makes of its end and its kind, and proposes corrections.
@@ -669,19 +669,6 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def _replayed(capture: Path, port: int) -> tuple[list[rtd_replay.Event], rtd_replay.Summary]:
-    from . import pcap
-
-    replay = rtd_replay.Replay(port=port)
-    events: list[rtd_replay.Event] = []
-    with capture.open("rb") as handle:
-        reader = pcap.Capture(handle)
-        for item in reader:
-            events += replay.feed(item)
-        replay.summary.truncated_file = reader.truncated
-    return events, replay.summary
-
-
 def main(
     argv: list[str] | None = None,
     *,
@@ -703,7 +690,7 @@ def main(
     try:
         entries = list(ann.read_entries(args.log))
         existing = corrections.read_corrections(sidecar)
-        events, summary = _replayed(args.capture, args.port)
+        events, summary = rtd_replay.read_capture(args.capture, port=args.port)
     except (ann.AnnotationError, pcap.PcapFormatError, UnicodeDecodeError, OSError) as exc:
         print(f"tacet-timeouts: {_ascii(str(exc))}", file=err)
         return EXIT_REFUSED

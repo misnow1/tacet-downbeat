@@ -4,7 +4,7 @@ This page gives the build order: what to build next, and why. The issues hold
 the detail and the decisions. This page holds only the order. Without it, the
 order lives only in the last conversation.
 
-Last updated 2026-11-11. Game 4 was played and debriefed (`game-4.md`). The
+Last updated 2026-11-12. Game 4 was played and debriefed (`game-4.md`). The
 Game 5 order below comes from that review.
 
 ## Before Game 3
@@ -256,7 +256,7 @@ meets a change is the game itself, so these land first and stay few.
 | ~~6~~ | ~~[#167](https://github.com/misnow1/tacet-downbeat/issues/167) Confirm every band track is armed before kickoff~~ | Done. The mirror script reports every track's arm state and name, and a strip chip names any track but Pilot (found by name) that is not armed, counts the armed ones, and says when that differs from `capture.channels`. Warn only. Record mode and input are #225 |
 | ~~7~~ | ~~[#48](https://github.com/misnow1/tacet-downbeat/issues/48) Pin the page messages that gameday.md quotes~~ | Done. Every message the runbook quotes is read out of app.js or the box's Python and looked for in each doc that quotes it (`PAGE_QUOTES`, `BOX_QUOTES` in `tests/test_runbook.py`). Every named string in app.js is quoted or says why not, and every line the mirror script logs, not only at startup, is in troubleshooting.md. #71's refusal is one line in `BOX_QUOTES`. Terminal-only refusals are #227 |
 | ~~8~~ | ~~[#206](https://github.com/misnow1/tacet-downbeat/issues/206) design.md 8: correct RTD from the first capture~~ | Done. design.md 8 now follows the Game 4 capture: UDP broadcast on port 21000 from a source address that moves, the checksum over everything after SYN through EOT, the whole buffer rewritten about every 10 s, and a field table that a test holds to `tacet.rtd`. The stat fields the operator saw on the board are not in the stream. The game-day capture takes every broadcast on the scoring VLAN, as Game 4 did. box.md and gameday.md say the same |
-| 9 | [#212](https://github.com/misnow1/tacet-downbeat/issues/212) Quarter and halftime spans from RTD | It follows #205. RTD marks kickoff and the end of every period, so the quarters need no taps. It reads only the clock-at-zero flag and the quarter field, never the main clock's value (the 20:00 slip at Game 4). It is offline and does not gate the game. With #205, it is what made the buttons single taps (#216); it still owes the end of Last two minutes |
+| ~~9~~ | ~~[#212](https://github.com/misnow1/tacet-downbeat/issues/212) Quarter and halftime spans from RTD~~ | Done. `tacet-quarters` proposes the Q1-Q4 and Halftime spans from the clock-at-zero flag and the quarter field, and each Last two minutes tap's end from its period's end, as sidecar adds. At Game 4 the boundaries are 15:35:00, 16:07:58, 16:53:33, 17:13:45, 17:54:44 and 18:40:49. It never reads the main clock's value |
 | 10 | [#71](https://github.com/misnow1/tacet-downbeat/issues/71) Accept only IP addresses for the console and Reaper hosts | Nothing is broken today, because the site config uses IP addresses. It closes the trap before somebody types a hostname. The maintainer accepts a lookup once at startup, with a warning (2026-09-13). Its refusal message goes in gameday.md, pinned by #48 |
 | 11 | [#42](https://github.com/misnow1/tacet-downbeat/issues/42) Constraint tests that would still pass with the constraint broken | Safety, with no change that the operator sees. #202 removes a fader key from the annotation path, and one of these tests checks that a move goes out before its log entry. It comes after #202, so the tests check what ships |
 | 12 | [#132](https://github.com/misnow1/tacet-downbeat/issues/132), [#136](https://github.com/misnow1/tacet-downbeat/issues/136), [#134](https://github.com/misnow1/tacet-downbeat/issues/134), [#201](https://github.com/misnow1/tacet-downbeat/issues/201) Docs: CLAUDE.md and design.md wording, and the named commands | Wording only. #132 and #201 both change CLAUDE.md, which is project instructions, so they share a PR of their own. #136 and #134 are small design.md fixes that can go in it. No thumb meets them, so they come late |
@@ -272,7 +272,7 @@ an end `add` in the sidecar. Halftime exodus has no end, because the band does
 not play again until the Q3 kickoff, and its tap still raises Stand down?. In a
 Game 5 log, Last two minutes is one `last-two-minutes-tap` instant and one
 Reaper point marker, `GAME|last-two-minutes-tap`: no region and no sidecar
-line until #212 adds the pair for the end of the period. It changes buttons that
+line until `tacet-quarters` adds the pair to the sidecar. It changes buttons that
 the operator taps, and takes away taps the operator already misses.
 
 Nice to have for Game 5:

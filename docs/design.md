@@ -518,14 +518,15 @@ Initial event vocabulary (extend freely — unknown-unknowns are the point):
 
 Plus, standing in for RTD until it exists (§5.4), the game-timing events an
 operator can see from the box. Quarters and halftime were retired as buttons
-in #155 and are recovered offline (#159). The timeouts, `last-two-minutes` and
+in #155 and are derived offline from the RTD capture (`tacet-quarters`,
+#212). The timeouts, `last-two-minutes` and
 `halftime-exodus` were spans until #216: the operator missed the second tap, so
 each is now a single-tap instant (`timeout-tap`, `timeout-home-tap`,
 `timeout-away-tap`, `timeout-media-tap`, `timeout-injury-tap`,
 `last-two-minutes-tap`, `halftime-exodus-tap`) and the span keys stay in the
 vocabulary, with no button, for older logs. A timeout's end is read offline
 from the RTD play clock (`tacet-timeouts`, #205), Last two minutes ends with
-the period (#212, not yet built), and Halftime exodus has no end at all.
+the period (`tacet-quarters`, #212), and Halftime exodus has no end at all.
 
 Two-tap maximum, no typing required for the common cases. Anything requiring
 attention mid-game will not get logged.
@@ -687,8 +688,9 @@ Conventions:
   the timeouts of Games 2 to 4 are intervals; a fader move is a point. Since
   #216 a Game 5 timeout, last-two-minutes or halftime exodus is one point
   marker (`GAME|timeout-tap`, `GAME|last-two-minutes-tap`) from the tap; a
-  timeout's span is derived afterwards into the sidecar (`tacet-timeouts`),
-  and the others wait for #212 or never have one.
+  timeout's span is derived afterwards into the sidecar (`tacet-timeouts`);
+  Last two minutes' span is derived the same way with its period's end
+  (`tacet-quarters`), and Halftime exodus never has one.
 - **Parseable names** — a delimited prefix (`FDR|up-whistle`, `GAME|q3-start`)
   so the later read is a split rather than a regex.
 
@@ -1072,7 +1074,8 @@ decoder's tripwire for a change outside every field never fired. The fields
 | `GUEST_TIMEOUTS` | 124 | 1 | 125 | Whose timeout (#205) | Timeouts left, `3` down to `0` |
 | `HOME_TIMEOUT_TEXT` | 131 | 5 | 132 | Timeouts | `<TIME` for a second or three at a home timeout, else blank |
 | `GUEST_TIMEOUT_TEXT` | 136 | 5 | 137 | Timeouts | `>TIME`, the same at a guest timeout |
-| `QUARTER` | 141 | 2 | 142 | Quarter breaks, halftime, halftime exodus arming | ` 1` to ` 4`; blank before the game and at halftime |
+| `QUARTER` | 141 | 2 | 142 | Quarter breaks, halftime, halftime exodus arming; quarter and halftime spans (#212) | ` 1` to ` 4`; blank before the game and at halftime |
+| `QUARTER_TEXT` | 143 | 4 | 144 | Pregame and halftime, where the quarter is blank (#212) | `PRE `, `1ST ` to `4TH `, `HALF` |
 | `QUARTER_DESCRIPTION` | 147 | 12 | 148 | Quarter breaks | `Pregame`, `1ST Quarter`, `Halftime` |
 | `PLAY_CLOCK` | 200 | 8 | 201 | Play-clock-low caution; logging; timeout ends (#205) | Two digits at 203 and 204, `40` down to `0` |
 | `HOME_POSSESSION` | 209 | 5 | 210 | #95 | `<POSS` or blank |
@@ -1143,7 +1146,8 @@ reader attaches during the countdown rather than at kickoff. Two consequences:
 
 The countdown reaching zero is also the cheapest kickoff anchor available. It
 is machine-visible and does not depend on anyone tapping a button. At Game 4 it
-came 92 s before the first quarter's clock started.
+came 92 s before the first quarter's clock started. `tacet-quarters` uses it as
+the first quarter's start, as it uses halftime's zero for the third's.
 
 ### RTD is context: Game 4 showed why
 
@@ -1161,9 +1165,9 @@ from the stream itself:
 
 An interlock on any of those would have acted on a fact that was false or not
 there. As context they cost nothing: the operator kept the fader, and the
-offline tools read flags and transitions rather than the clock's digits (#212
-is to read the clock-at-zero flag and the quarter, never the main clock's
-value). RTD is context, never an interlock.
+offline tools read flags and transitions rather than the clock's digits
+(`tacet-quarters`, #212, reads the clock-at-zero flag and the quarter, never the
+main clock's value). RTD is context, never an interlock.
 
 ### Asked, and answered
 

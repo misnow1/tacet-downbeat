@@ -289,7 +289,7 @@ present while the fader must stay **closed**, which is the single hardest case
 the detector has to learn and the reason `other-band-on-field` is in the
 vocabulary at all. A halftime is 20-30 minutes, about 5-8 GB at the track count
 above. If space ever genuinely bites, trim the `halftime` span afterwards; it is
-already delimited in the log.
+delimited afterwards in the sidecar by `tacet-quarters` ([box.md](box.md#after-the-game-quarters-and-halftime-from-rtd)).
 
 If you want a genuine throwaway test first, make it a throwaway in both places:
 
