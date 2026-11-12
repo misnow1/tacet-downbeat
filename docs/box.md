@@ -613,8 +613,8 @@ one team's mark gets that team's key on both lines, and keeps the id. No
 hold give one span and `repeat-tap` for the later one; **different kinds** in
 one hold each get a span, as nested spans do. A tap with no trusted hold
 (`untrusted`, `no-stoppage`, `outside-capture`) proposes nothing and fails the
-run, as a span's tap does. `last-two-minutes-tap` is ignored here: its end is
-the end of the period (#212), and its span follows from that. `halftime-exodus-tap`
+run, as a span's tap does. `last-two-minutes-tap` is ignored here: `tacet-quarters` gives
+its end, the end of the period (#212, below). `halftime-exodus-tap`
 has no end and is never a span. The header adds `, N single taps` when there are
 any.
 
@@ -648,6 +648,84 @@ taps, repeat taps, holds with no tap and stray marks never fail the run.
 
 ---
 
+## After the game: quarters and halftime from RTD
+
+Quarters and halftime are not tapped (#155), and Last two minutes is a single tap
+with no end (#216). The scoreboard knows where every period ends: its clock
+reaches zero and the board raises a flag. `tacet-quarters` lays the log beside an
+RTD capture (see above) and proposes each period's span as sidecar `add` lines.
+It reads two files and sends nothing; it is not run on the box during a game.
+
+```
+tacet-quarters GAME.jsonl GAME.pcap            # read the report
+tacet-quarters GAME.jsonl GAME.pcap --write    # append the proposals to the sidecar
+```
+
+`python -m tacet.quarters` is the same tool run as a module; `--port` is as for
+`tacet-rtd`. The log is never edited. Without `--write` nothing is written.
+
+**The rule.** A period ends when the board's clock-at-zero flag (`z`) rises. At
+Game 4 the flag rose at 15:35:00, 16:07:58, 16:53:33, 17:13:45, 17:54:44 and
+18:40:49, and the quarter field changed 2 to 16 s after each. Each period starts
+where the one before it ended, so the periods tile the game: Q1 starts at the
+pregame countdown's zero and Q3 at halftime's. Where a period saw no flag, the
+quarter field changing is the boundary instead, and the report says which
+(`start` and `end` columns). A flag that flickered counts every rise and uses
+the last. **The main clock is never read**: it was set to 20:00 instead of 2:00
+at Game 4's last timeout, and its value says nothing about where a period ends.
+Only the flag, the quarter field and its text (`PRE `, `HALF`, for the blanks)
+are read.
+
+**Doubts.** A period whose start or end has a doubt is `untrusted` and proposes
+nothing. `interrupted` is a gap in the capture near the boundary and
+`source-changed` is the sending address moving there; both look back 11 s from
+the boundary, because the console rewrites the whole buffer about every 10 s, so
+a change an outage hid shows within that of the stream coming back. A gap in the
+middle of a quarter does not matter when the flag was seen at its end. Also
+`out-of-order` (a period skipped) and `repeated` (the board showed the same
+period twice).
+
+**Verdicts, per period (Q1, Q2, halftime, Q3, Q4):**
+
+- `span-added`: a trusted start and end; the proposal adds the span, two `add`
+  lines under the period's own key with the span id `q1-rtd` (`<key>-rtd`).
+- `already-spanned`: the log, or a sidecar `add` under another id, already starts
+  that key. Nothing is proposed, and it is not a failure.
+- `untrusted`: a doubt, named in the row.
+- `no-start` / `no-end`: the capture began or ended in it.
+- `missing`: the board never showed it.
+
+Pregame, overtime, FINAL and any period the board shows that is not Q1 to Q4
+or halftime are listed under "other periods shown" with the board's own text.
+They are never proposed and never fail the run; Q4 still ends at its flag.
+
+**Last two minutes.** The first `last-two-minutes-tap` in a quarter (any of Q1
+to Q4) becomes a span under the retired key `last-two-minutes` (an `add` of a
+span needs a `phase` and a `span_id`, and an instant forbids them): it starts at
+the tap less its logged delay and ends where the period does, with a `span_id`
+made from the tap's seq. A later tap in the same quarter is `repeat-tap`: nothing
+proposed, not a failure. Other verdicts are `untrusted` (the quarter's end has a
+doubt), `no-end`, `not-in-a-quarter` (pregame, halftime, overtime or after the
+game) and `outside-capture`. The `last-two-minutes` spans Games 2 to 4 carry are
+not read.
+
+**`--write`** appends the proposals to the corrections sidecar (below), as for
+`tacet-timeouts`: a line already there covers its target, so running it twice
+adds nothing. Copy the sidecar to the NAS with the log.
+
+**Exit codes.** `0` every period and tap was proposed or already there, and the
+capture is clean. `1` a period or tap was `untrusted`, `no-start`, `no-end`,
+`missing`, `not-in-a-quarter` or `outside-capture`, or the capture had faults or
+ends in the middle of a record. `2` it could not run: dpkt missing, an unreadable
+or corrupt log or capture, no RTD datagrams, a malformed sidecar (which is left
+untouched), bad arguments.
+
+**Install.** Same as `tacet-timeouts`: it needs dpkt, from the `analysis` extra
+that `make install` includes. A box installed before this change has no
+`tacet-quarters` until `make install` is run once more after pulling.
+
+---
+
 ## The corrections sidecar
 
 What a later look at a game says its log got wrong, kept beside the log and never
@@ -671,7 +749,8 @@ required, and an optional `evidence` object that readers carry through untouched
 
 Examples: the first is game 4's seq 637; the others are illustrative (a
 generic timeout made the away team's, a missing end added, and the start and
-end `add` pair a single `timeout-media-tap` at seq 901 earns).
+end `add` pair a single `timeout-media-tap` at seq 901 earns; and the
+first line of Q1's pair from `tacet-quarters`).
 
 ```
 {"action":"supersede","evidence":{"capture":"rtd-game-4-gt.pcap","hold_end":"2026-10-17T22:02:56.995609+00:00","hold_start":"2026-10-17T22:00:06.496680+00:00","superseded_wall":"2026-10-17T22:09:02.595268+00:00"},"reason":"play clock counted down after a 170 s hold; the tapped end was 366 s late","seq":637,"source":"rtd","v":1,"wall":"2026-10-17T22:02:56.995609+00:00"}
@@ -679,6 +758,7 @@ end `add` pair a single `timeout-media-tap` at seq 901 earns).
 {"action":"add","event":"timeout","phase":"end","reason":"play clock counted down after a 60 s hold; the span was never ended","source":"rtd","span_id":"timeout-901","v":1,"wall":"2026-10-17T20:01:00.000000+00:00"}
 {"action":"add","event":"timeout-media","evidence":{"capture":"rtd-example.pcap","hold_end":"2026-10-17T20:03:00.000000+00:00","hold_start":"2026-10-17T20:00:00.000000+00:00","tap_seq":901},"phase":"start","reason":"a single tap in a 180 s hold where the play clock was not counting down; the start is the tap","source":"rtd","span_id":"timeout-media-901","v":1,"wall":"2026-10-17T20:00:03.000000+00:00"}
 {"action":"add","event":"timeout-media","evidence":{"capture":"rtd-example.pcap","hold_end":"2026-10-17T20:03:00.000000+00:00","hold_start":"2026-10-17T20:00:00.000000+00:00","tap_seq":901},"phase":"end","reason":"a single tap in a 180 s hold where the play clock was not counting down; the end is ready for play","source":"rtd","span_id":"timeout-media-901","v":1,"wall":"2026-10-17T20:03:00.000000+00:00"}
+{"action":"add","event":"q1","evidence":{"capture":"rtd-game-4-gt.pcap","clock_at_zero_rises":1,"end_by":"clock-at-zero","quarter_from":"2026-10-17T19:35:09.687834+00:00","quarter_to":"2026-10-17T20:08:14.576001+00:00","start_by":"clock-at-zero"},"phase":"start","reason":"the scoreboard showed q1; the start is the clock reaching zero as the period before it ended","source":"rtd","span_id":"q1-rtd","v":1,"wall":"2026-10-17T19:35:00.347213+00:00"}
 ```
 
 The raw log is never edited. `--write` writes proposals; a person can append their
@@ -703,7 +783,8 @@ Honest state of things, so nothing here reads as more settled than it is.
   StageMix, whose refresh is slower than the ramp, so a fine stagger would not
   have shown. No reason to think there is one.
 - **RTD.** The decoder exists and replays the Game 4 capture (`tacet-rtd`,
-  above); timeout ends now come from it, offline (`tacet-timeouts`, above). The
+  above); timeout ends, quarters and halftime now come from it, offline (`tacet-timeouts` and
+  `tacet-quarters`, above). The
   live reader is #95, and game timing during the game is operator-tapped for now.
   Two things about the stream are known from Game 4 and will matter to it. The
   scoreboard console rewrites its whole buffer about every 10 s, so a reader

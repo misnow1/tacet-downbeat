@@ -306,9 +306,9 @@ class TestNumpyStaysOffTheBox(unittest.TestCase):
                     self.assertIn(alias.name.split(".")[0], allowed)
 
 
-#: The post-game timeout tools (#205). Each imports only the standard library at module level; dpkt
+#: The post-game timeout and quarter tools (#205, #212). Each imports only the standard library at module level; dpkt
 #: reaches `timeouts` through `pcap`, lazily, when the command runs.
-TIMEOUT_MODULES = ("stoppages", "corrections", "timeouts")
+TIMEOUT_MODULES = ("stoppages", "corrections", "timeouts", "periods", "quarters")
 
 
 class TestTimeoutToolsStayStdlibOnly(unittest.TestCase):
@@ -320,7 +320,10 @@ class TestTimeoutToolsStayStdlibOnly(unittest.TestCase):
                 self.assertIn(module, allowed, f"tacet.{name} imports {module!r}, which is not in the standard library")
 
     def test_they_import_at_module_level_without_dpkt(self):
-        code = "import sys, tacet.stoppages, tacet.corrections, tacet.timeouts; sys.exit('dpkt' in sys.modules)"
+        code = (
+            "import sys, tacet.stoppages, tacet.corrections, tacet.timeouts, tacet.periods, tacet.quarters; "
+            "sys.exit('dpkt' in sys.modules)"
+        )
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, "importing the timeout tools pulled in dpkt")
 
