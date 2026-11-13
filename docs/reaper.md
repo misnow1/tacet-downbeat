@@ -31,8 +31,9 @@ version, in the order it happens on the day, is in [gameday.md](gameday.md).
 ## Tracks to record
 
 Agreed for game 3 (see #13; game 2's list is in [game-2.md](game-2.md),
-"Capture: patch list") and corrected at the 2026-09-30 media runthrough
-(#145). The source of truth is the **"MV Recording Routing"** sheet in Drive,
+"Capture: patch list"), corrected at the 2026-09-30 media runthrough (#145),
+and grown to 34 recorded tracks for game 5, when DVS went to 48x48 (#231). The
+source of truth is the **"MV Recording Routing"** sheet in Drive,
 whose names match the Reaper template exactly. The stadium's DM7 I/O master
 sheet is out of date: where the two disagree, the routing sheet wins. Every
 feed gets a **fixed track name**, so offline tools find it by name rather than
@@ -40,44 +41,48 @@ position, and **every track is present from the moment recording starts** - a
 feed patched in mid-game leaves everything before it with nothing to compare
 against.
 
-| Reaper / DVS rx | Track | Source | Notes |
-|---|---|---|---|
-| 1 | MV Conductor | Rio ch 1, Dante split (pre-delay) | Console ch 37 |
-| 2 | MV Spare | Rio ch 2, Dante split (pre-delay) | Console ch 38 |
-| 3 | MV Snare | Rio ch 3, Dante split (pre-delay) | Console ch 39 |
-| 4 | MV BD | Rio ch 4, Dante split (pre-delay) | Console ch 40 |
-| 5 | MV Sax 1 | Rio ch 5, Dante split (pre-delay) | Console ch 41 |
-| 6 | MV Sax 2 | Rio ch 6, Dante split (pre-delay) | Console ch 42 |
-| 7 | MV Clarinets 1 | Rio ch 7, Dante split (pre-delay) | Console ch 43 |
-| 8 | MV Clarinets 2 | Rio ch 8, Dante split (pre-delay) | Console ch 44 |
-| 9 | MV Horns 1 | Rio ch 9, Dante split (pre-delay) | Console ch 45 |
-| 10 | MV Horns 2 | Rio ch 10, Dante split (pre-delay) | Console ch 46 |
-| 11 | MV Horns 3 | Rio ch 11, Dante split (pre-delay) | Console ch 47 |
-| 12 | MV Horns 4 | Rio ch 12, Dante split (pre-delay) | Console ch 48 |
-| 13 | MV Near | Rio ch 13, Dante split (pre-delay) | Console ch 49 |
-| 14 | MV Far | Rio ch 14, Dante split (pre-delay) | Console ch 50 |
-| 15 | TMMPO L Split | Rio ch 15, Dante split (pre-delay) | Console ch 51 |
-| 16 | TMMPO R Split | Rio ch 16, Dante split (pre-delay) | Console ch 52 |
-| 17 | Announcer Mic Dry | Console ch 1 direct out | Dante out 65. Dry speech transcribes far better than the mix |
-| 18 | Laptop | Console ch 2 direct out | Dante out 74 |
-| 19 | Ref Primary | Dante split (Axient) | |
-| 20 | Ref BU | Dante split (Axient) | |
-| 21 | HH Red | Dante split (Axient) | |
-| 22 | HH Blue | Dante split (Axient) | |
-| 23 | DJ TMMPO Direct Out | Console ch 7 direct out | Dante out 75. From the channel's own direct out, not the split, because the DJ's input can move |
-| 24 | HokieVision | Console ch 11 direct out | Dante out 76. New at the 2026-09-30 runthrough |
-| 25 | TruckFX | Console ch 15 direct out | Dante out 77. Same reason as track 23: it can move |
-| 26 | Pilot Reference | Console ch 53 direct out, **Post Fader** | Dante out 78. Source is the Pilot track's tone (track 31), injected on DVS send 1. See "The DCA reference: a pilot tone" below |
-| 27 | Hype PA Output | Console Matrix 8 out | Dante out 56. Band Group plus the other Hype PA group, post-ducker: what the Hype PA actually plays |
-| 28 | Main PA Output | Console matrix out | Dante out 50 |
-| 29 | Band Group | Console Band Group out, pre-ducker | Dante out 17. Context only, not a DCA reference; see below |
-| 30 | PJ Playback | Dante split | New at the 2026-09-30 runthrough |
-| 31 | Pilot | Reaper's tone generator, out on DVS send 1 | **Not armed; records nothing.** A Reaper track with no DVS receive: the source for track 26. See below |
+| Reaper | DVS rx | Track | Source | Notes |
+|---|---|---|---|---|
+| 1 | 1 | MV Conductor | Rio ch 1, Dante split (pre-delay) | Console ch 37 |
+| 2 | 2 | MV Spare | Rio ch 2, Dante split (pre-delay) | Console ch 38 |
+| 3 | 3 | MV Snare | Rio ch 3, Dante split (pre-delay) | Console ch 39 |
+| 4 | 4 | MV BD | Rio ch 4, Dante split (pre-delay) | Console ch 40 |
+| 5 | 5 | MV Sax 1 | Rio ch 5, Dante split (pre-delay) | Console ch 41 |
+| 6 | 6 | MV Sax 2 | Rio ch 6, Dante split (pre-delay) | Console ch 42 |
+| 7 | 7 | MV Clarinets 1 | Rio ch 7, Dante split (pre-delay) | Console ch 43 |
+| 8 | 8 | MV Clarinets 2 | Rio ch 8, Dante split (pre-delay) | Console ch 44 |
+| 9 | 9 | MV Horns 1 | Rio ch 9, Dante split (pre-delay) | Console ch 45 |
+| 10 | 10 | MV Horns 2 | Rio ch 10, Dante split (pre-delay) | Console ch 46 |
+| 11 | 11 | MV Horns 3 | Rio ch 11, Dante split (pre-delay) | Console ch 47 |
+| 12 | 12 | MV Horns 4 | Rio ch 12, Dante split (pre-delay) | Console ch 48 |
+| 13 | 13 | MV Near | Rio ch 13, Dante split (pre-delay) | Console ch 49 |
+| 14 | 14 | MV Far | Rio ch 14, Dante split (pre-delay) | Console ch 50 |
+| 15 | 15 | TMMPO L Split | Rio ch 15, Dante split (pre-delay) | Console ch 51 |
+| 16 | 16 | TMMPO R Split | Rio ch 16, Dante split (pre-delay) | Console ch 52 |
+| 17 | 17 | Announcer Mic Dry | Console ch 1 direct out | Dante out 65. Dry speech transcribes far better than the mix |
+| 18 | 18 | Laptop | Console ch 2 direct out | Dante out 74 |
+| 19 | 19 | Ref Primary | Dante split (Axient) | |
+| 20 | 20 | Ref BU | Dante split (Axient) | |
+| 21 | 21 | HH Red | Dante split (Axient) | |
+| 22 | 22 | HH Blue | Dante split (Axient) | |
+| 23 | 23 | DJ TMMPO Direct Out | Console ch 7 direct out | Dante out 75. From the channel's own direct out, not the split, because the DJ's input can move |
+| 24 | 24 | HokieVision | Console ch 11 direct out | Dante out 76. New at the 2026-09-30 runthrough |
+| 25 | 25 | TruckFX | Console ch 15 direct out | Dante out 77. Same reason as track 23: it can move |
+| 26 | 26 | Pilot Reference | Console ch 53 direct out, **Post Fader** | Dante out 78. Source is the Pilot track's tone (track 35), injected on DVS send 1. See "The DCA reference: a pilot tone" below |
+| 27 | 27 | Hype PA Output | Console Matrix 8 out | Dante out 56. Band Group plus the other Hype PA group, post-ducker: what the Hype PA actually plays |
+| 28 | 28 | Main PA Output | Console matrix out | Dante out 50 |
+| 29 | 29 | Band Group | Console Band Group out, pre-ducker | Dante out 17. Context only, not a DCA reference; see below |
+| 30 | 30 | PJ Playback | Dante split | New at the 2026-09-30 runthrough |
+| 31 | 31 | Stereo A L | Console Stereo A L bus out | Dante out 61, patched in Dante Controller. New for game 5 |
+| 32 | 32 | Stereo A R | Console Stereo A R bus out | Dante out 62. New for game 5 |
+| 33 | 33 | WetRef Bus | Console bus out | Dante out 9, patched in Dante Controller. New for game 5 |
+| 34 | 40 | NEZ Reference Mic | Rio ch 17 | **Needs phantom.** Patched in Dante Controller. New for game 5. DVS receives 34-39 have no source and no track, so from here the track and receive numbers differ |
+| 35 | - | Pilot | Reaper's tone generator, out on DVS send 1 | **Not armed; records nothing.** A Reaper track with no DVS receive: the source for track 26. See below |
 
-That is **30 recorded tracks**, plus the unarmed Pilot. Uncompressed 48 kHz /
-24-bit mono is 144 kB/s a track: **about 15.6 GB an hour at 30 tracks.**
+That is **34 recorded tracks**, plus the unarmed Pilot. Uncompressed 48 kHz /
+24-bit mono is 144 kB/s a track: **about 17.6 GB an hour at 34 tracks.**
 Recording from doors, as below (~6 h), plus the box's 10% disk-check margin
-([box.md](box.md#room-for-the-game)), is about 103 GB - which is why
+([box.md](box.md#room-for-the-game)), is about 116 GB - which is why
 `game_hours = 6.0` there, not the on-field game length.
 
 The box checks this itself (#167). The mirror script reports every track's arm
@@ -103,7 +108,7 @@ cannot be recovered reliably from it. Instead the reference is a steady pilot
 tone that only the DCA (and nothing downstream of it) can touch:
 
 1. **Reaper**: Cockos's stock JS **Tone Generator** (under Synthesis) on its
-   own track, `Pilot` (track 31), **not armed**. Master send **off** - it must
+   own track, `Pilot` (track 35), **not armed**. Master send **off** - it must
    never reach the PA. The 2026-09-30 template had it on, harmless only
    because the master has no hardware outputs; turn it off anyway. Hardware
    output to DVS send channel 1.
@@ -218,10 +223,10 @@ seq	42
 project	/Users/x/Reaper Media/20261114 X/20261114 X.RPP
 record_path	/Users/x/Reaper Media/20261114 X/Media
 script_checksum	90a458c5
-tracks	31
+tracks	35
 track	1	1	MV Conductor
 ...
-track	31	0	Pilot
+track	35	0	Pilot
 ```
 
 `project` is the open project's file; **empty means the project was never
@@ -342,12 +347,12 @@ kickoff, so most of that countdown is a set of empty stands.
 
 Record it anyway.
 
-| Start at | Runs for | 30 tracks |
+| Start at | Runs for | 34 tracks |
 |---|---|---|
-| Doors, T-150 | ~6 h | ~93 GB |
-| Band enters stadium, T-60 | ~4.5 h | ~70 GB |
+| Doors, T-150 | ~6 h | ~106 GB |
+| Band enters stadium, T-60 | ~4.5 h | ~79 GB |
 
-The difference between them is about 23 GB, which is not a reason to do
+The difference between them is about 26 GB, which is not a reason to do
 anything. Two things are:
 
 - **The empty stands are not empty of data.** A stadium filling up with no band
