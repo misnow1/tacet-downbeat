@@ -30,7 +30,7 @@ nobody wrote it down, not that nobody knows.
 | Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control |
 | Band DCA number | `17` | The console's DCA layout |
 | Recording path | `~/Reaper Media` | Laptop's local disk, one project folder per game. Listed as `~/Reaper Audio` until game 3; the projects were always here. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
-| Channels recorded | `30` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them. The page's tracks chip says when this differs from what Reaper has armed (#167) |
+| Channels recorded | `34` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them. The page's tracks chip says when this differs from what Reaper has armed (#167) |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
 | Target levels offered | `[3.0, 0.0, -3.0, -6.0]` dB | `fader.presets`, in the order the page lists them. Ordered loudest first so the page reads like a fader; the default is the row below, not the first entry |
@@ -206,6 +206,9 @@ once their packs are on, before kickoff. Three of them were digital silence
 for the whole 2026-09-30 runthrough, and a dead feed looks like a quiet one
 until someone listens back.
 
+Check `NEZ Reference Mic` (track 34, new for game 5) shows signal too. It needs
+phantom power, and without it the track records silence.
+
 ### 2. Load and run the ReaScript
 
 Actions > Show action list > New action > Load ReaScript > `tacet_mirror.lua`,
@@ -293,7 +296,7 @@ little.
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
 | Console chip, in the strip | Nothing. `Nothing answered at the console address at the last check` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
 | Project chip, in the strip | `Recording to ~/Reaper Media/<game folder>/Media`, dim, and the folder is this game's. `Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.` in amber means save the project into its game folder now; it only warns, and Start recording still works. `Older Reaper script running: run it again from Reaper.` after the path means the file was replaced but the running script is still the old code: run it again from Reaper. Anything starting `Reaper project unknown` means the mirror is not reporting: run the script (step 2) and see [troubleshooting.md](troubleshooting.md#the-page) |
-| Tracks chip, in the strip | `Tracks armed to record: 30`, dim, and the number is Channels recorded. `Not armed to record: ...` in amber means arm those tracks now; it only warns. `but capture.channels says` means Reaper and `tacet.toml` disagree: see [troubleshooting.md](troubleshooting.md#the-page). Anything starting `Track arming unknown` means the mirror is not reporting tracks: run the script again from Reaper (step 2); if it says `does not report it`, the script is old: see step 3 and [troubleshooting.md](troubleshooting.md#the-page) |
+| Tracks chip, in the strip | `Tracks armed to record: 34`, dim, and the number is Channels recorded. `Not armed to record: ...` in amber means arm those tracks now; it only warns. `but capture.channels says` means Reaper and `tacet.toml` disagree: see [troubleshooting.md](troubleshooting.md#the-page). Anything starting `Track arming unknown` means the mirror is not reporting tracks: run the script again from Reaper (step 2); if it says `does not report it`, the script is old: see step 3 and [troubleshooting.md](troubleshooting.md#the-page) |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
