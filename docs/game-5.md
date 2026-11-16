@@ -78,8 +78,14 @@ Checked directly, not recalled:
   source (`192.168.0.25`) all night, no gaps, no faults. That agrees with
   "the game clock was stable". The pregame sniffs are
   `rtd-26111401-stanford-pregame.pcap` and `-pregame-2.pcap`.
-- **Soundcheck log:** `games/20261114-stanford-soundcheck.jsonl` started a
-  recording at 15:31:55. That audio is not in this project.
+- **Soundcheck:** a separate project, `Reaper Media/20261114 Stanford
+  Pregame/`, with its own log, `games/20261114-stanford-soundcheck.jsonl`. One
+  take, 15:31:55 to 16:28:41 (3405.9 s), anchored the same way
+  (`recording-requested`, then `recording-started` confirmed by Reaper). The same
+  32 tracks plus `39-NEZ Reference Mic`, this time full length. Every `FILE`
+  path is relative (`Media/...`) and resolves. It was moved into place by hand
+  on 2026-11-15. The `.RPP` is named `202611114 Stanford Pregame.RPP`, with an
+  extra `1` in the date.
 
 ## The Reaper failure
 
@@ -181,7 +187,8 @@ Same procedure as game 3 ([Filing](game-3.md#filing)):
 | Laptop | NAS |
 |---|---|
 | `Reaper Media/20261114 Stanford/`, `games/20261114-stanford.jsonl`, `data/rtd-26111401-stanford.pcap` | `2026-11-14 VT-Stanford/`, `2026-11-14 VT-Stanford.jsonl` |
-| `data/rtd-26111401-stanford-pregame{,-2}.pcap`, `games/20261114-stanford-soundcheck.jsonl` | `2026-11-14 VT-Stanford/` beside the game, as the pregame sniff |
+| `Reaper Media/20261114 Stanford Pregame/`, `games/20261114-stanford-soundcheck.jsonl`, `data/rtd-26111401-stanford-pregame{,-2}.pcap` | `2026-11-14 VT-Stanford/` beside the game, as the soundcheck and pregame sniff |
 
-The Reaper project is a pregame recording only. File it anyway: it is the only
-audio of this game's 32-track setup.
+Both Reaper projects are pregame recordings only. File them anyway: they are the
+only audio of this game's 32-track setup, and the soundcheck is the only take
+with `NEZ Reference Mic` at full length.
