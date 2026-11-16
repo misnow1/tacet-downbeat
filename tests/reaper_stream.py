@@ -182,36 +182,45 @@ GAME_5_TRACKS = 34
 GAME_5_DUMP_SECONDS = 1.75
 
 
-def game_5_stream(*, dump_meters: bool, rolling_seconds: float = 6.0, start: float = 100.0):
+GAME_5_START = 100.0
+GAME_5_ROLLING_SECONDS = 6.0
+#: When the default stream's healthy roll has ended: the parked listening, then
+#: the roll. Everything after is the silence and the bursts.
+GAME_5_ROLL_ENDS = GAME_5_START + reaper.DEFAULT_FEEDBACK_TIMEOUT + LISTEN_MARGIN + GAME_5_ROLLING_SECONDS
+
+
+def game_5_stream(*, dump_meters: bool, rolling_seconds: float = GAME_5_ROLLING_SECONDS, start: float = GAME_5_START):
     """The Game 5 pattern, one packet at a time as `(time, packet)`.
 
-    A take start (`/record 1, /stop 0, /play 1`), then a healthy roll with
-    meters and `/time` ending at `GAME_5_TAKE_END`; then
-    the audio device goes, and Reaper is silent until the box's refresh draws a
-    burst: a `/lastmarker/name` that triggers it, the reply
-    (`/record 1`, `/play 1`), a short dump - one `/track/N/vu` per track when
-    `dump_meters` - and the `/time` that has not moved.
+    The stream starts as the field did at 18:09:45 and 19:03:07: the box is
+    already hearing a metered, parked Reaper, and its first refresh is answered
+    (`/record 0`). The take then starts inside that same run of feedback
+    (`/record 1, /stop 0, /play 1`), so it is a start with no refresh to answer
+    and writes one anchor and no found entry. A healthy roll follows, with
+    meters and `/time` ending at `GAME_5_TAKE_END`; then the audio device goes,
+    and Reaper is silent until a burst: a `/lastmarker/name` that triggers it,
+    the reply to the refresh it draws (`/record 1`, `/play 1`), a short dump -
+    one `/track/N/vu` per track when `dump_meters` - and the `/time` that has
+    not moved.
     """
     events: list[tuple[float, int, bytes]] = []
 
     def add(at: float, packet: bytes) -> None:
         events.append((at, len(events), packet))
 
-    # The take starts as Reaper announces it: recording is True through the
-    # roll, as it was in Game 5 from 19:03:07.
-    for address, value in (("/record", 1.0), ("/stop", 0.0), ("/play", 1.0)):
-        add(start, osc.encode_message(address, value))
-    # The box's refresh at the start of that run is answered at once, as the
-    # bench showed (#172): the answer to it is not what a later burst is.
-    for packet in refresh_reply(recording=True, playing=True):
+    for packet in refresh_reply(recording=False, playing=False):
         add(start + REFRESH_REPLY_SECONDS, packet)
+    roll_start = start + reaper.DEFAULT_FEEDBACK_TIMEOUT + LISTEN_MARGIN
+    for address, value in (("/record", 1.0), ("/stop", 0.0), ("/play", 1.0)):
+        add(roll_start, osc.encode_message(address, value))
     ticks = int(rolling_seconds * TICKS_PER_SECOND)
     for k in range(ticks):
-        at = start + k * TIME_INTERVAL
+        at = roll_start + k * TIME_INTERVAL
         add(at, time_packet(GAME_5_TAKE_END - (ticks - 1 - k) * TIME_INTERVAL))
-    for k in range(int(rolling_seconds * METERS_PER_SECOND)):
+    parked = roll_start - start
+    for k in range(int((parked + rolling_seconds) * METERS_PER_SECOND)):
         add(start + k / METERS_PER_SECOND, meter_packet())
-    last_roll = start + (ticks - 1) * TIME_INTERVAL
+    last_roll = roll_start + (ticks - 1) * TIME_INTERVAL
     burst_at = last_roll + GAME_5_FIRST_ANSWER_SECONDS
     for gap in (0.0, *GAME_5_ANSWER_GAPS):
         burst_at += gap

@@ -1,5 +1,5 @@
 {
-  "at": 5121.166666666667,
+  "at": 5123.666666666667,
   "buttons": [
     {
       "action": null,
@@ -218,7 +218,7 @@
       "id": 1,
       "kind": "take-stopped",
       "message": "Recording has stopped: Reaper says it is recording, but its playhead is frozen and its audio device is silent. Check the audio interface on the laptop (Dante adapter, DVS), then check Reaper is recording again.",
-      "raised_at": 5121.166666666667
+      "raised_at": 5123.666666666667
     }
   ],
   "log": {

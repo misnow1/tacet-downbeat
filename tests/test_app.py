@@ -17,6 +17,7 @@ from tests.disk import Disk
 from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
 from tests.reaper_stream import (
     GAME_5_ANSWER_GAPS,
+    GAME_5_ROLL_ENDS,
     GAME_5_TAKE_END,
     game_5_stream,
     listened_parked,
@@ -5745,17 +5746,24 @@ class TestATakeThatStopped(AppTestCase):
         self.assertIsNone(raised.project_seconds)
 
     async def test_a_frozen_answer_is_not_a_found_take(self):
-        # The answer to the box's refresh at the take's start is a found take,
-        # stamped from the roll. No burst after the device went adds another,
-        # and none is stamped with the frozen playhead.
+        # The take starts inside the run the box already heard (18:09:45), so it
+        # is a start with no refresh to answer: one anchor, and no found entry
+        # for the bursts either.
         app = self.build_timed()
         self.play_all(app)
-        found = self.named(tacet_app.RECORDING_FOUND)
-        self.assertEqual(len(found), 1)
-        self.assertLess(found[0].project_seconds, GAME_5_TAKE_END)
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
 
     async def test_nothing_is_stamped_with_the_frozen_playhead(self):
+        # Every entry made after the roll's last packet is unstamped, the first
+        # silence included (log seq 11 and 12, 19:36:25): `current_position`
+        # goes stale there, and then a frozen `/time` is not a moved one.
+        # Entries during the roll itself may be stamped, so the roll's last
+        # packet is the line.
         app = self.build_timed()
+        self.play(app, lambda: self.t[0] >= GAME_5_ROLL_ENDS - 0.01)
+        roll_ended = len(self.entries())
+        self.t[0] += 4.0
+        await app.annotate("up-whistle")
         self.play_to_first_fault(app)
         await app.annotate("drumline-cadence")
         await app.arm()
@@ -5764,12 +5772,11 @@ class TestATakeThatStopped(AppTestCase):
         await app.wait_for_fade()
         self.t[0] += 1.0
         await app.annotate("up-whistle")
-        entries = self.entries()
-        raised = next(e.seq for e in entries if e.event == ann.FAULT_RAISED)
-        taken = [e for e in entries if e.seq > raised]
-        self.assertTrue(any(e.event == tacet_app.MOVE_LANDED for e in taken))
-        self.assertTrue(any(e.event == tacet_app.COMMANDED for e in taken))
-        for entry in taken:
+        entries = self.entries()[roll_ended:]
+        self.assertTrue(any(e.event == tacet_app.MOVE_LANDED for e in entries))
+        self.assertTrue(any(e.event == tacet_app.COMMANDED for e in entries))
+        self.assertTrue(any(e.event == ann.FAULT_RAISED for e in entries))
+        for entry in entries:
             with self.subTest(event=entry.event):
                 self.assertIsNone(entry.project_seconds)
 
@@ -5883,10 +5890,9 @@ class TestATakeThatStopped(AppTestCase):
             app.handle_recorder_packet(packet)
             if not had and app.snapshot()["faults"]:
                 raised_by += 1
-                # A refresh may be drawn by the packet's run of feedback, but
-                # the raise itself is not a send.
-                self.assertLessEqual(len(self.reaper_sender.packets) - sent, 1)
-                self.assertEqual(self.reaper_sender.packets[sent:], self.reaper_sender.packets[sent : sent + 1])
+                # The raising `/time` arrives inside the burst's run, whose
+                # refresh the trigger already sent: the raise sends nothing.
+                self.assertEqual(len(self.reaper_sender.packets), sent)
             if app.snapshot()["faults"]:
                 before = len(self.reaper_sender.packets)
                 (fault,) = app.snapshot()["faults"]
@@ -5904,5 +5910,5 @@ class TestATakeThatStopped(AppTestCase):
             self.assertEqual(decoded.args, (reaper.REFRESH_ACTION,))
         self.assertEqual(set(addresses), {reaper.DEFAULT_ADDRESSES.action})
         self.assertNotIn(reaper.DEFAULT_ADDRESSES.record, addresses)
-        # One refresh per run of feedback: the take start's and each burst's.
+        # One refresh per run of feedback: the first run's and each burst's.
         self.assertLessEqual(len(addresses), len(GAME_5_ANSWER_GAPS) + 2)

@@ -4,6 +4,7 @@ from tacet import osc, reaper
 from tacet.net import TransportError
 from tests.reaper_stream import (
     GAME_5_ANSWER_GAPS,
+    GAME_5_ROLL_ENDS,
     GAME_5_TAKE_END,
     METER,
     METERS_PER_SECOND,
@@ -1289,7 +1290,7 @@ class TestMeters(unittest.TestCase):
 
     def test_a_dump_with_one_vu_per_track_never_counts(self):
         for at, _, _, after in stream_states(game_5_stream(dump_meters=True)):
-            if at > 100.0 + 6.0 + 1.0:
+            if at > GAME_5_ROLL_ENDS + 1.0:
                 self.assertFalse(after.meters_flowing(at), at)
 
 
@@ -1406,7 +1407,7 @@ class TestATakeThatHasStopped(unittest.TestCase):
     def test_a_box_restarted_into_a_frozen_reaper_raises_on_the_second_burst(self):
         raised = []
         for at, _, before, after in stream_states(
-            [(at, packet) for at, packet in game_5_stream(dump_meters=False) if at > 100.0 + 6.0]
+            [(at, packet) for at, packet in game_5_stream(dump_meters=False) if at > GAME_5_ROLL_ENDS]
         ):
             if reaper.take_stopped_heard(before, after):
                 raised.append(at)
