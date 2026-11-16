@@ -30,6 +30,8 @@ Daktronics RTD Capture: "/Users/misnow1/workspace/tacet-downbeat/data/rtd-261114
   * Display of configured network ports and their IP addresses in tacet-serve.
   * An error message in the console when a network interface disappears or Reaper enters an unexpected state
   * An error message in the status area of the main page when a defined network interface is not present as expected or disappears during the event. This error message should not clear unless manually cleared by an operator (to prevent flapping from being undetected). Such events should be logged as well.
+* A quick way to recover from feedback (added 2026-11-15, left out of the notes above)
+  * I've been able to run the band at +3dB for the past two games, but on some songs in this game that caused not great to very bad ringing. I ended up dropping the band bus by 1 or 2dB and leaving the DCA at 0dB or +3dB (or some combination thereof) during the game. There's no quick way to recover from feedback in the app: the band is either all on or all off (or ready). Being able to nudge the fader down without totally killing it, or having to switch layers to get to the DCA target, would be super useful.
 
 ---
 
@@ -175,10 +177,18 @@ no audio to label, **this game is of no use to the detector** (#217).
   a separate process that tacet-serve manages. Display only (#235, Game 6).
 - **Taps must survive gloves**: no text selection, and no scroll or swipe from a
   small drag (#236).
-- **Running from indoors in the cold is a question**, to discuss later. Any
-  answer has to keep the operator's sightline to the conductor (#237).
+- **Running from indoors in the cold is still a question.** The operator was
+  interviewed on 2026-11-15. The second half was run from under the NEZ stands
+  on the conductor mic, with no sightline. The options and what each depends on
+  are in #237; no decision yet.
 - **`tacet-timeouts` attaches a team timeout that drops just before its hold**
   (#239).
+- **Nudge the DCA 1 dB down or up from MAIN** to recover from ringing. It moves
+  the live level only, never the target, and is refused while the level is
+  unknown (#242, Game 6).
+- **A standalone, racked machine for tacet and Reaper** replaces the personal
+  laptop eventually: the spill, the lock screen, the walk back to the booth
+  (#241).
 
 ## Filing
 
