@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import dataclasses
+import datetime
 import io
 import os
 import signal
@@ -12,7 +13,21 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from tacet import annotations, disk, dm7, mirror_report, moves, provenance, reach, script_check, serve, state, targets
+from tacet import (
+    annotations,
+    disk,
+    dm7,
+    faults,
+    mirror_report,
+    moves,
+    provenance,
+    reach,
+    reaper,
+    script_check,
+    serve,
+    state,
+    targets,
+)
 from tacet import app as tacet_app
 from tests.test_app import ClosableFakeSender
 
@@ -1568,3 +1583,26 @@ class TestBuildPassesTheFlagsThrough(unittest.TestCase):
             app, log, _ = serve.build(serve.parser().parse_args(argv), CLEAN_CODE)
             log.close()
         self.assertEqual(app._retarget_ride_seconds, 0.25)
+
+
+class TestFaultLine(unittest.TestCase):
+    """#233: what the terminal says about a fault. Pure."""
+
+    WALL = datetime.datetime(2026, 11, 14, 19, 36, 14)
+
+    def fault(self):
+        _, fault = faults.FaultLatch().latch(faults.FaultKind.TAKE_STOPPED, reaper.TAKE_STOPPED, now=1.0)
+        assert fault is not None
+        return fault
+
+    def test_a_raise_says_when_what_and_what_to_do(self):
+        line = serve.fault_line(faults.Change.RAISED, self.fault(), wall=self.WALL, still_present=None)
+        self.assertEqual(line, f"FAULT at 19:36:14: {reaper.TAKE_STOPPED} Clear it on the page once it is fixed.")
+
+    def test_a_clear_that_is_still_true_says_so(self):
+        line = serve.fault_line(faults.Change.CLEARED, self.fault(), wall=self.WALL, still_present=True)
+        self.assertEqual(line, "fault cleared from the page: take-stopped, at 19:36:14 - it is still present")
+
+    def test_a_clear_that_is_fixed_does_not(self):
+        line = serve.fault_line(faults.Change.CLEARED, self.fault(), wall=self.WALL, still_present=False)
+        self.assertEqual(line, "fault cleared from the page: take-stopped, at 19:36:14")

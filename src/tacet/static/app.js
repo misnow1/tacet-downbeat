@@ -821,6 +821,8 @@ const RECORD_REASON_MISSING = "The box did not say why. "
 // with no reason was games 2 and 3: the operator could not tell a refusal they
 // should act on from one they should leave alone.
 function recordReason(rec) {
+  // A stopped take says why in its own words (#233), ahead of any refusal.
+  if (rec.fault && rec.fault.message) return rec.fault.message;
   if (rec.can_start) return "";
   return typeof rec.refusal === "string" && rec.refusal ? rec.refusal : RECORD_REASON_MISSING;
 }
@@ -837,11 +839,21 @@ const RECORDING_NO_FEEDBACK = "no feedback";
 const RECORDING_NOT_REPORTED = "not yet reported";
 // #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_ROLLING = "ROLLING";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const RECORDING_TAKE_STOPPED = "TAKE STOPPED";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const RECORDING_NO_DEVICE = "NO AUDIO DEVICE";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const FAULT_CLEAR = "Clear";
 
 // #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const FADER_SEND_FAILED = "Console unreachable: ";
 
-function recordingTag(liveness, known) {
+function recordingTag(liveness, known, fault) {
+  // Ahead of every liveness: a Reaper that says it is recording with a frozen
+  // playhead and a silent device reads LOST or live depending on the moment,
+  // and the cause is the same (#233).
+  if (fault) return ["fault", RECORDING_NO_DEVICE];
   if (liveness === "lost") return ["unknown", RECORDING_LINK_LOST];
   if (liveness === "unknown") return ["unknown", RECORDING_NO_FEEDBACK];
   if (!known) return ["unknown", RECORDING_NOT_REPORTED];
@@ -1127,8 +1139,10 @@ function render(received) {
   paintSlot();
 
   const rec = next.recording;
-  const [recClass, recLabel] = recordingTag(rec.liveness, rec.known);
-  $("rec").textContent = !rec.known ? "unknown" : (rec.recording ? RECORDING_ROLLING : "stopped");
+  const [recClass, recLabel] = recordingTag(rec.liveness, rec.known, rec.fault);
+  $("rec").textContent = rec.fault
+    ? RECORDING_TAKE_STOPPED
+    : (!rec.known ? "unknown" : (rec.recording ? RECORDING_ROLLING : "stopped"));
   const tag = $("rec-tag");
   tag.textContent = recLabel;
   tag.className = "tag " + recClass;
@@ -1144,7 +1158,40 @@ function render(received) {
   $("rec-pos").textContent =
     rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
 
+  paintFaults(next.faults);
   paintButtons(next);
+}
+
+// The ids of the faults on show, joined. The banners are rebuilt only when this
+// changes: a snapshot arrives about eleven times a second, and tearing down a
+// Clear button under a thumb is how a tap gets lost (#233).
+function faultSignature(faults) {
+  return (faults || []).map((fault) => fault.id).join(",");
+}
+
+let faultsShown = null;
+
+// One banner per latched fault, each with its message and a Clear button. A box
+// that sends no `faults` shows none.
+function paintFaults(faults) {
+  const signature = faultSignature(faults);
+  if (signature === faultsShown) return;
+  faultsShown = signature;
+  const node = $("faults");
+  node.innerHTML = "";
+  for (const fault of faults || []) {
+    const banner = document.createElement("div");
+    banner.className = "fault-banner";
+    const message = document.createElement("span");
+    message.textContent = fault.message;
+    const clear = document.createElement("button");
+    clear.textContent = FAULT_CLEAR;
+    clear.onclick = () => { post("/api/fault/clear", {id: fault.id}, clear); };
+    banner.appendChild(message);
+    banner.appendChild(clear);
+    node.appendChild(banner);
+  }
+  node.className = signature ? "shown" : "";
 }
 
 function paintButtons(next) {

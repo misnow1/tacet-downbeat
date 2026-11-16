@@ -213,6 +213,7 @@
     "moving": false,
     "sent_at": null
   },
+  "faults": [],
   "log": {
     "error": "could not write game.jsonl: No space left on device",
     "failures": 3,
@@ -253,6 +254,7 @@
     "can_start": false,
     "confirmed": false,
     "error": "no route to host",
+    "fault": null,
     "healthy": false,
     "known": false,
     "liveness": "lost",

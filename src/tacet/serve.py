@@ -89,6 +89,7 @@ from . import (
     config,
     disk,
     dm7,
+    faults,
     mirror,
     mirror_report,
     moves,
@@ -181,6 +182,27 @@ class StopSignals:
 #: when a further signal leaves a landing fade where it is.
 STOPPING = "stopping"
 ABANDONING = "leaving the fader where it is"
+
+
+#: What the terminal says when a fault goes up, and when the page clears one
+#: (#233). Quoted in docs/troubleshooting.md.
+FAULT_RAISED = "FAULT at {wall}: {message} Clear it on the page once it is fixed."
+FAULT_CLEARED = "fault cleared from the page: {kind}, at {wall}{still}"
+FAULT_STILL_PRESENT = " - it is still present"
+#: How the terminal writes a wall time.
+FAULT_WALL_FORMAT = "%H:%M:%S"
+
+
+def fault_line(
+    change: faults.Change, fault: faults.Fault, *, wall: datetime.datetime, still_present: bool | None
+) -> str:
+    """What the terminal says about a fault (#233). Pure: the caller passes the
+    wall time, and `still_present` on a clear."""
+    when = wall.strftime(FAULT_WALL_FORMAT)
+    if change is faults.Change.RAISED:
+        return FAULT_RAISED.format(wall=when, message=fault.message)
+    still = FAULT_STILL_PRESENT if still_present else ""
+    return FAULT_CLEARED.format(kind=fault.kind.value, wall=when, still=still)
 
 
 def _db_text(level: int) -> str:
@@ -330,6 +352,11 @@ async def _run(
         first_due=time.monotonic() + reach.KEEPALIVE_SECONDS,
     )
     app.on_armed(lambda: watch.request(reach.Trigger.ARM))
+    app.on_fault(
+        lambda change, fault, present: print(
+            fault_line(change, fault, wall=datetime.datetime.now(), still_present=present), flush=True
+        )
+    )
 
     runner = aiohttp_web.AppRunner(server)
     await runner.setup()

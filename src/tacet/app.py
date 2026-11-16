@@ -25,13 +25,23 @@ import time
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, assert_never
 
 from . import annotations as ann
-from . import arming, dm7, mirror_report, moves, prompts, reach, state, taps, targets
+from . import arming, dm7, faults, mirror_report, moves, prompts, reach, state, taps, targets
 from . import provenance as prov
 from .net import TransportError
-from .reaper import Liveness, ReaperClient, TakeReport, TransportState, clock_reading, record_refusal
+from .reaper import (
+    TAKE_STOPPED,
+    Liveness,
+    ReaperClient,
+    TakeReport,
+    TransportState,
+    clock_reading,
+    record_refusal,
+    take_stopped,
+    take_stopped_heard,
+)
 
 #: What an operator button that also moves the fader asks the machine to do.
 _ACTIONS: Mapping[ann.Action, state.Command] = {
@@ -403,6 +413,12 @@ class App:
         #: Told when the box becomes armed (#73): how the console check hears
         #: about an arm without the arm path knowing a check exists.
         self._armed_listeners: list[Callable[[], None]] = []
+        #: Faults the box has raised and the operator has not cleared (#233).
+        #: Observation only: nothing in here sends a packet.
+        self._faults = faults.FaultLatch()
+        #: Told when a fault goes up or is cleared, with `still_present` on a
+        #: clear: how the terminal hears of one without the latch knowing it.
+        self._fault_listeners: list[Callable[[faults.Change, faults.Fault, bool | None], None]] = []
         #: The loop the writer thread wakes when a batch lands (#41). None when
         #: built outside one, in which case the page learns of a deferred
         #: write failure from the next snapshot instead - the state tick's, at
@@ -1240,6 +1256,58 @@ class App:
             self._prompt = None
             self._notify()
 
+    async def clear_fault(self, fault_id: int, *, tap: taps.TapTiming | None = None) -> None:
+        """The operator says the fault is dealt with: logged, and unlatched (#233).
+
+        One tap, no confirmation. If it is still true the next Reaper answer
+        raises it again with a new id, and `still_present` on the entry says so.
+        A stale id is the ordinary race between two browsers and does nothing.
+        Sends nothing to anyone.
+        """
+        with _tapped(tap):
+            latch, fault = self._faults.clear(fault_id)
+            if fault is None:
+                return
+            self._faults = latch
+            present = self._fault_present(fault.kind)
+            self._record(
+                ann.FAULT_CLEARED,
+                data={
+                    **fault.as_data(),
+                    "latched_seconds": self._monotonic() - fault.raised_at,
+                    "still_present": present,
+                },
+                project_seconds=self._playhead(),
+            )
+            self._notify_fault(faults.Change.CLEARED, fault, present)
+            self._notify()
+
+    def on_fault(self, listener: Callable[[faults.Change, faults.Fault, bool | None], None]) -> None:
+        self._fault_listeners.append(listener)
+
+    def _notify_fault(self, change: faults.Change, fault: faults.Fault, present: bool | None) -> None:
+        for listener in self._fault_listeners:
+            # A broken listener must not break packet handling.
+            with contextlib.suppress(Exception):
+                listener(change, fault, present)
+
+    def _raise_fault(self, kind: faults.FaultKind, message: str, *, data: Mapping[str, Any]) -> None:
+        latch, fault = self._faults.latch(kind, message, now=self._monotonic())
+        if fault is None:
+            return
+        self._faults = latch
+        # Unstamped by construction: the playhead is the thing that is frozen.
+        self._record(ann.FAULT_RAISED, data={**fault.as_data(), **data}, project_seconds=self._playhead())
+        self._notify_fault(faults.Change.RAISED, fault, None)
+
+    def _fault_present(self, kind: faults.FaultKind) -> bool:
+        """Whether the evidence for `kind` holds right now."""
+        match kind:
+            case faults.FaultKind.TAKE_STOPPED:
+                return self._recorder is not None and take_stopped(self._recorder.state, self._monotonic())
+            case _:
+                assert_never(kind)
+
     def log_box_started(self) -> ann.Entry | None:
         """The run's first entry: what code this is (#157).
 
@@ -1426,7 +1494,10 @@ class App:
             return
         before = self._recorder.state
         self._recorder.handle_packet(packet)
-        self._log_take(before, self._recorder.state, self._recorder.last_take)
+        after = self._recorder.state
+        self._log_take(before, after, self._recorder.last_take)
+        if take_stopped_heard(before, after):
+            self._raise_fault(faults.FaultKind.TAKE_STOPPED, TAKE_STOPPED, data={"position": after.position})
         self._notify()
 
     def _log_take(self, before: TransportState, after: TransportState, take: TakeReport | None) -> None:
@@ -1475,6 +1546,7 @@ class App:
         if self._refused_recording and record_refused is None:
             refusal = None
         move = self._move
+        stopped = transport is not None and take_stopped(transport, now)
         return {
             # When this was taken, on the box's clock. The page keeps the newest
             # it has seen: a POST response held up on the wifi used to paint an
@@ -1554,7 +1626,13 @@ class App:
                 # a snapshot arrives without it, never on its own timer.
                 "move": None if move is None else move.as_data(),
             },
+            # Latched faults, until the operator clears each from the page (#233).
+            # Fixed at the raise, so it does not churn the snapshot.
+            "faults": self._faults.as_snapshot(),
             "recording": {
+                # Live, not latched: whether the evidence for TAKE_STOPPED holds
+                # right now. The latch is `faults`.
+                "fault": {"kind": faults.FaultKind.TAKE_STOPPED.value, "message": TAKE_STOPPED} if stopped else None,
                 "known": believed and transport is not None and transport.recording is not None,
                 "recording": bool(transport.recording) if transport is not None else False,
                 "position": transport.position if transport is not None else None,

@@ -213,6 +213,7 @@
     "moving": false,
     "sent_at": null
   },
+  "faults": [],
   "log": {
     "error": null,
     "failures": 0,
@@ -258,6 +259,7 @@
     "can_start": false,
     "confirmed": false,
     "error": null,
+    "fault": null,
     "healthy": true,
     "known": false,
     "liveness": "unknown",

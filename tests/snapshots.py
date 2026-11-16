@@ -34,7 +34,7 @@ from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
 from tests.disk import Disk
-from tests.reaper_stream import METER
+from tests.reaper_stream import METER, game_5_stream
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PREFIX = "snapshot-"
@@ -325,6 +325,19 @@ async def faults(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+async def take_stopped(root: Path) -> dict[str, Any]:
+    """Reaper says it is recording, but its audio device has gone: the Game 5
+    pattern, up to the first answer's frozen `/time`. The fault is latched and
+    the live evidence holds (#233)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    for at, packet in game_5_stream(dump_meters=False):
+        box.clock[0] = CLOCK_START + at
+        box.app.handle_recorder_packet(packet)
+        if box.app.snapshot()["faults"]:
+            break
+    return box.app.snapshot()
+
+
 STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
@@ -338,6 +351,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,
     "faults": faults,
+    "take-stopped": take_stopped,
 }
 
 

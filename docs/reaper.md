@@ -458,6 +458,12 @@ Reaper's feedback has to survive all of it.
   answers it. Unanswered (an older Reaper, the action missing), after the 5 s
   guard above the box behaves as #163 shipped it, until Reaper's next record
   start or stop.
+- **A Reaper with no audio device still answers a refresh** (Game 5, #233): with
+  `/record 1`, `/play 1` and the same `/time` as its last, every time, while the
+  meters and the live `/time` stream are gone. That repeated `/time` is how the
+  box knows the take has stopped (it raises `TAKE STOPPED`). The meters stopping
+  with the device is *assumed*, and is what the bench in #233 checks: if they do
+  not stop, the fault never fires and the page stays at `LINK LOST`.
 - **Quit is silent.** The stream just stops. The box can tell "closed" from
   "parked" only because the meters stop, and only while an audio device runs.
 - **Launch and project load send a placeholder dump first:** generic
