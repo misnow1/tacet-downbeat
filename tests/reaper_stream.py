@@ -148,3 +148,69 @@ def rolling_with_refresh(
     events.sort()
     for at, _, packet in events:
         yield at, packet
+
+
+#: One `/time` interval, in seconds: how far apart two readings of a moving
+#: playhead are, and how far the playhead moves between them.
+TIME_INTERVAL = 1 / TICKS_PER_SECOND
+
+
+def time_packet(position: float) -> bytes:
+    return osc.encode_message("/time", position)
+
+
+def rolled(position: float, now: float) -> list[tuple[float, bytes]]:
+    """Two `/time` readings one interval apart, the second reading `position`
+    at `now`: a playhead seen to move (#233). A lone `/time` is not enough to
+    be stamped, so a test that wants an entry stamped feeds these."""
+    return [(now - TIME_INTERVAL, time_packet(position - TIME_INTERVAL)), (now, time_packet(position))]
+
+
+#: The Game 5 log (2026-11-14): the take's last playhead, which every refresh
+#: answer after the audio device went carried again, 291 times.
+GAME_5_TAKE_END = 5087.6728515625
+#: Seconds from the last streamed `/time` to the first refresh answer.
+GAME_5_FIRST_ANSWER_SECONDS = 13.5
+#: Seconds between each answer and the next, from the log.
+GAME_5_ANSWER_GAPS = (21.7, 13.0, 20.2, 18.3, 20.5, 18.1, 16.2, 32.4, 5.2)
+#: Tracks in the template, one `vu` each in a refresh dump.
+GAME_5_TRACKS = 34
+#: Reaper's stall after the dump, before the repeated `/time` arrives.
+GAME_5_DUMP_SECONDS = 0.3
+
+
+def game_5_stream(*, dump_meters: bool, rolling_seconds: float = 6.0, start: float = 100.0):
+    """The Game 5 pattern, one packet at a time as `(time, packet)`.
+
+    A healthy roll with meters and `/time` ending at `GAME_5_TAKE_END`; then
+    the audio device goes, and Reaper is silent until the box's refresh draws a
+    burst: a `/lastmarker/name` that triggers it, the reply
+    (`/record 1`, `/play 1`), a short dump - one `/track/N/vu` per track when
+    `dump_meters` - and the `/time` that has not moved.
+    """
+    events: list[tuple[float, int, bytes]] = []
+
+    def add(at: float, packet: bytes) -> None:
+        events.append((at, len(events), packet))
+
+    ticks = int(rolling_seconds * TICKS_PER_SECOND)
+    for k in range(ticks):
+        at = start + k * TIME_INTERVAL
+        add(at, time_packet(GAME_5_TAKE_END - (ticks - 1 - k) * TIME_INTERVAL))
+    for k in range(int(rolling_seconds * METERS_PER_SECOND)):
+        add(start + k / METERS_PER_SECOND, meter_packet())
+    last_roll = start + (ticks - 1) * TIME_INTERVAL
+    burst_at = last_roll + GAME_5_FIRST_ANSWER_SECONDS
+    for gap in (0.0, *GAME_5_ANSWER_GAPS):
+        burst_at += gap
+        add(burst_at, osc.encode_message("/lastmarker/name", "marker"))
+        reply_at = burst_at + REFRESH_REPLY_SECONDS
+        for packet in refresh_reply(recording=True, playing=True):
+            add(reply_at, packet)
+        if dump_meters:
+            for n in range(GAME_5_TRACKS):
+                add(reply_at + 0.01, osc.encode_message(f"/track/{n + 1}/vu", 0.0))
+        add(burst_at + GAME_5_DUMP_SECONDS, time_packet(GAME_5_TAKE_END))
+    events.sort()
+    for at, _, packet in events:
+        yield at, packet

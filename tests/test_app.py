@@ -15,7 +15,14 @@ from tacet import mirror_report as mr
 from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
-from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply, rolling_with_refresh
+from tests.reaper_stream import (
+    listened_parked,
+    meter_packet,
+    mid_take_stream,
+    refresh_reply,
+    rolled,
+    rolling_with_refresh,
+)
 from tests.test_annotations import Gate, Killed
 
 
@@ -1907,6 +1914,14 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def roll_to(app, position):
+    """Feed `app` a playhead seen to move, ending at `position` (#233). On the
+    real clock the two readings are microseconds apart, so the step is ahead of
+    the wall time between them."""
+    for _, packet in rolled(position, 0.0):
+        app.handle_recorder_packet(packet)
+
+
 class TestThePlayheadIsStamped(AppTestCase):
     """Every entry carries Reaper's own position when Reaper is streaming it.
 
@@ -1924,7 +1939,7 @@ class TestThePlayheadIsStamped(AppTestCase):
 
     async def test_an_annotation_carries_the_reported_position(self):
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 1234.5))
+        roll_to(app, 1234.5)
         await app.annotate("band-enters-stands")
         self.assertEqual(self.last().project_seconds, 1234.5)
 
@@ -1932,7 +1947,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         # Never adjusted forward by the time since the packet arrived: that
         # would put our clock back into the answer.
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 90.0))
+        roll_to(app, 90.0)
         await app.annotate("drumline-cadence")
         self.assertEqual(self.last().project_seconds, 90.0)
 
@@ -1947,7 +1962,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         # confidently wrong point; unstamped falls back to the arithmetic.
         now = [100.0]
         app = self.build(monotonic=lambda: now[0])
-        app.handle_recorder_packet(osc.encode_message("/time", 55.0))
+        roll_to(app, 55.0)
         now[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT + 1.0
         await app.annotate("band-exits-stands")
         self.assertIsNone(self.last().project_seconds)
@@ -1960,7 +1975,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         # placed it correctly (#35).
         now = [100.0]
         app = self.build(monotonic=lambda: now[0])
-        app.handle_recorder_packet(osc.encode_message("/time", 4.8))
+        roll_to(app, 4.8)
         for _ in range(4):
             now[0] += 1.0
             app.handle_recorder_packet(osc.encode_message("/track/1/vu", 0.5))
@@ -1971,9 +1986,9 @@ class TestThePlayheadIsStamped(AppTestCase):
     async def test_spans_are_stamped_at_both_ends(self):
         self.with_span_button()
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 10.0))
+        roll_to(app, 10.0)
         span = await app.start_span(SPAN_KEY)
-        app.handle_recorder_packet(osc.encode_message("/time", 900.0))
+        roll_to(app, 900.0)
         await app.end_span(span)
         entries = self.entries()
         self.assertEqual(entries[-2].project_seconds, 10.0)
@@ -1981,7 +1996,7 @@ class TestThePlayheadIsStamped(AppTestCase):
 
     async def test_a_fader_move_is_stamped(self):
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 42.0))
+        roll_to(app, 42.0)
         await app.arm()
         await app.annotate("up-drums")
         commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
@@ -2279,12 +2294,17 @@ class TestAFoundTake(AppTestCase):
     def named(self, key):
         return [e for e in self.entries() if e.event == key]
 
-    def first_time_after_the_stall(self, **kwargs):
+    def first_moving_time_after_the_stall(self, **kwargs):
+        """The second `/time` the box hears: the first has no earlier reading to
+        be ahead of, and a found take is stamped only from one that moved (#233)."""
+        seen = 0
         for _, packet in rolling_with_refresh(100.0, **kwargs):
             decoded = osc.decode_packet(packet)
             if isinstance(decoded, osc.Message) and decoded.address == "/time":
-                return decoded.args[0]
-        raise AssertionError("no /time in the stream")
+                seen += 1
+                if seen == 2:
+                    return decoded.args[0]
+        raise AssertionError("no second /time in the stream")
 
     async def test_a_box_started_mid_take_writes_a_found_entry_and_no_anchor(self):
         app = self.build_timed()
@@ -2292,11 +2312,11 @@ class TestAFoundTake(AppTestCase):
         self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
         self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
 
-    async def test_the_found_entry_is_stamped_with_the_first_clock_after_the_reply(self):
+    async def test_the_found_entry_is_stamped_with_the_first_moving_clock_after_the_reply(self):
         app = self.build_timed()
         self.run_stream(app, rolling_with_refresh(100.0))
         (found,) = self.named(tacet_app.RECORDING_FOUND)
-        self.assertEqual(found.project_seconds, self.first_time_after_the_stall())
+        self.assertEqual(found.project_seconds, self.first_moving_time_after_the_stall())
         self.assertEqual(found.data, {ann.ANCHOR_CONFIRMED_BY: ann.CONFIRMED_BY_REAPER})
 
     async def test_a_box_restarted_on_its_own_log_mid_take_writes_no_second_anchor(self):
@@ -2349,7 +2369,7 @@ class TestAFoundTake(AppTestCase):
         self.run_stream(app, [(100.0, meter_packet())])
         replies = [(103.0 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
         self.run_stream(app, replies)
-        self.run_stream(app, [(103.5, osc.encode_message("/time", 7.0))])
+        self.run_stream(app, [(103.5, osc.encode_message("/time", 7.0)), (103.6, osc.encode_message("/time", 7.1))])
         self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
         self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
 
