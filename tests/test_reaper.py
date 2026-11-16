@@ -12,6 +12,7 @@ from tests.reaper_stream import (
     REFRESH_STALL_SECONDS,
     ROLLING_MIX,
     TICKS_PER_SECOND,
+    TIME_INTERVAL,
     game_5_stream,
     meter_packet,
     mid_take_stream,
@@ -333,18 +334,18 @@ class TestCurrentPosition(unittest.TestCase):
         self.assertEqual(state.current_position(100.5, timeout=2.0), 4.5)
 
     def test_a_position_that_stopped_arriving_is_not(self):
-        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = moving(reaper.TransportState(), 4.5, 100.0)
         self.assertIsNone(state.current_position(103.0, timeout=2.0))
 
     def test_other_feedback_does_not_keep_a_position_current(self):
-        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = moving(reaper.TransportState(), 4.5, 100.0)
         for now in (101.0, 102.0, 103.0):
             state = feed(state, "/track/1/vu", 0.5, now=now)
         self.assertEqual(state.liveness(103.0, timeout=2.0), reaper.Liveness.LIVE)
         self.assertIsNone(state.current_position(103.0, timeout=2.0))
 
     def test_nor_does_a_transport_report(self):
-        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = moving(reaper.TransportState(), 4.5, 100.0)
         state = feed(state, "/play", 0.0, now=102.5)
         self.assertIsNone(state.current_position(103.0, timeout=2.0))
 
@@ -353,7 +354,7 @@ class TestCurrentPosition(unittest.TestCase):
         self.assertIsNone(state.current_position(100.0))
 
     def test_an_unreadable_position_does_not_refresh_the_last_one(self):
-        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = moving(reaper.TransportState(), 4.5, 100.0)
         state = feed(state, "/time", "not a number", now=102.5)
         self.assertIsNone(state.current_position(103.0, timeout=2.0))
 
@@ -364,7 +365,7 @@ class TestCurrentPosition(unittest.TestCase):
     def test_a_position_older_than_the_current_window_is_not_current(self):
         # The refresh's dump stalls `/time` for about 1.5 s: still moving, but a
         # position that old is not where the playhead is (#172).
-        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = moving(reaper.TransportState(), 4.5, 100.0)
         at = 100.0 + reaper.POSITION_CURRENT_SECONDS + 0.1
         self.assertTrue(state.clock_running(at))
         self.assertIsNone(state.current_position(at))
@@ -506,7 +507,8 @@ class TestMotionIsTheClock(unittest.TestCase):
         self.assertFalse(state.clock_running(100.4 + reaper.DEFAULT_FEEDBACK_TIMEOUT + 0.5))
 
     def test_a_current_position_implies_a_running_clock(self):
-        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        state = moving(reaper.TransportState(), 4.5, 100.0)
+        self.assertIsNotNone(state.current_position(100.0))
         for now in (100.0, 100.4, 101.0, 102.0, 102.5, 200.0):
             if state.current_position(now) is not None:
                 self.assertTrue(state.clock_running(now))
@@ -1239,8 +1241,9 @@ class TestAPlayheadThatMoved(unittest.TestCase):
                     if after.position == GAME_5_TAKE_END and after.position_at == at and after.still_at == at:
                         self.assertIsNone(after.current_position(at))
                         self.assertIsNone(reaper.clock_reading(before, after))
-                        return
-                self.fail("no frozen reading in the stream")
+                        break
+                else:
+                    self.fail("no frozen reading in the stream")
 
 
 class TestMeters(unittest.TestCase):
@@ -1327,14 +1330,27 @@ class TestATakeThatHasStopped(unittest.TestCase):
         self.assertTrue(seen_between)
         assert last is not None
 
+    def roll_end(self):
+        """The state after the healthy roll's last packet, when the first burst's
+        trigger arrives, and the time of each."""
+        state = reaper.TransportState()
+        last_roll = 0.0
+        for at, packet in game_5_stream(dump_meters=False):
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            if decoded.address == "/lastmarker/name":
+                return state, last_roll, at
+            state = reaper.apply_feedback(packet, state, now=at)
+            last_roll = at
+        raise AssertionError("no burst in the stream")
+
     def test_the_first_silence_is_link_lost_not_take_stopped(self):
-        for at, _, _, after in stream_states(game_5_stream(dump_meters=False)):
-            if after.still_at is None and at > 100.0 + 7.0:
-                self.assertIs(
-                    after.liveness(at),
-                    reaper.Liveness.LIVE if at - (after.last_packet or 0) <= 2 else reaper.Liveness.LOST,
-                )
-                self.assertFalse(reaper.take_stopped(after, at))
+        state, last_roll, first_burst = self.roll_end()
+        self.assertTrue(state.recording)
+        for now in (last_roll + 3.0, last_roll + 10.0, first_burst - 0.1):
+            with self.subTest(now=now):
+                self.assertIs(state.liveness(now), reaper.Liveness.LOST)
+                self.assertFalse(reaper.take_stopped(state, now))
 
     def test_it_never_contradicts_the_record_refusal(self):
         for dump_meters in (False, True):
@@ -1344,14 +1360,12 @@ class TestATakeThatHasStopped(unittest.TestCase):
                         self.assertIsNotNone(reaper.record_refusal(after, now))
 
     def test_true_link_loss_is_never_take_stopped(self):
-        state = reaper.TransportState()
-        for at, packet in game_5_stream(dump_meters=False):
-            if at > 100.0 + 6.0:
-                break
-            state = reaper.apply_feedback(packet, state, now=at)
-        state = reaper.apply_feedback(_record(), state, now=107.0)
-        for now in (108.0, 110.0, 150.0):
-            self.assertFalse(reaper.take_stopped(state, now))
+        # `/record 1` at the start of the roll, then nothing at all.
+        state, last_roll, _ = self.roll_end()
+        for now in (last_roll + 3.0, last_roll + 10.0, last_roll + 50.0):
+            with self.subTest(now=now):
+                self.assertIs(state.liveness(now), reaper.Liveness.LOST)
+                self.assertFalse(reaper.take_stopped(state, now))
 
     def test_a_parked_transport_with_its_device_is_never_take_stopped(self):
         state = reaper.TransportState()
@@ -1373,19 +1387,20 @@ class TestATakeThatHasStopped(unittest.TestCase):
             self.assertFalse(reaper.take_stopped(state, 100.0 + k * 0.1))
 
     def test_a_healthy_roll_with_a_refresh_stall_and_a_stale_resume_never_is(self):
-        # The `/time` stalls past the still window, then a buffered stale
-        # reading arrives. Meters flow throughout: the device is running.
-        state = reaper.TransportState()
-        now = 100.0
+        # `/time` stalls past the still window, then a buffered stale reading
+        # arrives, then current ones. That stale reading is evidence on its own
+        # (`still_at` is set); it is the meters, flowing throughout because the
+        # device is running, that keep the fault down.
+        state = reaper.apply_feedback(_record(), reaper.TransportState(), now=100.0)
+        stale = 500.0 + 19 * 0.1 + TIME_INTERVAL
         for k in range(120):
             now = 100.0 + k * 0.1
             state = reaper.apply_feedback(meter_packet(), state, now=now)
-            if k % 1 == 0 and not (20 <= k < 90):
+            if k == 90:
+                state = reaper.apply_feedback(time_packet(stale), state, now=now)
+                self.assertIsNotNone(state.still_at)
+            elif not (20 <= k < 90):
                 state = reaper.apply_feedback(time_packet(500.0 + k * 0.1), state, now=now)
-            if k == 0:
-                state = reaper.apply_feedback(_record(), state, now=now)
-            if k == 95:
-                state = reaper.apply_feedback(time_packet(500.0 + 2.0), state, now=now)
             self.assertFalse(reaper.take_stopped(state, now), k)
 
     def test_a_box_restarted_into_a_frozen_reaper_raises_on_the_second_burst(self):

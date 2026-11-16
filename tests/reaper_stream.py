@@ -175,14 +175,18 @@ GAME_5_FIRST_ANSWER_SECONDS = 13.5
 GAME_5_ANSWER_GAPS = (21.7, 13.0, 20.2, 18.3, 20.5, 18.1, 16.2, 32.4, 5.2)
 #: Tracks in the template, one `vu` each in a refresh dump.
 GAME_5_TRACKS = 34
-#: Reaper's stall after the dump, before the repeated `/time` arrives.
-GAME_5_DUMP_SECONDS = 0.3
+#: From the burst's trigger to its repeated `/time`. In the log each found entry
+#: lands about 2.0 s after its `commanded` entry; less the mirror's 0.25 s poll
+#: that is about 1.75 s. It must stay inside one feedback run (under the 2 s
+#: timeout), or the burst would start a new run of its own.
+GAME_5_DUMP_SECONDS = 1.75
 
 
 def game_5_stream(*, dump_meters: bool, rolling_seconds: float = 6.0, start: float = 100.0):
     """The Game 5 pattern, one packet at a time as `(time, packet)`.
 
-    A healthy roll with meters and `/time` ending at `GAME_5_TAKE_END`; then
+    A take start (`/record 1, /stop 0, /play 1`), then a healthy roll with
+    meters and `/time` ending at `GAME_5_TAKE_END`; then
     the audio device goes, and Reaper is silent until the box's refresh draws a
     burst: a `/lastmarker/name` that triggers it, the reply
     (`/record 1`, `/play 1`), a short dump - one `/track/N/vu` per track when
@@ -193,6 +197,14 @@ def game_5_stream(*, dump_meters: bool, rolling_seconds: float = 6.0, start: flo
     def add(at: float, packet: bytes) -> None:
         events.append((at, len(events), packet))
 
+    # The take starts as Reaper announces it: recording is True through the
+    # roll, as it was in Game 5 from 19:03:07.
+    for address, value in (("/record", 1.0), ("/stop", 0.0), ("/play", 1.0)):
+        add(start, osc.encode_message(address, value))
+    # The box's refresh at the start of that run is answered at once, as the
+    # bench showed (#172): the answer to it is not what a later burst is.
+    for packet in refresh_reply(recording=True, playing=True):
+        add(start + REFRESH_REPLY_SECONDS, packet)
     ticks = int(rolling_seconds * TICKS_PER_SECOND)
     for k in range(ticks):
         at = start + k * TIME_INTERVAL

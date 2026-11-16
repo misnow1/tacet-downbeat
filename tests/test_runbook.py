@@ -189,6 +189,7 @@ BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (reaper, "TAKE_STOPPED", (RUNBOOK, TROUBLESHOOTING)),
     (serve, "FAULT_RAISED", (TROUBLESHOOTING,)),
     (serve, "FAULT_CLEARED", (TROUBLESHOOTING,)),
+    (serve, "FAULT_STILL_PRESENT", (TROUBLESHOOTING,)),
 )
 
 #: String constants in app.js that the runbook does not quote, and why not.

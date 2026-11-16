@@ -16,6 +16,7 @@ from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
 from tests.reaper_stream import (
+    GAME_5_ANSWER_GAPS,
     GAME_5_TAKE_END,
     game_5_stream,
     listened_parked,
@@ -5744,9 +5745,14 @@ class TestATakeThatStopped(AppTestCase):
         self.assertIsNone(raised.project_seconds)
 
     async def test_a_frozen_answer_is_not_a_found_take(self):
+        # The answer to the box's refresh at the take's start is a found take,
+        # stamped from the roll. No burst after the device went adds another,
+        # and none is stamped with the frozen playhead.
         app = self.build_timed()
         self.play_all(app)
-        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
+        found = self.named(tacet_app.RECORDING_FOUND)
+        self.assertEqual(len(found), 1)
+        self.assertLess(found[0].project_seconds, GAME_5_TAKE_END)
 
     async def test_nothing_is_stamped_with_the_frozen_playhead(self):
         app = self.build_timed()
@@ -5758,7 +5764,9 @@ class TestATakeThatStopped(AppTestCase):
         await app.wait_for_fade()
         self.t[0] += 1.0
         await app.annotate("up-whistle")
-        taken = [e for e in self.entries() if e.event not in (ann.FAULT_RAISED,)]
+        entries = self.entries()
+        raised = next(e.seq for e in entries if e.event == ann.FAULT_RAISED)
+        taken = [e for e in entries if e.seq > raised]
         self.assertTrue(any(e.event == tacet_app.MOVE_LANDED for e in taken))
         self.assertTrue(any(e.event == tacet_app.COMMANDED for e in taken))
         for entry in taken:
@@ -5859,17 +5867,35 @@ class TestATakeThatStopped(AppTestCase):
         self.assertEqual(len(app.snapshot()["faults"]), 1)
         self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
 
+    async def test_the_only_recording_started_is_the_take_start(self):
+        app = self.build_timed()
+        self.play_all(app)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 1)
+
     async def test_nothing_is_sent_to_the_console_or_to_reaper_because_of_it(self):
         app = self.build_timed()
         machine, commanded = app.machine.state, app.snapshot()["fader"]["commanded"]
-        self.play_to_first_fault(app)
-        await app.clear_fault(1)
-        self.play_all(app)
-        await app.clear_fault(2)
+        raised_by = 0
+        for at, packet in self.stream:
+            self.t[0] = at
+            sent = len(self.reaper_sender.packets)
+            had = bool(app.snapshot()["faults"])
+            app.handle_recorder_packet(packet)
+            if not had and app.snapshot()["faults"]:
+                raised_by += 1
+                # A refresh may be drawn by the packet's run of feedback, but
+                # the raise itself is not a send.
+                self.assertLessEqual(len(self.reaper_sender.packets) - sent, 1)
+                self.assertEqual(self.reaper_sender.packets[sent:], self.reaper_sender.packets[sent : sent + 1])
+            if app.snapshot()["faults"]:
+                before = len(self.reaper_sender.packets)
+                (fault,) = app.snapshot()["faults"]
+                await app.clear_fault(fault["id"])
+                self.assertEqual(len(self.reaper_sender.packets), before)
+        self.assertGreater(raised_by, 1)
         self.assertEqual(self.console_sender.packets, [])
         self.assertEqual(app.machine.state, machine)
         self.assertEqual(app.snapshot()["fader"]["commanded"], commanded)
-        self.assertTrue(self.reaper_sender.packets)
         addresses = []
         for packet in self.reaper_sender.packets:
             decoded = osc.decode_packet(packet)
@@ -5878,3 +5904,5 @@ class TestATakeThatStopped(AppTestCase):
             self.assertEqual(decoded.args, (reaper.REFRESH_ACTION,))
         self.assertEqual(set(addresses), {reaper.DEFAULT_ADDRESSES.action})
         self.assertNotIn(reaper.DEFAULT_ADDRESSES.record, addresses)
+        # One refresh per run of feedback: the take start's and each burst's.
+        self.assertLessEqual(len(addresses), len(GAME_5_ANSWER_GAPS) + 2)

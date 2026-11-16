@@ -119,7 +119,8 @@ function browser(options = {}) {
     // every button it has been asked to make.
     // The one exception is a fault banner's Clear button (#233): it is in the
     // strip, under none of the selectors the page asks for, and the real DOM
-    // would not hand it back.
+    // would not hand it back. tests/test_web.py pins that in the real markup
+    // (test_the_banners_are_in_the_strip_and_out_of_every_button_sweep).
     querySelectorAll: () =>
       created.filter((node) => node.tag === "button" && !(node.parentNode && node.parentNode.className === "fault-banner")),
     // Recorded, never fired: the page re-takes its wake lock when the tab
@@ -3877,7 +3878,6 @@ const onMain = (world) => world.nodes.get("tab-main").style.display === "";
   context.render(later);
   check("fault banner: rebuilt when the id changes", nodes.get("faults").children[0] === first, false);
   const cleared = structuredClone(later);
-  cleared.at += 1;
   cleared.faults = [];
   cleared.recording.fault = null;
   context.render(cleared);

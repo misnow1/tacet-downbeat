@@ -2042,6 +2042,18 @@ class TestFaultClearRoute(WebTestCase):
         (cleared,) = [e for e in ann.read_entries(self.root / "game.jsonl") if e.event == ann.FAULT_CLEARED]
         self.assertIn("tap", cleared.data)
 
+    def test_the_banners_are_in_the_strip_and_out_of_every_button_sweep(self):
+        # The page's relabel loop sweeps "#fader-top button, #fader-bottom
+        # button, #tab-main button, #tab-more-vocabulary button". The Clear
+        # button must be under none of them, or it would be relabelled as a
+        # vocabulary button. The JS stub ignores selectors and filters it by hand
+        # (tests/test_app_js.mjs); this is what makes that honest.
+        ancestors = _page_ancestors()["faults"]
+        self.assertIn("strip", ancestors)
+        for swept in ("fader-top", "fader-bottom", "fader-column", "tab-main", "tab-more", "tab-more-vocabulary"):
+            with self.subTest(swept=swept):
+                self.assertNotIn(swept, ancestors)
+
     async def test_the_page_has_a_place_for_the_banners_in_the_strip(self):
         body = await (await self.client.get("/")).text()
         strip = body[body.index('id="strip"') : body.index('id="prompt"')]
