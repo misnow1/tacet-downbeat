@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+# interfaces pulls in reach and asyncio: all standard library.
 from . import interfaces, targets
 
 #: Environment variable naming a config file, checked after `--config`.
@@ -280,7 +281,7 @@ def _check_interfaces(values: Mapping[str, object], *, where: str) -> None:
         if key in seen:
             raise ConfigError(
                 f"{where}: {seen[key]} and {option.name} both name {expected.describe()}. "
-                "Leave one out if one adapter serves both"
+                "Leave one out if one adapter serves both."
             )
         seen[key] = option.name
 

@@ -160,7 +160,9 @@ FAULT_NO_VLAN = (
     "Network adapter has no VLAN interface: the {label} role needs VLAN {vlan} on {name} ({mac}), "
     "and there is none. Recreate it in System Settings > Network, Manage Virtual Interfaces. {advice}"
 )
-SHARED_CABLE = "The {other} role uses this same adapter and cable, so one fix clears both."
+#: Only true of a physical failure, so only MISSING and LINK_DOWN carry it.
+SHARED_CABLE = "Same adapter and cable as the {other} role: if that role's banner is up too, both have this one cause."
+SHARED_CABLE_STATUSES = frozenset({Status.MISSING, Status.LINK_DOWN})
 ADVICE: Mapping[Role, str] = {
     Role.DANTE: (
         "Check its USB plug and its cable to the Dante switch. Without it Reaper records nothing: "
@@ -497,7 +499,7 @@ def fault_message(found: Found, *, shares_with: Role | None) -> str:
         text = FAULT_NO_VLAN.format(label=label, vlan=found.vlan, name=name, mac=found.mac, advice=advice)
     else:
         raise ValueError(f"{found.role.value} is {found.status.value}: there is nothing to say")
-    if shares_with is not None:
+    if shares_with is not None and found.status in SHARED_CABLE_STATUSES:
         text = f"{text} {SHARED_CABLE.format(other=ROLE_LABELS[shares_with])}"
     return text
 

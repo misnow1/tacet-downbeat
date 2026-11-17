@@ -838,7 +838,7 @@ button[data-tone="timeout"] .ico{color:var(--tone-timeout)}
    not there, has no link, no address or no VLAN interface. */
 #strip > #interfaces{flex:1 1 0;min-width:0;max-width:240px;cursor:pointer}
 #strip > #interfaces.ok{color:var(--dim)}
-#strip > #interfaces.fault{background:var(--warn);color:#fff}
+#strip > #interfaces.fault{background:var(--warn);color:#fff;font-weight:700}
 #strip > #interfaces.note{color:#ffca7a}
 #strip > #interfaces[data-expanded="1"]{max-width:100%;flex-basis:100%}
 /* #204: where Reaper will record. Present in every state, so it never appears

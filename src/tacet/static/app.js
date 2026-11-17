@@ -939,7 +939,7 @@ function interfacesChip(i) {
   };
   const bad = i.roles.filter((r) => r.status !== "present");
   if (bad.length) {
-    return ["fault", INTERFACES_BAD + " " + bad.map((r) => r.role + " " + words[r.status]).join(", ") + "."];
+    return ["fault", INTERFACES_BAD + " " + bad.map((r) => r.role + " " + (words[r.status] || r.status)).join(", ") + "."];
   }
   return ["ok", INTERFACES_OK + " " + i.roles.map((r) => r.role + " " + r.name).join(", ")];
 }

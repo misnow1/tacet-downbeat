@@ -3437,6 +3437,9 @@ for (const name of Object.keys(SNAPSHOTS)) {
       ["fault", "Network adapter down: control no link, scoring no VLAN interface."]],
   ];
   for (const [label, block, want] of table) check("interfaces chip: " + label, chip(block), want);
+  check("a status this page does not know is shown as sent, never undefined",
+    chip(checked(role("dante", "future-status"))),
+    ["fault", "Network adapter down: dante future-status."]);
   check("not configured and all present read differently", [
     chip(table[0][1])[0] !== chip(table[3][1])[0],
   ], [true]);

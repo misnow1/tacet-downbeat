@@ -627,12 +627,14 @@ laptop:
    the console and the page go through it, so ride the fader from StageMix
    meanwhile. **Scoreboard:** only the game data is affected.
 2. **Two banners at once, control and scoreboard (RTD), are one cable.** Both
-   ride the same adapter, so each banner ends `The <other> role uses this same
-   adapter and cable, so one fix clears both.` Fix the one adapter and clear
-   both.
+   ride the same adapter, so each banner ends `Same adapter and cable as the
+   <other> role: if that role's banner is up too, both have this one cause.` Fix
+   the one adapter, then tap **Clear** on each banner.
 3. Tap **Clear** on each banner once it is fixed. The red chip in the strip
    clears itself when the adapter is back; the banner stays until you clear it.
-   A banner that comes straight back means the adapter is not back yet.
+   If the chip in the strip is still red after you clear the banner, the
+   adapter is not back yet. The banner will not come back on its own, but the
+   chip stays red until the adapter is fixed.
 
 ---
 

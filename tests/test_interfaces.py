@@ -477,6 +477,14 @@ class TestFaultMessage(unittest.TestCase):
         self.assertNotIn("same adapter", alone)
         self.assertTrue(shared.endswith(interfaces.SHARED_CABLE.format(other="scoreboard (RTD)")))
 
+    def test_only_a_physical_failure_gets_the_shared_cable_sentence_even_when_shared(self):
+        for status in (Status.MISSING, Status.LINK_DOWN):
+            text = interfaces.fault_message(self.found(Role.CONTROL, status), shares_with=Role.SCORING)
+            self.assertIn("Same adapter and cable as the scoreboard (RTD) role", text, status)
+        for status, vlan in ((Status.NO_VLAN, SCORING_TAG), (Status.NO_ADDRESS, None)):
+            text = interfaces.fault_message(self.found(Role.SCORING, status, vlan=vlan), shares_with=Role.CONTROL)
+            self.assertNotIn("Same adapter", text, status)
+
     def test_the_dante_advice_says_what_to_do_with_reaper(self):
         self.assertIn("Settings > Audio > Device", interfaces.ADVICE[Role.DANTE])
 

@@ -207,12 +207,12 @@ BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (serve, "FAULT_CLEARED", (TROUBLESHOOTING,)),
     (serve, "FAULT_STILL_PRESENT", (TROUBLESHOOTING,)),
     # #234. The templates are quoted up to their first value, so the docs show
-    # each in full. SHARED_CABLE starts with a value and is pinned by its tail,
-    # in test_the_runbook_quotes_the_shared_cable_sentence.
+    # each in full.
     (interfaces, "FAULT_MISSING", (RUNBOOK, TROUBLESHOOTING)),
     (interfaces, "FAULT_LINK_DOWN", (TROUBLESHOOTING,)),
     (interfaces, "FAULT_NO_ADDRESS", (TROUBLESHOOTING,)),
     (interfaces, "FAULT_NO_VLAN", (TROUBLESHOOTING,)),
+    (interfaces, "SHARED_CABLE", (RUNBOOK, TROUBLESHOOTING)),
     (serve, "INTERFACES_NOT_CONFIGURED", (RUNBOOK, TROUBLESHOOTING, BOX)),
     (serve, "INTERFACE_WARNING", (TROUBLESHOOTING, BOX)),
     (serve, "INTERFACE_WARNING_NOTE", (TROUBLESHOOTING, BOX)),
@@ -318,14 +318,6 @@ class QuotedMessagesExist(unittest.TestCase):
         for role, advice in interfaces.ADVICE.items():
             with self.subTest(role=role):
                 self.assertIn(advice, self.docs[TROUBLESHOOTING])
-
-    def test_the_runbook_quotes_the_shared_cable_sentence(self) -> None:
-        # Starts with a value, so `fixed_words` would be empty: quote what follows it.
-        tail = interfaces.SHARED_CABLE.split("}", 1)[1].strip()
-        self.assertTrue(tail.startswith("role uses this same adapter and cable"))
-        for doc in (RUNBOOK, TROUBLESHOOTING):
-            with self.subTest(doc=doc.name):
-                self.assertIn(tail, self.docs[doc])
 
     def test_the_banner_words_for_a_bad_role_are_in_box_md_and_troubleshooting(self) -> None:
         for status, word in interfaces.STATUS_WORDS.items():
