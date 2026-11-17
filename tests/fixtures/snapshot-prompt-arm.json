@@ -213,6 +213,7 @@
     "moving": false,
     "sent_at": null
   },
+  "faults": [],
   "log": {
     "error": null,
     "failures": 0,
@@ -257,9 +258,11 @@
     "can_start": false,
     "confirmed": false,
     "error": null,
+    "fault": null,
     "healthy": true,
     "known": false,
     "liveness": "unknown",
+    "moving": false,
     "position": null,
     "recording": false,
     "refusal": "Reaper is not answering. Open it, with its audio device running, or start the recording in Reaper."

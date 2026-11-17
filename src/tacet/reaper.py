@@ -49,8 +49,12 @@ DEFAULT_RECEIVE_PORT = 9000
 #: How long we wait for a packet, or for the `/time` stream, before calling it
 #: silent.
 #:
-#: What Reaper sends on the game rig (bench, 2026-10-04, #163): meters, about
-#: 11 packets a second, whenever its audio device runs - parked or rolling.
+#: What Reaper sends on the game rig (bench, 2026-10-04, #163): meters whenever
+#: its audio device runs - parked or rolling - and, measured on one address on
+#: 2026-11-16, only with signal: about 1.2 updates a second with the Pilot on
+#: (1.4 rolling), none with no signal. #163's "about 11 packets a second"
+#: counted messages across several addresses. 0.83 s between updates is well
+#: inside this timeout, so a run of meters is never broken.
 #: `/time`, about 12 a second, only while the transport moves. `/record`,
 #: `/play` and `/stop` only when they change, never in a launch or project-load
 #: dump. Quitting is silent. So a packet means Reaper is there, `/time` means
@@ -94,6 +98,17 @@ RECORD_REFUSED_PRIOR = (
     "Check Reaper, and start it there if it is not."
 )
 
+#: Why the box says the take has stopped (#233). Shown on the page as the red
+#: banner and beside the grey record button, printed on the console, and quoted
+#: verbatim in docs/gameday.md and docs/troubleshooting.md. Reaper and the box
+#: share a laptop, so the audio interface is where to look, not the network.
+TAKE_STOPPED = (
+    "Recording has stopped: Reaper says it is recording, but its playhead is frozen and its audio device is silent. "
+    "Check the audio interface on the laptop (Dante adapter, DVS). "
+    "Then in Reaper stop the transport, open Settings > Audio > Device and press OK to restart the audio device, "
+    "and start a new take."
+)
+
 _ACTION_PREFIX = "/action"
 
 #: Control surface: refresh all surfaces. Sent as OSC `/action` with this int,
@@ -117,6 +132,19 @@ POSITION_CURRENT_SECONDS = 6 / TIME_RATE_PER_SECOND
 #: that never answers costs the operator five seconds, not the button.
 REFRESH_ANSWER_SECONDS = 5.0
 
+#: A `/time` counts as the playhead moving only if it is ahead of the previous
+#: one by at least this share of the wall time between them (#233). A frozen
+#: Reaper answers each refresh with a `/time` that has not changed; a few
+#: hundredths ahead after thirteen seconds is not motion either.
+PLAYHEAD_ADVANCE_RATIO = 0.5
+#: How long a playhead must have stood still, between two readings, before the
+#: repeat is evidence. Longer than any refresh stall the box waits out
+#: (`REFRESH_ANSWER_SECONDS`), so a healthy slow dump is never taken for one.
+STILL_PLAYHEAD_SECONDS = REFRESH_ANSWER_SECONDS
+#: How long meters must have flowed unbroken to count as the audio device
+#: running. A refresh dump carries one `vu` per track and cannot fake it.
+METERS_FLOWING_SECONDS = REFRESH_ANSWER_SECONDS
+
 
 @dataclass(frozen=True)
 class AddressMap:
@@ -134,6 +162,9 @@ class AddressMap:
     playing: str = "/play"
     recording: str = "/record"
     position: str = "/time"
+    #: A message is a meter if this is one segment of its address (`/master/vu`,
+    #: `/track/N/vu`, `/track/vu/L`). Meters run only while the audio device does.
+    meter_segment: str = "vu"
 
 
 DEFAULT_ADDRESSES = AddressMap()
@@ -142,7 +173,9 @@ DEFAULT_ADDRESSES = AddressMap()
 class Liveness(StrEnum):
     """What silence from Reaper means right now.
 
-    On the game rig Reaper streams meters whenever its audio device runs,
+    On the game rig Reaper streams meters whenever its audio device runs and
+    has signal (about 1.2 updates a second per address with the Pilot on, none
+    with no signal; bench, 2026-11-16),
     `/time` only while the transport moves, and transport state only on change
     - never in a launch or project-load dump - and quitting is silent (bench,
     2026-10-04, #163). There is no heartbeat and no way to ask - probing
@@ -195,6 +228,21 @@ class TransportState:
     #: count rather than a time, so "answered after the send" cannot be fooled
     #: by two readings of a coarse clock that happen to be equal.
     record_reports: int = 0
+    #: Whether the last `/time` showed the playhead moving (#233): ahead of the
+    #: one before it by `PLAYHEAD_ADVANCE_RATIO` of the wall time between them,
+    #: or the first after a take starts. Only such a reading is where the
+    #: playhead is; a refresh answer carries `/time` whether it moves or not.
+    position_moved: bool = False
+    #: Set by the client when a take starts: the next `/time` counts as moved
+    #: whatever its value, since a parked transport restarts from where it sat.
+    take_clock_pending: bool = False
+    #: When the last `/time` that repeated a still playhead arrived. Cleared by
+    #: a moving `/time` and by a `/record` report that changes the state.
+    still_at: float | None = None
+    #: Monotonic time of the last meter, and when its unbroken run began (a gap
+    #: longer than the timeout starts a new run, like `link_since`).
+    meter_at: float | None = None
+    meter_since: float | None = None
 
     def is_fresh(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
         """Whether any packet has arrived within the timeout.
@@ -230,6 +278,19 @@ class TransportState:
             return False
         return (now - self.position_at) <= timeout
 
+    def playhead_moving(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
+        """A `/time` seen to move arrived within the timeout (#233). What the page
+        needs before it says ROLLING: a refresh answer says `/record 1` whether
+        or not the playhead moves."""
+        return self.position_moved and self.clock_running(now, timeout=timeout)
+
+    def meters_flowing(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
+        """Whether the audio device is running: meters have arrived within the
+        timeout, in a run at least `METERS_FLOWING_SECONDS` long (#233)."""
+        if self.meter_at is None or self.meter_since is None:
+            return False
+        return (now - self.meter_at) <= timeout and (self.meter_at - self.meter_since) >= METERS_FLOWING_SECONDS
+
     @property
     def rolling(self) -> bool:
         """Whether Reaper's last word was that the transport is playing or recording."""
@@ -248,9 +309,10 @@ class TransportState:
         `/time` alone rather than on liveness: this rig streams meter data
         continuously while parked, which kept a link reading live and a
         position from a finished take looking current for as long as it sat
-        there (#35).
+        there (#35). And only a reading that moved: a frozen Reaper answers a
+        refresh with a fresh `/time` whose value has not (#233).
         """
-        if self.position is None or self.position_at is None:
+        if self.position is None or self.position_at is None or not self.position_moved:
             return None
         if not self.clock_running(now, timeout=timeout):
             return None
@@ -335,7 +397,7 @@ def apply_feedback(
 
     # A run of feedback is unbroken until a silence longer than the timeout.
     link_since = now if state.last_packet is None or (now - state.last_packet) > timeout else state.link_since
-    state = replace(state, last_packet=now, link_since=link_since)
+    state = _hear_meters(replace(state, last_packet=now, link_since=link_since), messages, now, timeout, addresses)
     for message in messages:
         if not message.args:
             continue
@@ -348,6 +410,7 @@ def apply_feedback(
                     recording=recording,
                     record_reports=state.record_reports + 1,
                     transport_at=now,
+                    still_at=None if recording != state.recording else state.still_at,
                 )
         elif message.address == addresses.playing:
             playing = _as_bool(value)
@@ -356,8 +419,50 @@ def apply_feedback(
         elif message.address == addresses.position:
             position = _as_float(value)
             if position is not None:
-                state = replace(state, position=position, position_at=now)
+                state = _read_clock(state, position, now)
     return state
+
+
+def _hear_meters(
+    state: TransportState,
+    messages: list[osc.Message],
+    now: float,
+    timeout: float,
+    addresses: AddressMap,
+) -> TransportState:
+    """`state` with the meter fields moved on, if this packet carries a meter."""
+    if not any(addresses.meter_segment in message.address.split("/") for message in messages):
+        return state
+    new_run = state.meter_at is None or (now - state.meter_at) > timeout
+    return replace(state, meter_at=now, meter_since=now if new_run else state.meter_since)
+
+
+def _read_clock(state: TransportState, position: float, now: float) -> TransportState:
+    """Fold one `/time` reading in, and say whether it showed motion (#233).
+
+    Moved: ahead of the previous reading by `PLAYHEAD_ADVANCE_RATIO` of the
+    wall time between them, or the first after a take started. The first
+    reading ever has nothing to be ahead of, so it has not moved. A repeat of a
+    still playhead, `STILL_PLAYHEAD_SECONDS` after the last reading, is the
+    evidence a Reaper with no audio device leaves behind.
+    """
+    previous, at = state.position, state.position_at
+    advanced = (
+        previous is not None
+        and at is not None
+        and position > previous
+        and position - previous >= PLAYHEAD_ADVANCE_RATIO * (now - at)
+    )
+    moved = state.take_clock_pending or advanced
+    still = not moved and at is not None and (now - at) >= STILL_PLAYHEAD_SECONDS
+    return replace(
+        state,
+        position=position,
+        position_at=now,
+        position_moved=moved,
+        take_clock_pending=False,
+        still_at=None if moved else (now if still else state.still_at),
+    )
 
 
 def _collect(packet: osc.Message | osc.Bundle, into: list[osc.Message]) -> None:
@@ -464,13 +569,40 @@ def clock_reading(before: TransportState, after: TransportState) -> float | None
     """The `/time` this packet carried, or None if it carried none.
 
     A `(monotonic, position)` pair taken at the same moment, which is what a
-    found take is stamped with (#158).
+    found take is stamped with (#158). None unless the playhead moved (#233): a
+    take is found rolling only when its playhead is seen to move.
     """
-    if after.position is None or after.position_at is None:
+    if after.position is None or after.position_at is None or not after.position_moved:
         return None
     if after.position_at != after.last_packet or after.position_at == before.position_at:
         return None
     return after.position
+
+
+def take_stopped(state: TransportState, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
+    """Whether Reaper says it is recording but its audio device has stopped (#233).
+
+    Pure. The four inputs: the link is alive (the still `/time` is itself an
+    answer, so it is not asked separately), recording (`state.recording`),
+    meters recent (`meters_flowing`) and the playhead advancing (`still_at is
+    None`). Positive evidence is a `/time` that repeated a still playhead;
+    missing meters only veto it, so if meters turn out not to stop with the
+    device this never fires and the page stays at LINK LOST.
+    """
+    return state.recording is True and state.still_at is not None and not state.meters_flowing(now, timeout=timeout)
+
+
+def take_stopped_heard(
+    before: TransportState, after: TransportState, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT
+) -> bool:
+    """Whether this packet brought new evidence that the take has stopped: the
+    edge that raises the latch, once per still `/time`."""
+    return (
+        after.still_at is not None
+        and after.still_at != before.still_at
+        and after.last_packet is not None
+        and take_stopped(after, after.last_packet, timeout=timeout)
+    )
 
 
 def record_refusal(
@@ -630,6 +762,9 @@ class ReaperClient:
         self.last_take = take_report(
             before, self.state, record_request=self.record_request, refresh_request=self.refresh_request
         )
+        if self.last_take is TakeReport.STARTED:
+            # The first `/time` of a take is where it begins, whatever it reads (#233).
+            self.state = replace(self.state, take_clock_pending=True)
         if refresh_due(before, self.state, self.refresh_request):
             # A datagram callback: nothing may escape it. A failed send shows
             # on `healthy` and leaves no request, so the next run tries again.

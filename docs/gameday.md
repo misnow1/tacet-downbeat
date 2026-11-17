@@ -579,6 +579,22 @@ The operator keeps the fader. Ride the band from StageMix and keep going, then
 look the message up in [troubleshooting.md](troubleshooting.md). Neither the
 recording nor the log depends on the page or the markers working.
 
+A red banner, `Recording has stopped: Reaper says it is recording, but its
+playhead is frozen and its audio device is silent. Check the audio interface on
+the laptop (Dante adapter, DVS). Then in Reaper stop the transport, open
+Settings > Audio > Device and press OK to restart the audio device, and start a
+new take.`, with `TAKE STOPPED` and `NO AUDIO DEVICE` on the Recording line,
+means the laptop's audio interface, not the network. It was Game 5's four silent
+hours. Go to the laptop:
+
+1. Check the audio interface (Dante adapter, DVS) is back.
+2. Stop the transport in Reaper. The settings panel is blank while it runs.
+3. Open REAPER > Settings > Audio > Device and press **OK**. That restarts the
+   audio device. Reaper does not reopen a lost device by itself, even once the
+   interface is back.
+4. Start a new take.
+5. Tap **Clear**.
+
 ---
 
 ## After the game

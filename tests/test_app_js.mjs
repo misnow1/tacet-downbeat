@@ -117,7 +117,12 @@ function browser(options = {}) {
     // The page only ever asks for buttons across the fader column and the
     // two tabs (#5). The stub ignores the selector itself and answers with
     // every button it has been asked to make.
-    querySelectorAll: () => created.filter((node) => node.tag === "button"),
+    // The one exception is a fault banner's Clear button (#233): it is in the
+    // strip, under none of the selectors the page asks for, and the real DOM
+    // would not hand it back. tests/test_web.py pins that in the real markup
+    // (test_the_banners_are_in_the_strip_and_out_of_every_button_sweep).
+    querySelectorAll: () =>
+      created.filter((node) => node.tag === "button" && !(node.parentNode && node.parentNode.className === "fault-banner")),
     // Recorded, never fired: the page re-takes its wake lock when the tab
     // comes back, and what is tested is the branch it calls into. Recording
     // lets a test see that nothing listens for touches up here (#156).
@@ -327,7 +332,7 @@ for (const liveness of Object.keys(TAGS)) {
 
 check(
   "a rolling recorder says so",
-  rendered({ liveness: "live", known: true, recording: true, confirmed: true }).get("rec")
+  rendered({ liveness: "live", known: true, recording: true, moving: true, confirmed: true }).get("rec")
     .textContent,
   "ROLLING",
 );
@@ -1046,6 +1051,8 @@ check(
     "retargeting",
     "riding",
     "standing-down",
+    "take-checking",
+    "take-stopped",
     "target-stored",
     "tracks-unarmed",
   ],
@@ -3830,6 +3837,106 @@ const onMain = (world) => world.nodes.get("tab-main").style.display === "";
   const to = touchAt({ x: ORIGIN.x + LEFTWARD.dx, y: ORIGIN.y });
   dispatch(world, target, "touchend", touchEvent(target, [], [to], SWIPE_FAST_MS));
   check("swipe: a cancelled touch is not a swipe", onMain(world), true);
+}
+
+// -- a take that has stopped (#233) ------------------------------------------
+
+{
+  const stopped = SNAPSHOTS["take-stopped"];
+  const message = stopped.faults[0].message;
+  for (const liveness of Object.keys(TAGS)) {
+    const nodes = rendered({ liveness, known: true, confirmed: true, fault: stopped.recording.fault });
+    check(`take stopped (${liveness}): the tag`, nodes.get("rec-tag").textContent, "NO AUDIO DEVICE");
+    check(`take stopped (${liveness}): the tag is red`, nodes.get("rec-tag").className, "tag fault");
+    check(`take stopped (${liveness}): the value`, nodes.get("rec").textContent, "TAKE STOPPED");
+  }
+  const nodes = rendered({ fault: stopped.recording.fault, can_start: false });
+  check("take stopped: the reason is the message", nodes.get("rec-why").textContent, message);
+}
+
+{
+  const { context, nodes, posted } = browser();
+  context.render(structuredClone(SNAPSHOTS["take-stopped"]));
+  const banner = nodes.get("faults").children[0];
+  check("fault banner: the strip slot is shown", nodes.get("faults").className, "shown");
+  check("fault banner: one", nodes.get("faults").children.length, 1);
+  check("fault banner: the message", banner.children[0].textContent, SNAPSHOTS["take-stopped"].faults[0].message);
+  check("fault banner: a Clear button", banner.children[1].textContent, "Clear");
+  posted.length = 0;
+  banner.children[1].onclick();
+  check("fault banner: Clear posts to the route", posted[0].path, "/api/fault/clear");
+  check("fault banner: naming the fault", posted[0].body.id, SNAPSHOTS["take-stopped"].faults[0].id);
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["take-stopped"]));
+  const first = nodes.get("faults").children[0];
+  context.render(structuredClone(SNAPSHOTS["take-stopped"]));
+  check("fault banner: not rebuilt while the ids are unchanged", nodes.get("faults").children[0] === first, true);
+  const later = structuredClone(SNAPSHOTS["take-stopped"]);
+  later.faults[0].id += 1;
+  context.render(later);
+  check("fault banner: rebuilt when the id changes", nodes.get("faults").children[0] === first, false);
+  const cleared = structuredClone(later);
+  cleared.faults = [];
+  cleared.recording.fault = null;
+  context.render(cleared);
+  check("fault banner: gone when cleared", nodes.get("faults").children.length, 0);
+  check("fault banner: and hidden", nodes.get("faults").className, "");
+}
+
+{
+  const { context, nodes } = browser();
+  const old = structuredClone(SNAPSHOTS["standing-down"]);
+  delete old.faults;
+  delete old.recording.fault;
+  let error = null;
+  try {
+    context.render(old);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a box that sends no faults still renders", error, null);
+  check("and shows none", nodes.get("faults").children.length, 0);
+}
+
+// -- the recording line waits for the playhead (#233) ---------------------------
+
+{
+  const waitingState = { liveness: "live", known: true, recording: true, moving: false, confirmed: true, position: 5087.5 };
+  const nodes = rendered(waitingState);
+  check("waiting: the value", nodes.get("rec").textContent, "checking");
+  check("waiting: the tag", nodes.get("rec-tag").textContent, "waiting for the playhead");
+  check("waiting: the tag is neutral", nodes.get("rec-tag").className, "tag pending");
+  check("waiting: no frozen position", nodes.get("rec-pos").textContent, "");
+
+  const moving = rendered({ ...waitingState, moving: true });
+  check("moving: ROLLING", moving.get("rec").textContent, "ROLLING");
+  check("moving: confirmed", moving.get("rec-tag").className, "tag confirmed");
+
+  const old = rendered({ ...waitingState, moving: undefined });
+  check("a box that sends no moving still says ROLLING", old.get("rec").textContent, "ROLLING");
+
+  const faulted = rendered({ ...waitingState, fault: SNAPSHOTS["take-stopped"].recording.fault });
+  check("a fault beats waiting: value", faulted.get("rec").textContent, "TAKE STOPPED");
+  check("a fault beats waiting: tag", faulted.get("rec-tag").textContent, "NO AUDIO DEVICE");
+  check("a fault: no frozen position", faulted.get("rec-pos").textContent, "");
+
+  const stopped = rendered({ ...waitingState, recording: false });
+  check("stopped is not waiting", stopped.get("rec").textContent, "stopped");
+
+  // What the box really sends between bursts: lost, and not known.
+  const lost = rendered({ ...waitingState, liveness: "lost", known: false, confirmed: false });
+  check("lost is still LINK LOST", lost.get("rec-tag").textContent, "LINK LOST");
+  check("lost: the value is unknown", lost.get("rec").textContent, "unknown");
+  // A combination the box never sends: it must not read as checking.
+  const odd = rendered({ ...waitingState, liveness: "lost", known: true });
+  check("lost and known is not checking", odd.get("rec").textContent === "checking", false);
+  check("lost and known: the tag is LINK LOST", odd.get("rec-tag").textContent, "LINK LOST");
+
+  const checking = renderedFixture("take-checking").nodes;
+  check("the checking fixture: the value", checking.get("rec").textContent, "checking");
 }
 
 // -- report -----------------------------------------------------------------

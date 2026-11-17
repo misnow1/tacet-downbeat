@@ -349,6 +349,30 @@ def _prompt_seq(payload: Mapping[str, Any]) -> int:
     return seq
 
 
+def _fault_id(payload: Mapping[str, Any]) -> int:
+    """Which fault a clear is for (#233). Refused like `_prompt_seq`: a bool is
+    an int to Python and not to the page."""
+    if "id" not in payload:
+        raise _bad_request("'id' is required")
+    fault_id = payload["id"]
+    if isinstance(fault_id, bool) or not isinstance(fault_id, int):
+        raise _bad_request(f"'id' must be a whole number, got {fault_id!r}")
+    return fault_id
+
+
+async def _fault_clear(request: web.Request) -> web.Response:
+    """Clear a latched fault from the page (#233). An id that is not latched is
+    the ordinary race between two browsers, not an error: nothing changes and
+    the response says where things stand."""
+    app = request.app[_HUB].app
+    received = app.now()
+    payload = await _body(request)
+    fault_id = _fault_id(payload)
+    tap = _tap(payload, received)
+    await app.clear_fault(fault_id, tap=tap)
+    return web.json_response(app.snapshot())
+
+
 def _target_db(payload: Mapping[str, Any]) -> float:
     """Which level the standing target is being set to (#9), in dB. A bool is
     a number to Python and not to the page, and JSON's NaN and Infinity are not
@@ -522,6 +546,7 @@ def create_app(
             web.post("/api/target", _set_target),
             web.post("/api/prompt/accept", _prompt_route("accept_prompt")),
             web.post("/api/prompt/dismiss", _prompt_route("dismiss_prompt")),
+            web.post("/api/fault/clear", _fault_clear),
             web.get("/ws", _websocket),
         ]
     )
@@ -633,6 +658,21 @@ font-size:13px}
    is where the target is *shown*; where it is *changed* is MORE. */
 #strip > #target-level{color:var(--dim);cursor:default}
 #strip > #target-level.off-default{background:var(--attention);color:var(--attention-text);font-weight:700}
+/* #233: latched faults, one banner each, on their own row of the strip. Not a
+   tap-to-expand chip: the message is the whole sentence and always wraps, and
+   the Clear button is at least 44px tall for a thumb. Hidden until the script
+   gives it a banner. */
+#strip > #faults{display:none;flex-basis:100%;max-width:100%;white-space:normal;
+overflow:visible;cursor:default;padding:0}
+#strip > #faults.shown{display:block}
+.fault-banner{display:flex;align-items:center;gap:12px;background:var(--warn);color:#fff;
+font-weight:700;font-size:14px;padding:8px 12px;border-radius:8px;margin-bottom:6px}
+.fault-banner span{flex:1}
+.fault-banner button{min-height:44px;padding:8px 16px;flex:none}
+.tag.fault{background:var(--warn);border-color:var(--warn);color:#fff}
+/* #233: Reaper says it is recording and the playhead has not yet moved. Neutral,
+   not red: every healthy start passes through it. */
+.tag.pending{border-color:var(--line);color:var(--dim)}
 #refusal{color:#ffb4a9;display:none}
 #refusal.loud{color:#fff;background:var(--warn);font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach
@@ -942,6 +982,7 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   <div id="reaper-project"></div>
   <div id="reaper-tracks"></div>
   <div id="link" class="connecting">Connecting to the box</div>
+  <div id="faults"></div>
   <div id="saving"></div>
   <div id="refusal"></div>
   <div id="tap"></div>

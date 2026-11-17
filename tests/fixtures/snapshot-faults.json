@@ -213,6 +213,7 @@
     "moving": false,
     "sent_at": null
   },
+  "faults": [],
   "log": {
     "error": "could not write game.jsonl: No space left on device",
     "failures": 3,
@@ -253,9 +254,11 @@
     "can_start": false,
     "confirmed": false,
     "error": "no route to host",
+    "fault": null,
     "healthy": false,
     "known": false,
     "liveness": "lost",
+    "moving": false,
     "position": null,
     "recording": true,
     "refusal": "Reaper has stopped answering: it says it is recording but its playhead is not moving. Check Reaper, and start the recording there if it is not rolling."

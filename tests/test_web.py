@@ -16,7 +16,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, osc, prompts, reaper, state, web
+from tacet import dm7, faults, osc, prompts, reaper, state, web
 from tests.disk import Disk
 from tests.reaper_stream import listened_parked, meter_packet
 from tests.snapshots import _build, _known, _Sender
@@ -2000,3 +2000,61 @@ class TestTheSwipeSurface(unittest.TestCase):
         for found in re.finditer(re.escape(TOUCH_LISTENER), script):
             with self.subTest(at=found.start()):
                 self.assertTrue(script[: found.start()].endswith(LEFT_PANEL_LOOKUP))
+
+
+class TestFaultClearRoute(WebTestCase):
+    """#233: clearing a latched fault from the page. Whether it is raised, and
+    what a clear logs, is `tests/test_app.py`'s job; this is the wiring."""
+
+    def raise_fault(self):
+        self.tacet._raise_fault(faults.FaultKind.TAKE_STOPPED, reaper.TAKE_STOPPED, data={})
+        (fault,) = self.tacet.snapshot()["faults"]
+        return fault["id"]
+
+    async def test_a_clear_answers_with_the_snapshot_and_unlatches(self):
+        fault_id = self.raise_fault()
+        response = await self.client.post("/api/fault/clear", json={"id": fault_id})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["faults"], [])
+        self.assertIn(ann.FAULT_CLEARED, self.entries())
+
+    async def test_a_missing_or_wrong_kind_of_id_is_a_bad_request(self):
+        fault_id = self.raise_fault()
+        for body in ({}, {"id": True}, {"id": "1"}, {"id": 1.5}, {"id": None}):
+            with self.subTest(body=body):
+                response = await self.client.post("/api/fault/clear", json=body)
+                self.assertEqual(response.status, 400)
+        self.assertEqual(len(self.tacet.snapshot()["faults"]), 1)
+        self.assertEqual(self.tacet.snapshot()["faults"][0]["id"], fault_id)
+
+    async def test_a_stale_id_is_not_an_error_and_changes_nothing(self):
+        fault_id = self.raise_fault()
+        response = await self.client.post("/api/fault/clear", json={"id": fault_id + 7})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len((await response.json())["faults"]), 1)
+        self.assertNotIn(ann.FAULT_CLEARED, self.entries())
+
+    async def test_the_entry_carries_the_tap(self):
+        fault_id = self.raise_fault()
+        body = {"id": fault_id, "tap": {"at": 5.0, "offset": 0.0, "uncertainty": 0.05}}
+        await self.client.post("/api/fault/clear", json=body)
+        self.log.flush()
+        (cleared,) = [e for e in ann.read_entries(self.root / "game.jsonl") if e.event == ann.FAULT_CLEARED]
+        self.assertIn("tap", cleared.data)
+
+    def test_the_banners_are_in_the_strip_and_out_of_every_button_sweep(self):
+        # The page's relabel loop sweeps "#fader-top button, #fader-bottom
+        # button, #tab-main button, #tab-more-vocabulary button". The Clear
+        # button must be under none of them, or it would be relabelled as a
+        # vocabulary button. The JS stub ignores selectors and filters it by hand
+        # (tests/test_app_js.mjs); this is what makes that honest.
+        ancestors = _page_ancestors()["faults"]
+        self.assertIn("strip", ancestors)
+        for swept in ("fader-top", "fader-bottom", "fader-column", "tab-main", "tab-more", "tab-more-vocabulary"):
+            with self.subTest(swept=swept):
+                self.assertNotIn(swept, ancestors)
+
+    async def test_the_page_has_a_place_for_the_banners_in_the_strip(self):
+        body = await (await self.client.get("/")).text()
+        strip = body[body.index('id="strip"') : body.index('id="prompt"')]
+        self.assertLess(strip.index('id="link"'), strip.index('id="faults"'))

@@ -10,12 +10,23 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, mirror, moves, osc, prompts, reach, reaper, state, taps, targets, web
+from tacet import dm7, faults, mirror, moves, osc, prompts, reach, reaper, state, taps, targets, web
 from tacet import mirror_report as mr
 from tacet import provenance as prov
 from tests.disk import Disk
 from tests.reach_fixtures import HOST, FakeRunner, GatedRunner, ManualClock
-from tests.reaper_stream import listened_parked, meter_packet, mid_take_stream, refresh_reply, rolling_with_refresh
+from tests.reaper_stream import (
+    GAME_5_ANSWER_GAPS,
+    GAME_5_ROLL_ENDS,
+    GAME_5_TAKE_END,
+    game_5_stream,
+    listened_parked,
+    meter_packet,
+    mid_take_stream,
+    refresh_reply,
+    rolled,
+    rolling_with_refresh,
+)
 from tests.test_annotations import Gate, Killed
 
 
@@ -1907,6 +1918,14 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def roll_to(app, position):
+    """Feed `app` a playhead seen to move, ending at `position` (#233). On the
+    real clock the two readings are microseconds apart, so the step is ahead of
+    the wall time between them."""
+    for _, packet in rolled(position, 0.0):
+        app.handle_recorder_packet(packet)
+
+
 class TestThePlayheadIsStamped(AppTestCase):
     """Every entry carries Reaper's own position when Reaper is streaming it.
 
@@ -1924,7 +1943,7 @@ class TestThePlayheadIsStamped(AppTestCase):
 
     async def test_an_annotation_carries_the_reported_position(self):
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 1234.5))
+        roll_to(app, 1234.5)
         await app.annotate("band-enters-stands")
         self.assertEqual(self.last().project_seconds, 1234.5)
 
@@ -1932,7 +1951,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         # Never adjusted forward by the time since the packet arrived: that
         # would put our clock back into the answer.
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 90.0))
+        roll_to(app, 90.0)
         await app.annotate("drumline-cadence")
         self.assertEqual(self.last().project_seconds, 90.0)
 
@@ -1947,7 +1966,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         # confidently wrong point; unstamped falls back to the arithmetic.
         now = [100.0]
         app = self.build(monotonic=lambda: now[0])
-        app.handle_recorder_packet(osc.encode_message("/time", 55.0))
+        roll_to(app, 55.0)
         now[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT + 1.0
         await app.annotate("band-exits-stands")
         self.assertIsNone(self.last().project_seconds)
@@ -1960,7 +1979,7 @@ class TestThePlayheadIsStamped(AppTestCase):
         # placed it correctly (#35).
         now = [100.0]
         app = self.build(monotonic=lambda: now[0])
-        app.handle_recorder_packet(osc.encode_message("/time", 4.8))
+        roll_to(app, 4.8)
         for _ in range(4):
             now[0] += 1.0
             app.handle_recorder_packet(osc.encode_message("/track/1/vu", 0.5))
@@ -1971,9 +1990,9 @@ class TestThePlayheadIsStamped(AppTestCase):
     async def test_spans_are_stamped_at_both_ends(self):
         self.with_span_button()
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 10.0))
+        roll_to(app, 10.0)
         span = await app.start_span(SPAN_KEY)
-        app.handle_recorder_packet(osc.encode_message("/time", 900.0))
+        roll_to(app, 900.0)
         await app.end_span(span)
         entries = self.entries()
         self.assertEqual(entries[-2].project_seconds, 10.0)
@@ -1981,7 +2000,7 @@ class TestThePlayheadIsStamped(AppTestCase):
 
     async def test_a_fader_move_is_stamped(self):
         app = self.build()
-        app.handle_recorder_packet(osc.encode_message("/time", 42.0))
+        roll_to(app, 42.0)
         await app.arm()
         await app.annotate("up-drums")
         commanded = [e for e in self.entries() if e.event == tacet_app.COMMANDED]
@@ -2279,12 +2298,17 @@ class TestAFoundTake(AppTestCase):
     def named(self, key):
         return [e for e in self.entries() if e.event == key]
 
-    def first_time_after_the_stall(self, **kwargs):
+    def first_moving_time_after_the_stall(self, **kwargs):
+        """The second `/time` the box hears: the first has no earlier reading to
+        be ahead of, and a found take is stamped only from one that moved (#233)."""
+        seen = 0
         for _, packet in rolling_with_refresh(100.0, **kwargs):
             decoded = osc.decode_packet(packet)
             if isinstance(decoded, osc.Message) and decoded.address == "/time":
-                return decoded.args[0]
-        raise AssertionError("no /time in the stream")
+                seen += 1
+                if seen == 2:
+                    return decoded.args[0]
+        raise AssertionError("no second /time in the stream")
 
     async def test_a_box_started_mid_take_writes_a_found_entry_and_no_anchor(self):
         app = self.build_timed()
@@ -2292,11 +2316,11 @@ class TestAFoundTake(AppTestCase):
         self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
         self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
 
-    async def test_the_found_entry_is_stamped_with_the_first_clock_after_the_reply(self):
+    async def test_the_found_entry_is_stamped_with_the_first_moving_clock_after_the_reply(self):
         app = self.build_timed()
         self.run_stream(app, rolling_with_refresh(100.0))
         (found,) = self.named(tacet_app.RECORDING_FOUND)
-        self.assertEqual(found.project_seconds, self.first_time_after_the_stall())
+        self.assertEqual(found.project_seconds, self.first_moving_time_after_the_stall())
         self.assertEqual(found.data, {ann.ANCHOR_CONFIRMED_BY: ann.CONFIRMED_BY_REAPER})
 
     async def test_a_box_restarted_on_its_own_log_mid_take_writes_no_second_anchor(self):
@@ -2349,7 +2373,7 @@ class TestAFoundTake(AppTestCase):
         self.run_stream(app, [(100.0, meter_packet())])
         replies = [(103.0 + k * 0.001, p) for k, p in enumerate(refresh_reply(recording=True, playing=True))]
         self.run_stream(app, replies)
-        self.run_stream(app, [(103.5, osc.encode_message("/time", 7.0))])
+        self.run_stream(app, [(103.5, osc.encode_message("/time", 7.0)), (103.6, osc.encode_message("/time", 7.1))])
         self.assertEqual(len(self.named(tacet_app.RECORDING_FOUND)), 1)
         self.assertEqual(self.named(tacet_app.RECORDING_STARTED), [])
 
@@ -5673,3 +5697,305 @@ class TestScoreReversedIsRetired(AppTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestATakeThatStopped(AppTestCase):
+    """#233: the Game 5 pattern through the whole box. Reaper says it is
+    recording, its audio device is gone, and every refresh answer repeats the
+    playhead's last value."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = [100.0]
+        self.stream = iter(game_5_stream(dump_meters=False))
+
+    def build_timed(self):
+        return self.build(monotonic=lambda: self.t[0])
+
+    def play(self, app, until):
+        """Feed the stream until `until()` holds, leaving the rest for later."""
+        for at, packet in self.stream:
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+            if until():
+                return
+        raise AssertionError("the stream ended first")
+
+    def play_to_first_fault(self, app):
+        self.play(app, lambda: bool(app.snapshot()["faults"]))
+
+    def play_all(self, app):
+        for at, packet in self.stream:
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+
+    def entries(self):
+        self.log.flush()
+        return list(ann.read_entries(self.log.path))
+
+    def named(self, key):
+        return [e for e in self.entries() if e.event == key]
+
+    async def test_one_fault_is_raised_for_the_whole_pattern_and_it_is_unstamped(self):
+        app = self.build_timed()
+        self.play_all(app)
+        (raised,) = self.named(ann.FAULT_RAISED)
+        self.assertEqual(raised.data["fault"], "take-stopped")
+        self.assertEqual(raised.data["id"], 1)
+        self.assertEqual(raised.data["position"], GAME_5_TAKE_END)
+        self.assertIsNone(raised.project_seconds)
+
+    async def test_a_frozen_answer_is_not_a_found_take(self):
+        # The take starts inside the run the box already heard (18:09:45), so it
+        # is a start with no refresh to answer: one anchor, and no found entry
+        # for the bursts either.
+        app = self.build_timed()
+        self.play_all(app)
+        self.assertEqual(self.named(tacet_app.RECORDING_FOUND), [])
+
+    async def test_nothing_is_stamped_with_the_frozen_playhead(self):
+        # Every entry made after the roll's last packet is unstamped, the first
+        # silence included (log seq 11 and 12, 19:36:25): `current_position`
+        # goes stale there, and then a frozen `/time` is not a moved one.
+        # Entries during the roll itself may be stamped, so the roll's last
+        # packet is the line.
+        app = self.build_timed()
+        self.play(app, lambda: self.t[0] >= GAME_5_ROLL_ENDS - 0.01)
+        roll_ended = len(self.entries())
+        self.t[0] += 4.0
+        await app.annotate("up-whistle")
+        self.play_to_first_fault(app)
+        await app.annotate("drumline-cadence")
+        await app.arm()
+        await app.annotate("up-drums")
+        await app.annotate("out")
+        await app.wait_for_fade()
+        self.t[0] += 1.0
+        await app.annotate("up-whistle")
+        entries = self.entries()[roll_ended:]
+        self.assertTrue(any(e.event == tacet_app.MOVE_LANDED for e in entries))
+        self.assertTrue(any(e.event == tacet_app.COMMANDED for e in entries))
+        self.assertTrue(any(e.event == ann.FAULT_RAISED for e in entries))
+        for entry in entries:
+            with self.subTest(event=entry.event):
+                self.assertIsNone(entry.project_seconds)
+
+    async def test_entries_during_the_healthy_roll_are_stamped(self):
+        app = self.build_timed()
+        self.play(app, lambda: self.t[0] >= 103.0)
+        await app.annotate("drumline-cadence")
+        (entry,) = self.named("drumline-cadence")
+        self.assertIsNotNone(entry.project_seconds)
+        self.assertLessEqual(entry.project_seconds, GAME_5_TAKE_END)
+
+    async def test_the_snapshot_says_so_during_the_burst_and_between_bursts(self):
+        app = self.build_timed()
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertIsNone(app.snapshot()["recording"]["fault"])
+        self.play_to_first_fault(app)
+        for now in (self.t[0], self.t[0] + 3.0, self.t[0] + 10.0):
+            with self.subTest(now=now):
+                self.t[0] = now
+                snap = app.snapshot()
+                (fault,) = snap["faults"]
+                self.assertEqual(fault["kind"], "take-stopped")
+                self.assertEqual(fault["message"], reaper.TAKE_STOPPED)
+                self.assertEqual(snap["recording"]["fault"], {"kind": "take-stopped", "message": reaper.TAKE_STOPPED})
+                self.assertFalse(snap["recording"]["can_start"])
+
+    async def test_a_healthy_roll_has_no_fault(self):
+        app = self.build_timed()
+        self.play(app, lambda: self.t[0] >= 105.0)
+        snap = app.snapshot()
+        self.assertEqual(snap["faults"], [])
+        self.assertIsNone(snap["recording"]["fault"])
+
+    async def test_clearing_logs_it_and_the_next_burst_raises_a_new_one(self):
+        app = self.build_timed()
+        self.play_to_first_fault(app)
+        self.t[0] += 3.0
+        await app.clear_fault(1)
+        (cleared,) = self.named(ann.FAULT_CLEARED)
+        self.assertEqual(cleared.data["id"], 1)
+        self.assertEqual(cleared.data["fault"], "take-stopped")
+        self.assertTrue(cleared.data["still_present"])
+        self.assertAlmostEqual(cleared.data["latched_seconds"], 3.0, places=3)
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.play_to_first_fault(app)
+        self.assertEqual([f["id"] for f in app.snapshot()["faults"]], [2])
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 2)
+
+    async def test_it_does_not_come_straight_back_without_new_evidence(self):
+        app = self.build_timed()
+        self.play_to_first_fault(app)
+        await app.clear_fault(1)
+        self.t[0] += 1.0
+        app.handle_recorder_packet(meter_packet())
+        self.assertEqual(app.snapshot()["faults"], [])
+
+    async def test_a_stale_id_logs_nothing_and_changes_nothing(self):
+        app = self.build_timed()
+        self.play_to_first_fault(app)
+        await app.clear_fault(99)
+        self.assertEqual(self.named(ann.FAULT_CLEARED), [])
+        self.assertEqual(len(app.snapshot()["faults"]), 1)
+
+    async def test_cleared_after_the_device_is_back_it_is_not_still_present_and_stays_cleared(self):
+        app = self.build_timed()
+        self.play_to_first_fault(app)
+        for at, packet in rolled(GAME_5_TAKE_END + 30.0, self.t[0] + 5.0):
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+        await app.clear_fault(1)
+        (cleared,) = self.named(ann.FAULT_CLEARED)
+        self.assertFalse(cleared.data["still_present"])
+        for at, packet in rolled(GAME_5_TAKE_END + 40.0, self.t[0] + 5.0):
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
+
+    async def test_listeners_hear_both_changes(self):
+        app = self.build_timed()
+        heard = []
+        app.on_fault(lambda change, fault, present: heard.append((change, fault.id, present)))
+        self.play_to_first_fault(app)
+        await app.clear_fault(1)
+        self.assertEqual(heard, [(faults.Change.RAISED, 1, None), (faults.Change.CLEARED, 1, True)])
+
+    async def test_a_listener_that_raises_does_not_break_packet_handling(self):
+        app = self.build_timed()
+
+        def broken(change, fault, present):
+            raise RuntimeError("terminal gone")
+
+        app.on_fault(broken)
+        self.play_all(app)
+        self.assertEqual(len(app.snapshot()["faults"]), 1)
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
+
+    async def test_the_only_recording_started_is_the_take_start(self):
+        app = self.build_timed()
+        self.play_all(app)
+        self.assertEqual(len(self.named(tacet_app.RECORDING_STARTED)), 1)
+
+    async def test_nothing_is_sent_to_the_console_or_to_reaper_because_of_it(self):
+        app = self.build_timed()
+        machine, commanded = app.machine.state, app.snapshot()["fader"]["commanded"]
+        raised_by = 0
+        for at, packet in self.stream:
+            self.t[0] = at
+            sent = len(self.reaper_sender.packets)
+            had = bool(app.snapshot()["faults"])
+            app.handle_recorder_packet(packet)
+            if not had and app.snapshot()["faults"]:
+                raised_by += 1
+                # The raising `/time` arrives inside the burst's run, whose
+                # refresh the trigger already sent: the raise sends nothing.
+                self.assertEqual(len(self.reaper_sender.packets), sent)
+            if app.snapshot()["faults"]:
+                before = len(self.reaper_sender.packets)
+                (fault,) = app.snapshot()["faults"]
+                await app.clear_fault(fault["id"])
+                self.assertEqual(len(self.reaper_sender.packets), before)
+        self.assertGreater(raised_by, 1)
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(app.machine.state, machine)
+        self.assertEqual(app.snapshot()["fader"]["commanded"], commanded)
+        addresses = []
+        for packet in self.reaper_sender.packets:
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            addresses.append(decoded.address)
+            self.assertEqual(decoded.args, (reaper.REFRESH_ACTION,))
+        self.assertEqual(set(addresses), {reaper.DEFAULT_ADDRESSES.action})
+        self.assertNotIn(reaper.DEFAULT_ADDRESSES.record, addresses)
+        # One refresh per run of feedback: the first run's and each burst's.
+        self.assertLessEqual(len(addresses), len(GAME_5_ANSWER_GAPS) + 2)
+
+
+class TestTheRecordingLineWaitsForThePlayhead(AppTestCase):
+    """#233: ROLLING only while a moved `/time` has arrived within the timeout.
+    A refresh answer says `/record 1` whether or not the playhead moves."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = [100.0]
+        self.stream = iter(game_5_stream(dump_meters=False))
+
+    def feed(self, app, until):
+        for at, packet in self.stream:
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+            if until(packet):
+                return
+        raise AssertionError("the stream ended first")
+
+    @staticmethod
+    def address(packet):
+        decoded = osc.decode_packet(packet)
+        assert isinstance(decoded, osc.Message)
+        return decoded.address
+
+    def to_the_first_reply(self, app):
+        triggered = []
+
+        def until(packet):
+            if self.address(packet) == "/lastmarker/name":
+                triggered.append(True)
+            return bool(triggered) and self.address(packet) == "/play"
+
+        self.feed(app, until)
+
+    async def test_the_healthy_roll_is_moving(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        self.feed(app, lambda _: self.t[0] >= GAME_5_ROLL_ENDS - 1.0)
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["moving"])
+        self.assertTrue(recording["recording"])
+
+    async def test_the_first_burst_reply_says_recording_but_not_moving(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        self.to_the_first_reply(app)
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["known"])
+        self.assertTrue(recording["recording"])
+        self.assertFalse(recording["moving"])
+        self.assertIsNone(recording["fault"])
+        # The record path is exactly as it was.
+        self.assertFalse(recording["can_start"])
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_ROLLING)
+
+    async def test_the_frozen_time_then_raises_the_fault(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        self.to_the_first_reply(app)
+        self.feed(app, lambda packet: self.address(packet) == "/time")
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["moving"])
+        self.assertIsNotNone(recording["fault"])
+
+    async def test_a_box_restarted_into_a_healthy_roll_waits_then_moves(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        seen = []
+        for at, packet in rolling_with_refresh(100.0):
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+            seen.append(app.snapshot()["recording"]["moving"])
+        self.assertFalse(seen[0])
+        self.assertTrue(seen[-1])
+        self.assertEqual(seen, sorted(seen))
+
+    async def test_a_healthy_take_start_is_not_moving_until_its_first_time(self):
+        app = self.build(monotonic=lambda: self.t[0])
+
+        def until(packet):
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            return decoded.address == "/record" and decoded.args[0] == 1.0
+
+        self.feed(app, until)
+        before = app.snapshot()["recording"]
+        self.assertTrue(before["recording"])
+        self.assertFalse(before["moving"])
+        self.feed(app, lambda packet: self.address(packet) == "/time")
+        self.assertTrue(app.snapshot()["recording"]["moving"])

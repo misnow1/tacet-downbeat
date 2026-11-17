@@ -211,6 +211,12 @@ BOX_STARTED = "box-started"
 #: move.
 CONSOLE_CHECKED = "console-checked"
 
+#: A latched fault going up and being cleared from the page (#233). Generic keys
+#: with the kind in `data`, as the prompt keys are, so a later fault (#234) adds
+#: a kind and never a key. Never renamed: logs and Reaper markers carry them.
+FAULT_RAISED = "fault-raised"
+FAULT_CLEARED = "fault-cleared"
+
 #: The three taps the box answers with a question (#19): the band entering the
 #: stands asks whether to arm, the band leaving them - or the halftime exodus
 #: tap (#216) - asks whether to stand down. Named once, like `ANCHOR_EVENT`, so
@@ -236,6 +242,8 @@ VOCABULARY: tuple[EventType, ...] = (
     # result changes, because it becomes a Reaper marker and one every four
     # minutes saying "still answered" is clutter (#73).
     _instant(CONSOLE_CHECKED, "Console address checked", Category.SESSION, button=False),
+    _instant(FAULT_RAISED, "Fault raised", Category.SESSION, button=False),
+    _instant(FAULT_CLEARED, "Fault cleared", Category.SESSION, button=False),
     _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),
     _instant(RECORD_REQUEST_EVENT, "Recording requested", Category.SESSION, button=False),
     _instant(FOUND_EVENT, "Recording found rolling", Category.SESSION, button=False),

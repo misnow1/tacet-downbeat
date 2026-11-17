@@ -714,6 +714,19 @@ number or count, because the track list grows. The page shows the armed count
 and says when it differs from `capture.channels`, the disk check's input. It
 warns and never blocks, like the project chip.
 
+**A take that has stopped is a latched fault, and only that (#233).** Reaper
+can say it is recording while its audio device is gone (Game 5: the Dante
+adapter dropped and every refresh answer repeated the same `/time` for four
+hours). The box raises the fault on that positive evidence - a `/time` that
+repeated a still playhead while Reaper says it is recording - and treats
+missing meters only as a veto, so a wrong guess about the meters can only ever
+fall back to `LINK LOST`, never raise a false alarm. The fault is latched on the
+page until the operator clears it by id, is logged as `fault-raised` and
+`fault-cleared`, and observes only: it never sends a `/record` (a toggle that
+would stop a take that is in fact rolling), never moves the fader, and writes
+no `recording-found`. A `/time` is also stamped onto entries only if it has
+moved, so a frozen playhead is never mistaken for where the take is.
+
 **Transport control is deliberately incomplete.** The UI arms and starts
 recording; it offers no stop. Each home game is a single irreplaceable sample,
 and a stop button does not belong on a screen being tapped by someone watching a
