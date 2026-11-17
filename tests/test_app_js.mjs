@@ -3926,8 +3926,14 @@ const onMain = (world) => world.nodes.get("tab-main").style.display === "";
   const stopped = rendered({ ...waitingState, recording: false });
   check("stopped is not waiting", stopped.get("rec").textContent, "stopped");
 
-  const lost = rendered({ ...waitingState, liveness: "lost" });
+  // What the box really sends between bursts: lost, and not known.
+  const lost = rendered({ ...waitingState, liveness: "lost", known: false, confirmed: false });
   check("lost is still LINK LOST", lost.get("rec-tag").textContent, "LINK LOST");
+  check("lost: the value is unknown", lost.get("rec").textContent, "unknown");
+  // A combination the box never sends: it must not read as checking.
+  const odd = rendered({ ...waitingState, liveness: "lost", known: true });
+  check("lost and known is not checking", odd.get("rec").textContent === "checking", false);
+  check("lost and known: the tag is LINK LOST", odd.get("rec-tag").textContent, "LINK LOST");
 
   const checking = renderedFixture("take-checking").nodes;
   check("the checking fixture: the value", checking.get("rec").textContent, "checking");

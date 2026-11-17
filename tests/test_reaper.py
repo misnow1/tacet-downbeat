@@ -3,6 +3,7 @@ import unittest
 from tacet import osc, reaper
 from tacet.net import TransportError
 from tests.reaper_stream import (
+    DENSE_METERS_PER_SECOND,
     GAME_5_ANSWER_GAPS,
     GAME_5_ROLL_ENDS,
     GAME_5_TAKE_END,
@@ -593,17 +594,18 @@ class TestNeverSentBlind(unittest.TestCase):
         that leads its first `/time`. No prefix of the stream - after any
         packet, or at any instant between packets - may permit a send.
         """
-        for lead in (0.0, 0.010, 0.040, 0.080, 1.5):
-            with self.subTest(lead=lead):
-                state = reaper.TransportState()
-                events = list(mid_take_stream(lead))
-                for index, (at, packet) in enumerate(events):
-                    state = reaper.apply_feedback(packet, state, now=at)
-                    following = events[index + 1][0] if index + 1 < len(events) else at
-                    instant = at
-                    while instant <= following:
-                        self.assertIsNotNone(reaper.record_refusal(state, instant), (lead, at, instant))
-                        instant += INSTANT_STEP
+        for rate in (METERS_PER_SECOND, DENSE_METERS_PER_SECOND):
+            for lead in (0.0, 0.010, 0.040, 0.080, 1.5):
+                with self.subTest(lead=lead, meters_per_second=rate):
+                    state = reaper.TransportState()
+                    events = list(mid_take_stream(lead, meters_per_second=rate))
+                    for index, (at, packet) in enumerate(events):
+                        state = reaper.apply_feedback(packet, state, now=at)
+                        following = events[index + 1][0] if index + 1 < len(events) else at
+                        instant = at
+                        while instant <= following:
+                            self.assertIsNotNone(reaper.record_refusal(state, instant), (lead, at, instant))
+                            instant += INSTANT_STEP
 
     def test_a_feedback_gap_reopens_listening(self):
         state = reaper.TransportState()

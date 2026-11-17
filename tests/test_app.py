@@ -5984,3 +5984,18 @@ class TestTheRecordingLineWaitsForThePlayhead(AppTestCase):
         self.assertFalse(seen[0])
         self.assertTrue(seen[-1])
         self.assertEqual(seen, sorted(seen))
+
+    async def test_a_healthy_take_start_is_not_moving_until_its_first_time(self):
+        app = self.build(monotonic=lambda: self.t[0])
+
+        def until(packet):
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            return decoded.address == "/record" and decoded.args[0] == 1.0
+
+        self.feed(app, until)
+        before = app.snapshot()["recording"]
+        self.assertTrue(before["recording"])
+        self.assertFalse(before["moving"])
+        self.feed(app, lambda packet: self.address(packet) == "/time")
+        self.assertTrue(app.snapshot()["recording"]["moving"])

@@ -40,6 +40,10 @@ MIX_SECONDS = 5
 #: packets a second" counted messages across several addresses; the cadence the
 #: box sees on any one is this, about 0.83 s between updates at worst.
 METERS_PER_SECOND = 1.2
+#: The denser cadence #163's game-rig capture reported (about 11 packets a
+#: second). The field rate with live inputs is unknown, and `/record` is the
+#: irreversible path, so the safety tests run at both.
+DENSE_METERS_PER_SECOND = 11
 #: The `/time` family: one reading arrives as these five, together.
 CLOCK_FAMILY = ("/time", "/time/str", "/beat/str", "/samples", "/frames/str")
 
@@ -49,18 +53,25 @@ def rolling_tick(address: str, tick: int) -> bytes:
     return osc.encode_message(address, value)
 
 
-def mid_take_stream(lead: float, *, clock: bool = True, seconds: float = MIX_SECONDS, start: float = 100.0):
+def mid_take_stream(
+    lead: float,
+    *,
+    clock: bool = True,
+    seconds: float = MIX_SECONDS,
+    start: float = 100.0,
+    meters_per_second: float = METERS_PER_SECOND,
+):
     """A rolling Reaper heard from the middle, one packet at a time.
 
-    Meters at `METERS_PER_SECOND` and the `/time` family at 12, on independent
+    Meters at `meters_per_second` and the `/time` family at 12, on independent
     cadences, the first meter leading the first `/time` by `lead` seconds. No
     `/record` or `/play` was ever announced to this box. Yields `(time, packet)`
     in arrival order.
     """
     events: list[tuple[float, int, bytes]] = []
     order = 0
-    for k in range(int(seconds * METERS_PER_SECOND)):
-        events.append((start + k / METERS_PER_SECOND, order, rolling_tick(METER, k)))
+    for k in range(int(seconds * meters_per_second)):
+        events.append((start + k / meters_per_second, order, rolling_tick(METER, k)))
         order += 1
     if clock:
         for k in range(int(seconds * TICKS_PER_SECOND)):

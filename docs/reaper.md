@@ -465,7 +465,7 @@ Reaper's feedback has to survive all of it.
   nothing for 30 s, meters included. A refresh is still answered, byte for byte
   the same every time: `/record 1`, `/play 1` and the frozen `/time`. The dump
   carries one of each `vu` address. Each marker sends `/lastmarker/name`,
-  `/number/str` and `/time`, which is what starts each burst. The repeated
+  `/lastmarker/number/str` and `/lastmarker/time`, which is what starts each burst. The repeated
   `/time` with no meters is how the box knows the take has stopped (`TAKE
   STOPPED`). Reaper does not reopen the device by itself: stop the transport,
   then press OK in Settings > Audio > Device.

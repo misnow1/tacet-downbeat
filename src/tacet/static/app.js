@@ -1148,7 +1148,9 @@ function render(received) {
 
   const rec = next.recording;
   // A box that sends no `moving` keeps saying ROLLING, as it always did.
-  const waiting = !rec.fault && rec.known && rec.recording && rec.moving === false;
+  // Only on a live link: the box never sends `known` with a lost one (between
+  // bursts the field reads `unknown` and LINK LOST), and this keeps it so.
+  const waiting = !rec.fault && rec.known && rec.recording && rec.liveness === "live" && rec.moving === false;
   const [recClass, recLabel] = recordingTag(rec.liveness, rec.known, rec.fault, waiting);
   $("rec").textContent = rec.fault
     ? RECORDING_TAKE_STOPPED
