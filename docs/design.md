@@ -590,6 +590,32 @@ fader back after a StageMix move (#12). It runs the system `ping` as a child
 process off the event loop, is never started during a fader move or while
 another check runs, and is killed and reaped on a timeout or a cancel.
 
+**The box's own adapters** are checked too (#234): the Dante adapter, the
+control VLAN's adapter and the scoreboard's RTD adapter, by reading the
+laptop's adapter table (`ifconfig -a`, or `ip -d -j addr show` on Linux) at
+startup and every 5 s, off the event loop and never during a fader move. A
+role is identified by **(MAC, VLAN tag)**, not by an interface name: macOS
+renumbers a replugged USB adapter, and a VLAN interface shares its parent's
+MAC, so the scoreboard's `vlan0` has the control adapter's MAC and is told
+apart by its tag. A tagged role is up only while its parent's link is up. A
+role is present, missing, link-down, no-address (a `169.254` address does not
+count for control or scoring; Dante needs none) or no-vlan (the parent is
+there, the VLAN interface is not).
+
+Each role has its own fault kind on the shared latch of §5.5 (#233), raised on
+the **edge** from present (or never seen) to not present and judged against the
+last *successful* reading, so a flapping adapter does not re-raise while it is
+latched and a Clear while it is still bad does not raise it again. A read that
+fails is *could not check*, which neither raises nor counts as present. Two
+roles on one adapter raise two faults, and each banner says the other shares the
+cable. It observes only: it writes no OSC and moves nothing. Fault ids are
+seeded from the log's last sequence number, so a restart on the same log never
+reuses one.
+
+What it cannot see: an adapter that is enumerated, reports `status: active` and
+is electrically dead. TAKE STOPPED (#233) and the console ping above are the
+backstops for that, and a flap shorter than a poll can fall between two reads.
+
 802.11ah / HaLow is a reasonable redundant path — sub-GHz penetrates bodies far
 better, and the payload is a few hundred bytes per second. Redundant path, not
 primary.

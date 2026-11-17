@@ -33,6 +33,10 @@ nobody wrote it down, not that nobody knows.
 | Channels recorded | `34` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them. The page's tracks chip says when this differs from what Reaper has armed (#167) |
 | Box address, control VLAN | `192.168.20.123` | System Settings > Network, the adapter wired to the control VLAN (console, box, control AP) - see "Network" below. Two wired adapters are in use, so `en0` is not necessarily the right one; read it from whichever adapter Network shows connected there, with `ipconfig getifaddr <that adapter's interface>` |
 | Box address, Dante Primary | `192.168.1.123` | Same, on the adapter wired to DVS |
+| Dante adapter MAC | | `interfaces.dante`. `networksetup -listallhardwareports`, the `Ethernet Address` under the adapter wired to DVS. The box checks it is there with a link (#234). Not its `enN` name: macOS renumbers a replugged USB adapter, the MAC stays |
+| Control adapter MAC (`en7`), also the scoreboard's | | `interfaces.control`, and the `mac` of `interfaces.scoring`. One adapter carries the control VLAN and the scoreboard VLAN, so it is the same MAC in both |
+| Scoreboard VLAN tag | | The `vlan` of `interfaces.scoring`: the VLAN interface (`vlan0`) macOS made on the control adapter. System Settings > Network, Manage Virtual Interfaces |
+| Spare adapter MAC | | Not in `tacet.toml`: the box checks one MAC per role. To swap it in, see "Network" below |
 | Target levels offered | `[3.0, 0.0, -3.0, -6.0]` dB | `fader.presets`, in the order the page lists them. Ordered loudest first so the page reads like a fader; the default is the row below, not the first entry |
 | Default target | `0.0` dB | `fader.default_target_db`. Where every open goes and what Ready's hold level is measured down from. 0 dB suits most games; +3 dB is one tap away on the page for a very loud crowd |
 | Target cap | `+3.0` dB | `fader.max_target_db`. A preset above it refuses to start. From the on-site ring-out, which rang a hair over +3 dB in the current configuration. **Not the console's limit** - see below |
@@ -57,6 +61,15 @@ iPad is one wifi hop from the box.
 
 **Carry a spare adapter.** Game 2 lost one and the box ended up on wifi for the
 whole game - see [game-2.md](game-2.md).
+
+**The box checks its own adapters** (#234): the Dante one, the control one, and
+the scoreboard's VLAN on the control one, each by its MAC (Site values), once at
+startup and every 5 seconds. A pulled plug or a dead cable raises a red banner on
+the page. To swap in the spare: put its MAC in **both** `interfaces.control` and
+the `mac` of `interfaces.scoring` in `tacet.toml`, recreate the VLAN interface
+on the spare (System Settings > Network, Manage Virtual Interfaces), and
+restart the box on the **same** `--log`. A box that was never told the spare's
+MAC will call it missing: it checks the MAC it was given, not "an adapter".
 
 `reaper.host = "127.0.0.1"`, always: a Dante-side address works today and
 vanishes the moment that cable comes out.
@@ -239,7 +252,12 @@ run it once more, and check the last line says `mirroring`. Reaper keeps running
 the old code until you do, and the page's chip says `Older Reaper script
 running: run it again from Reaper.` until then. On a restart of the same log it
 never asks: carry on. Read the `code` row: a normal
-game says `main @ <commit>` and no WARNING. Read the `ping` row under the
+game says `main @ <commit>` and no WARNING. Read the `interfaces` rows under the
+ping row: each role you set should show its adapter and an address, and
+`not checked - no [interfaces] in tacet.toml` means the box will not notice a
+dead adapter. `MISSING`, `no link`, `no IPv4 address` or `no VLAN interface` is a
+`WARNING a network adapter is not ready`: fix the adapter before kickoff, and the
+same fault is on the page until you tap **Clear**. Read the `ping` row under the
 console: `answered ping` is right. `nothing at this address (no ARP reply)` is a
 WARNING that the console IP is wrong, the cable is out or the console is off -
 fix it before kickoff; the box still runs. Read the banner's `queue` line
@@ -295,6 +313,7 @@ little.
 | Top of the screen | Nothing. No banner is the healthy state |
 | Code chip, in the strip | Nothing. `Unreviewed code running` means the box is running uncommitted changes - right only for a fix on the day you meant to run |
 | Console chip, in the strip | Nothing. `Nothing answered at the console address at the last check` in red means the console IP is wrong, the cable is out or the console is off - fix it before kickoff; the box still runs and the operator has the fader. `Console did not answer ping` is a note: see "Fill in on the day" |
+| Network adapters chip, in the strip | `Network adapters: dante en8, control en7, scoring vlan0`, dim: every role you set is there with a link. `Network adapter down: dante missing, control no link.` in red, with a banner under it, means fix the adapter now: see "When it goes wrong". `Network adapters not checked: no [interfaces] in tacet.toml.` in amber means nothing is configured, so a dead adapter will not be noticed |
 | Project chip, in the strip | `Recording to ~/Reaper Media/<game folder>/Media`, dim, and the folder is this game's. `Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.` in amber means save the project into its game folder now; it only warns, and Start recording still works. `Older Reaper script running: run it again from Reaper.` after the path means the file was replaced but the running script is still the old code: run it again from Reaper. Anything starting `Reaper project unknown` means the mirror is not reporting: run the script (step 2) and see [troubleshooting.md](troubleshooting.md#the-page) |
 | Tracks chip, in the strip | `Tracks armed to record: 34`, dim, and the number is Channels recorded. `Not armed to record: ...` in amber means arm those tracks now; it only warns. `but capture.channels says` means Reaper and `tacet.toml` disagree: see [troubleshooting.md](troubleshooting.md#the-page). Anything starting `Track arming unknown` means the mirror is not reporting tracks: run the script again from Reaper (step 2); if it says `does not report it`, the script is old: see step 3 and [troubleshooting.md](troubleshooting.md#the-page) |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
@@ -594,6 +613,26 @@ hours. Go to the laptop:
    interface is back.
 4. Start a new take.
 5. Tap **Clear**.
+
+A red banner that starts `Network adapter missing: the Dante adapter (<MAC>) is
+not on this laptop.`, or `Network adapter has no link`, `Network adapter has no
+address` or `Network adapter has no VLAN interface` for the Dante, control VLAN
+or scoreboard (RTD) adapter, is the box noticing its own adapter (#234). Go to the
+laptop:
+
+1. Look at the adapter named in the banner: its USB plug, then its cable to the
+   switch. The banner says which. **Dante:** nothing is recorded while it is
+   gone. Once it is back, stop Reaper's transport, press **OK** in Settings >
+   Audio > Device, start a new take, as for `TAKE STOPPED` above. **Control:**
+   the console and the page go through it, so ride the fader from StageMix
+   meanwhile. **Scoreboard:** only the game data is affected.
+2. **Two banners at once, control and scoreboard (RTD), are one cable.** Both
+   ride the same adapter, so each banner ends `The <other> role uses this same
+   adapter and cable, so one fix clears both.` Fix the one adapter and clear
+   both.
+3. Tap **Clear** on each banner once it is fixed. The red chip in the strip
+   clears itself when the adapter is back; the banner stays until you clear it.
+   A banner that comes straight back means the adapter is not back yet.
 
 ---
 
