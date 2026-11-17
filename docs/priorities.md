@@ -4,7 +4,7 @@ This page gives the build order: what to build next, and why. The issues hold
 the detail and the decisions. This page holds only the order. Without it, the
 order lives only in the last conversation.
 
-Last updated 2026-11-15. Game 5 was played and reviewed (`game-5.md`). The
+Last updated 2026-11-16. Game 5 was played and reviewed (`game-5.md`). The
 Game 6 order below comes from that review.
 
 ## Before Game 3
@@ -298,6 +298,8 @@ These issues join Game 5 with #214: #201, #206 and #212.
 These issues move to Game 6 with #214, because they will not land for the
 2026-11-14 game:
 
+- [#247](https://github.com/misnow1/tacet-downbeat/issues/247), rename the LINK
+  LOST tag. Split out of #233.
 - [#95](https://github.com/misnow1/tacet-downbeat/issues/95), the READY prompt
   from RTD. It needs a live reader and an offline score first. #210 and the
   Game 4 capture make the score possible now.
@@ -343,7 +345,7 @@ thumb meets, then the display, then the rows that Game 5 did not reach.
 
 | # | Issue | Why here |
 |---|---|---|
-| 1 | [#233](https://github.com/misnow1/tacet-downbeat/issues/233) Tell a Reaper with no audio device from a lost link, and latch it on the page | It lost Game 5. Reaper answered, said it was recording, and its playhead did not move. The page said LINK LOST, and the operator looked at the network. It also stops the box stamping a frozen playhead. The bench check needs the hardware, so the code lands first to give the maintainer time for it |
+| ~~1~~ | ~~[#233](https://github.com/misnow1/tacet-downbeat/issues/233) Tell a Reaper with no audio device from a lost link, and latch it on the page~~ | Done (#248), bench-checked on 2026-11-16. A Reaper that says it is recording, with its `/time` frozen and no meters, is TAKE STOPPED, latched on the page until the operator clears it. The line does not say ROLLING until the playhead is seen to move, and nothing is stamped with a frozen playhead. Reaper does not reopen a lost device by itself, so the banner gives the recovery step. The shared latch is `tacet/faults.py`, which #234 reuses |
 | 2 | [#234](https://github.com/misnow1/tacet-downbeat/issues/234) Name the box's network interfaces in `tacet.toml`, check them, and latch an error when one goes missing | The cause under #233. A dead adapter must show on the page, not only on the laptop's screen. Interfaces are named by role and MAC, because macOS renumbers USB adapters. It uses the same latch as #233 |
 | 3 | [#242](https://github.com/misnow1/tacet-downbeat/issues/242) Nudge the band DCA down or up 1 dB from MAIN | The operator touches it. Game 5 rang at +3 dB, and MAIN had no way down that did not close the band. It is relative, so #107 applies: it is refused while the level is unknown. It must be tried with `verify_dm7` before the game |
 | 4 | [#235](https://github.com/misnow1/tacet-downbeat/issues/235) Show the game clock, period and running/stopped on the main page, from RTD | The first live RTD reader on the box, in a process of its own that tacet-serve manages. Display only. A frozen clock must not look live. #95 builds on it |
@@ -366,6 +368,9 @@ Nice to have for Game 6. These land only if the rows above are done:
 
 No milestone, from the Game 5 review:
 
+- [#249](https://github.com/misnow1/tacet-downbeat/issues/249), a
+  `recording-found` written just after `recording-started` for one take. Found
+  at the #233 bench check.
 - [#236](https://github.com/misnow1/tacet-downbeat/issues/236), taps through
   touchscreen gloves. It is a maintainer decision (2026-11-15) to leave it off
   Game 6.
