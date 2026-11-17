@@ -4,8 +4,8 @@ This page gives the build order: what to build next, and why. The issues hold
 the detail and the decisions. This page holds only the order. Without it, the
 order lives only in the last conversation.
 
-Last updated 2026-11-12. Game 4 was played and debriefed (`game-4.md`). The
-Game 5 order below comes from that review.
+Last updated 2026-11-15. Game 5 was played and reviewed (`game-5.md`). The
+Game 6 order below comes from that review.
 
 ## Before Game 3
 
@@ -245,6 +245,9 @@ This order comes from the Game 4 review (2026-10-17). As in the Game 4 order,
 things that the operator touches on the night come first. Athletics decides
 whether Game 5 has a pre-game runthrough. Without one, the first time a thumb
 meets a change is the game itself, so these land first and stay few.
+Game 5 was played on 2026-11-14. Rows 1 to 9 are done. Rows 10 to 13 were not
+started, and move to Game 6 with #245. The Game 5 milestone was closed on
+2026-11-15.
 
 | # | Issue | Why here |
 |---|---|---|
@@ -275,7 +278,8 @@ Reaper point marker, `GAME|last-two-minutes-tap`: no region and no sidecar
 line until `tacet-quarters` adds the pair to the sidecar. It changes buttons that
 the operator taps, and takes away taps the operator already misses.
 
-Nice to have for Game 5:
+Nice to have for Game 5. #47, #46 and #43 move to Game 6 with #245, still
+below the line:
 
 - [#49](https://github.com/misnow1/tacet-downbeat/issues/49) Mirror script
   resume. The mirror script is open for #204 and #167 anyway. A queue that is
@@ -327,6 +331,50 @@ No milestone, because no game waits on them:
   season, never in a game week. #199 lands first.
 - #173 and #174, small Reaper follow-ups from #172 and #158.
 - #137, #68 and #56, unchanged.
+
+## Game 6 (2026-11-28)
+
+This order comes from the Game 5 review (2026-11-15, #238). Game 5 recorded no
+audio. The laptop's Dante adapter failed before kickoff, Reaper stayed in
+record mode with no audio device, and the page called it LINK LOST. The
+operator was outside and the laptop was inside, so nobody saw it. Thus the two
+faults that lost the game come first. Then comes the change that the operator's
+thumb meets, then the display, then the rows that Game 5 did not reach.
+
+| # | Issue | Why here |
+|---|---|---|
+| 1 | [#233](https://github.com/misnow1/tacet-downbeat/issues/233) Tell a Reaper with no audio device from a lost link, and latch it on the page | It lost Game 5. Reaper answered, said it was recording, and its playhead did not move. The page said LINK LOST, and the operator looked at the network. It also stops the box stamping a frozen playhead. The bench check needs the hardware, so the code lands first to give the maintainer time for it |
+| 2 | [#234](https://github.com/misnow1/tacet-downbeat/issues/234) Name the box's network interfaces in `tacet.toml`, check them, and latch an error when one goes missing | The cause under #233. A dead adapter must show on the page, not only on the laptop's screen. Interfaces are named by role and MAC, because macOS renumbers USB adapters. It uses the same latch as #233 |
+| 3 | [#242](https://github.com/misnow1/tacet-downbeat/issues/242) Nudge the band DCA down or up 1 dB from MAIN | The operator touches it. Game 5 rang at +3 dB, and MAIN had no way down that did not close the band. It is relative, so #107 applies: it is refused while the level is unknown. It must be tried with `verify_dm7` before the game |
+| 4 | [#235](https://github.com/misnow1/tacet-downbeat/issues/235) Show the game clock, period and running/stopped on the main page, from RTD | The first live RTD reader on the box, in a process of its own that tacet-serve manages. Display only. A frozen clock must not look live. #95 builds on it |
+| 5 | [#71](https://github.com/misnow1/tacet-downbeat/issues/71) Accept only IP addresses for the console and Reaper hosts | From Game 5 row 10, unchanged |
+| 6 | [#42](https://github.com/misnow1/tacet-downbeat/issues/42) Constraint tests that would still pass with the constraint broken | From Game 5 row 11. It comes after #242, so the tests also check the nudge |
+| 7 | [#132](https://github.com/misnow1/tacet-downbeat/issues/132), [#136](https://github.com/misnow1/tacet-downbeat/issues/136), [#134](https://github.com/misnow1/tacet-downbeat/issues/134), [#201](https://github.com/misnow1/tacet-downbeat/issues/201) Docs: CLAUDE.md and design.md wording, and the named commands | From Game 5 row 12, one PR |
+| 8 | [#187](https://github.com/misnow1/tacet-downbeat/issues/187) Docs: the control VLAN has an internet route | From Game 5 row 13 |
+
+Nice to have for Game 6. These land only if the rows above are done:
+
+- [#95](https://github.com/misnow1/tacet-downbeat/issues/95), the READY prompt
+  from RTD. It needs #235's reader first.
+- [#66](https://github.com/misnow1/tacet-downbeat/issues/66), live markers at
+  the playhead stamp.
+- [#49](https://github.com/misnow1/tacet-downbeat/issues/49), mirror script
+  resume.
+- [#47](https://github.com/misnow1/tacet-downbeat/issues/47),
+  [#46](https://github.com/misnow1/tacet-downbeat/issues/46) and
+  [#43](https://github.com/misnow1/tacet-downbeat/issues/43), from Game 5.
+
+No milestone, from the Game 5 review:
+
+- [#236](https://github.com/misnow1/tacet-downbeat/issues/236), taps through
+  touchscreen gloves. It is a maintainer decision (2026-11-15) to leave it off
+  Game 6.
+- [#237](https://github.com/misnow1/tacet-downbeat/issues/237), running the
+  game from indoors. It is a question, with no decision yet.
+- [#239](https://github.com/misnow1/tacet-downbeat/issues/239), a team timeout
+  that `tacet-timeouts` calls stray. It is offline only.
+- [#241](https://github.com/misnow1/tacet-downbeat/issues/241), a racked
+  machine to replace the laptop, eventually.
 
 ## Keeping this current
 
