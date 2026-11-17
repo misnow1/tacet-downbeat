@@ -211,6 +211,12 @@ BOX_STARTED = "box-started"
 #: move.
 CONSOLE_CHECKED = "console-checked"
 
+#: The box saying what its network adapters look like (#234): written at startup
+#: and whenever a role's adapter, address or state changed, never on every poll.
+#: Read-only, like CONSOLE_CHECKED: a claim about the laptop's adapters and
+#: nothing about what is plugged in at the far end.
+INTERFACES_CHECKED = "interfaces-checked"
+
 #: A latched fault going up and being cleared from the page (#233). Generic keys
 #: with the kind in `data`, as the prompt keys are, so a later fault (#234) adds
 #: a kind and never a key. Never renamed: logs and Reaper markers carry them.
@@ -242,6 +248,9 @@ VOCABULARY: tuple[EventType, ...] = (
     # result changes, because it becomes a Reaper marker and one every four
     # minutes saying "still answered" is clutter (#73).
     _instant(CONSOLE_CHECKED, "Console address checked", Category.SESSION, button=False),
+    # Written by the box: startup, and whenever a role's adapter, address or
+    # state changed. Never every poll: each entry becomes a Reaper marker (#234).
+    _instant(INTERFACES_CHECKED, "Network adapters checked", Category.SESSION, button=False),
     _instant(FAULT_RAISED, "Fault raised", Category.SESSION, button=False),
     _instant(FAULT_CLEARED, "Fault cleared", Category.SESSION, button=False),
     _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),
@@ -1237,6 +1246,15 @@ class AnnotationLog:
         #: What opening did about a torn final write left by the last run, or
         #: None if the file ended cleanly.
         self.repair: Repair | None = None
+
+    @property
+    def last_seq(self) -> int:
+        """The highest sequence number in the log: what the next entry follows.
+
+        Read-only. A fresh log is 0. Opened in a running box it is the
+        `box-started` entry's seq, which is what seeds a run's fault ids (#234).
+        """
+        return self._seq
 
     # -- lifecycle --------------------------------------------------------
 

@@ -66,6 +66,12 @@ fader move. It is asked once here, before the loop exists, then again at every
 arm and every few minutes by `tacet.reach`, which also keeps the laptop's ARP
 entry for the console warm. A warning, never a refusal: the operator has the
 fader.
+
+When `tacet.toml` names adapters in `[interfaces]` (no flag: a MAC is a site
+fact), the `interfaces` rows say what the laptop's own adapter table holds for
+each role, read once here before the loop exists and then every few seconds by
+`tacet.interfaces` (#234). A role that is not there is a WARNING and a latched
+fault on the page, never a refusal. It only reads; it sends nothing.
 """
 
 from __future__ import annotations
@@ -81,6 +87,7 @@ import sys
 import textwrap
 import time
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
 
 from aiohttp import web as aiohttp_web
@@ -90,6 +97,7 @@ from . import (
     disk,
     dm7,
     faults,
+    interfaces,
     mirror,
     mirror_report,
     moves,
@@ -254,6 +262,7 @@ def build(
     *,
     console_check: reach.Check | None = None,
     expected_script: str | None = None,
+    interface_reading: interfaces.Reading | None = None,
 ) -> tuple[App, AnnotationLog, mirror.MirrorQueue | None]:
     # First, so a preset above the cap, or a default that is not one of the
     # presets, raises before the log or the queue is opened. Held here as well
@@ -285,6 +294,14 @@ def build(
         # The tracks chip compares Reaper's armed count with it (#167), whatever
         # --no-disk-check says: the chip is a check of its own.
         channels=args.channels,
+        interfaces_expected=interfaces_expected(args),
+    )
+    # Before anything can raise a fault, so a missing adapter found at startup
+    # prints its FAULT line too (#234).
+    app.on_fault(
+        lambda change, fault, present: print(
+            fault_line(change, fault, wall=datetime.datetime.now(), still_present=present), flush=True
+        )
     )
     # The run's first entry, before anything is served (#157), and straight
     # after it what the startup ping found (#73). `console_checked` stores it
@@ -292,6 +309,10 @@ def build(
     app.log_box_started()
     if console_check is not None:
         app.console_checked(console_check)
+    # What the startup read of the adapters found (#234): logged, and latched
+    # as a fault when a role is not there, before the page is served.
+    if interface_reading is not None:
+        app.interfaces_checked(interface_reading)
     return app, log, queue
 
 
@@ -305,6 +326,16 @@ def _watch_stopped(app: App, host: str, task: asyncio.Future[None]) -> None:
         app.console_checked(
             reach.Check(reach.Reach.COULD_NOT_CHECK, reach.Trigger.KEEPALIVE, host, app.now(), detail=failed)
         )
+
+
+def _interface_watch_stopped(app: App, task: asyncio.Future[None]) -> None:
+    """A dead adapter watch is a fault in its own right (#41, #234): say so."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        failed = interfaces.WATCH_STOPPED.format(error=f"{type(error).__name__}: {error}")
+        app.interfaces_checked(interfaces.Reading(interfaces.Trigger.POLL, app.now(), None, detail=failed))
 
 
 def _report_watch_stopped(app: App, task: asyncio.Future[None]) -> None:
@@ -324,8 +355,16 @@ async def _run(
     tools: reach.Tools | None = None,
     *,
     expected_script: str | None = None,
+    interface_reading: interfaces.Reading | None = None,
+    interface_tools: interfaces.Tools | None = None,
 ) -> None:
-    app, log, queue = build(args, code, console_check=console_check, expected_script=expected_script)
+    app, log, queue = build(
+        args,
+        code,
+        console_check=console_check,
+        expected_script=expected_script,
+        interface_reading=interface_reading,
+    )
     server = web.create_app(app)
 
     loop = asyncio.get_running_loop()
@@ -352,11 +391,6 @@ async def _run(
         first_due=time.monotonic() + reach.KEEPALIVE_SECONDS,
     )
     app.on_armed(lambda: watch.request(reach.Trigger.ARM))
-    app.on_fault(
-        lambda change, fault, present: print(
-            fault_line(change, fault, wall=datetime.datetime.now(), still_present=present), flush=True
-        )
-    )
 
     runner = aiohttp_web.AppRunner(server)
     await runner.setup()
@@ -395,6 +429,19 @@ async def _run(
 
     watch_task: asyncio.Future[None] = asyncio.ensure_future(watch.run())
     watch_task.add_done_callback(lambda task: _watch_stopped(app, args.console_host, task))
+    # Beside it, the adapter watch (#234), only when the config names adapters.
+    # It reads a table every few seconds, never while the fader moves, and
+    # sends nothing.
+    interface_task: asyncio.Future[None] | None = None
+    if interfaces_expected(args):
+        interface_watch = interfaces.Watch(
+            interface_tools if interface_tools is not None else interfaces.find_tools(reach.platform_of(sys.platform)),
+            runner=reach.AsyncioRunner(),
+            busy=lambda: app.fader_moving,
+            on_result=app.interfaces_checked,
+        )
+        interface_task = asyncio.ensure_future(interface_watch.run())
+        interface_task.add_done_callback(lambda task: _interface_watch_stopped(app, task))
     # Beside it, the mirror's report on Reaper's project (#204). Read on a
     # thread, so a slow disk cannot stall the loop. With no queue there is no
     # mirror to hear from, and the page says "unknown".
@@ -417,6 +464,10 @@ async def _run(
         watch_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await watch_task
+        if interface_task is not None:
+            interface_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await interface_task
         if report_task is not None:
             report_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -663,6 +714,71 @@ def _ping_warning_lines(check: reach.Check | None) -> list[str]:
     ]
 
 
+#: The `interfaces` rows and what they say (#234). Quoted in docs/troubleshooting.md
+#: and docs/box.md; BOX_QUOTES in tests/test_runbook.py says where.
+INTERFACES_NOT_CONFIGURED = "not checked - no [interfaces] in tacet.toml"
+INTERFACES_NOT_CONFIGURED_NOTE = "a dead or missing adapter will not be noticed"
+INTERFACE_ROLE_NOT_SET = "not configured, not checked"
+INTERFACE_WARNING = "a network adapter is not ready"
+INTERFACE_WARNING_NOTE = "the page shows it until it is cleared; fix it before kickoff"
+INTERFACE_NO_NAME = "-"
+#: Room for the role, then the interface name, so the rows read as columns.
+INTERFACE_ROLE_WIDTH = 9
+INTERFACE_NAME_WIDTH = 6
+
+
+def _interface_row(found: interfaces.Found) -> str:
+    where = found.mac if found.vlan is None else f"{found.mac} vlan {found.vlan}"
+    if found.status is interfaces.Status.NO_VLAN:
+        name, what = INTERFACE_NO_NAME, interfaces.status_word(found)
+    elif found.status is interfaces.Status.PRESENT:
+        name = found.name or INTERFACE_NO_NAME
+        what = found.address or interfaces.NO_IPV4_DANTE
+    else:
+        name, what = found.name or INTERFACE_NO_NAME, interfaces.status_word(found)
+    return f"{found.role.value:<{INTERFACE_ROLE_WIDTH}}{where}  {name:<{INTERFACE_NAME_WIDTH}} {what}"
+
+
+def _interface_lines(
+    expected: Mapping[interfaces.Role, interfaces.Expected], reading: interfaces.Reading | None
+) -> list[str]:
+    """The `interfaces` row: what the laptop's adapters look like against the
+    roles the config names. Read, never confirmed past the laptop's own table."""
+    if not expected:
+        return [_row("interfaces", INTERFACES_NOT_CONFIGURED), _note(INTERFACES_NOT_CONFIGURED_NOTE)]
+    if reading is None:
+        return []
+    if reading.adapters is None:
+        return _wrapped_row("interfaces", f"{interfaces.COULD_NOT_CHECK}: {reading.detail}")
+    found = {f.role: f for f in interfaces.assess(expected, reading.adapters)}
+    rows = [
+        _interface_row(found[role])
+        if role in found
+        else f"{role.value:<{INTERFACE_ROLE_WIDTH}}{INTERFACE_ROLE_NOT_SET}"
+        for role in interfaces.Role
+    ]
+    first, *rest = rows
+    return [_row("interfaces", first), *(_note(row) for row in rest)]
+
+
+def _interface_warning_lines(
+    expected: Mapping[interfaces.Role, interfaces.Expected], reading: interfaces.Reading | None
+) -> list[str]:
+    """Warned, not refused (#234): the operator has the fader, and a box that
+    will not start before kickoff is worse. Silent is worse still."""
+    if reading is None or reading.adapters is None:
+        return []
+    bad = [f for f in interfaces.assess(expected, reading.adapters) if f.status is not interfaces.Status.PRESENT]
+    if not bad:
+        return []
+    return [
+        _rule(),
+        _row("WARNING", INTERFACE_WARNING),
+        *(_note(f"{f.role.value}: {interfaces.status_word(f)} ({f.mac})") for f in bad),
+        _note(INTERFACE_WARNING_NOTE),
+    ]
+
+
 #: Quoted in the runbook (#48); BOX_QUOTES in tests/test_runbook.py says where.
 CLOCK_RESTARTED_WARNING = "the clock has restarted since this log was written"
 
@@ -744,6 +860,7 @@ def startup_lines(
     code: provenance.Provenance | None = None,
     console_check: reach.Check | None = None,
     script: script_check.ScriptStatus | None = None,
+    interface_reading: interfaces.Reading | None = None,
 ) -> list[str]:
     """The banner, as a list of lines. Pure, so the wording is testable.
 
@@ -754,6 +871,7 @@ def startup_lines(
     Everything here is what the box was *told*. None of it is confirmed: the
     console cannot answer at all, and Reaper has not been asked yet.
     """
+    expected = interfaces_expected(args)
     lines = [
         _rule("="),
         _row("tacet", "band DCA - Phase 0/1, the detector drives nothing"),
@@ -763,6 +881,7 @@ def startup_lines(
         _row("console", f"{args.console_host}:{args.console_port}   DCA {args.dca}"),
         _note("commanded, never confirmed - the DM7's OSC is write-only"),
         *_ping_lines(console_check),
+        *_interface_lines(expected, interface_reading),
     ]
     if args.quantized:
         lines.append(_note("fader values snapped to Table 1"))
@@ -806,6 +925,7 @@ def startup_lines(
         lines.extend(_torn_lines("queue", args.queue, torn_queue, keeps_entries=False))
     lines.extend(_code_warning_lines(code))
     lines.extend(_ping_warning_lines(console_check))
+    lines.extend(_interface_warning_lines(expected, interface_reading))
     lines.append(_rule())
     lines.extend(_checklist(args))
     lines.append(_rule("="))
@@ -838,6 +958,19 @@ CONFIG_MAPPING = {
     "listen": "ui.listen",
     "http_port": "ui.port",
 }
+
+#: The argparse `dest` each adapter role arrives under. No flag: a MAC is a site
+#: fact, so the values reach `args` only through the config (#234), as
+#: `interfaces.Expected`.
+INTERFACE_DESTS = {role: f"interface_{role.value}" for role in interfaces.Role}
+CONFIG_MAPPING.update({dest: f"interfaces.{role.value}" for role, dest in INTERFACE_DESTS.items()})
+
+
+def interfaces_expected(args: argparse.Namespace) -> dict[interfaces.Role, interfaces.Expected]:
+    """The roles the config named, in Role order. Empty when none are set."""
+    found = {role: getattr(args, dest, None) for role, dest in INTERFACE_DESTS.items()}
+    return {role: expected for role, expected in found.items() if expected is not None}
+
 
 #: Needed before the box can run, from wherever. Not `required=True`, because
 #: argparse enforces that before the config file has been read; `config.require`
@@ -881,6 +1014,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--reaper-host", help="omit to run without transport control")
     p.add_argument("--reaper-port", type=config.port, default=reaper.DEFAULT_SEND_PORT)
     p.add_argument("--reaper-feedback-port", type=config.port, default=reaper.DEFAULT_RECEIVE_PORT)
+    # No flag for these, so argparse has no default to set: the config's values
+    # land here through `set_defaults`, and without a config they are None.
+    p.set_defaults(**dict.fromkeys(INTERFACE_DESTS.values()))
     p.add_argument("--listen", default=web.DEFAULT_HOST)
     p.add_argument("--http-port", type=config.port, default=web.DEFAULT_PORT)
     p.add_argument("--fade", type=float, default=dm7.DEFAULT_FADE_SECONDS)
@@ -1031,6 +1167,12 @@ def main(argv: list[str] | None = None) -> int:
     # a typo'd address is the cheapest thing to catch before the day.
     tools = reach.find_tools(reach.platform_of(sys.platform))
     console_check = reach.probe(args.console_host, tools)
+    # Whether the adapters the config names are there (#234): one read of the
+    # laptop's own table, only when something is configured, before the loop
+    # exists. --check reads too: a pulled adapter is the cheapest thing to catch
+    # before the day.
+    interface_tools = interfaces.find_tools(reach.platform_of(sys.platform))
+    interface_reading = interfaces.startup_reading(interface_tools) if interfaces_expected(args) else None
     # Whether Reaper's copy of the mirror script is this checkout's, and the one
     # question the box asks at startup (#223). After every refusal and the ping,
     # before the banner and the loop, so a blocking input() is safe. Only a fresh
@@ -1054,6 +1196,7 @@ def main(argv: list[str] | None = None) -> int:
         code=code,
         console_check=console_check,
         script=script,
+        interface_reading=interface_reading,
     )
     for line in banner:
         print(line)
@@ -1062,7 +1205,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return 0
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run(args, code, console_check, tools, expected_script=script.expected))
+        asyncio.run(
+            _run(
+                args,
+                code,
+                console_check,
+                tools,
+                expected_script=script.expected,
+                interface_reading=interface_reading,
+                interface_tools=interface_tools,
+            )
+        )
     return 0
 
 

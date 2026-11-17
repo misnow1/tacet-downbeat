@@ -10,7 +10,7 @@ from unittest import mock
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, faults, mirror, moves, osc, prompts, reach, reaper, state, taps, targets, web
+from tacet import dm7, faults, interfaces, mirror, moves, osc, prompts, reach, reaper, state, taps, targets, web
 from tacet import mirror_report as mr
 from tacet import provenance as prov
 from tests.disk import Disk
@@ -191,6 +191,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         home="/Users/x",
         expected_script=None,
         channels=None,
+        interfaces_expected=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -233,6 +234,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
             home=home,
             expected_script=expected_script,
             channels=channels,
+            interfaces_expected=interfaces_expected,
         )
 
     #: The operator's whole cycle, from a cold boot (#107): every move the page asks for.
@@ -5999,3 +6001,308 @@ class TestTheRecordingLineWaitsForThePlayhead(AppTestCase):
         self.assertFalse(before["moving"])
         self.feed(app, lambda packet: self.address(packet) == "/time")
         self.assertTrue(app.snapshot()["recording"]["moving"])
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+DANTE_MAC = "00:00:5e:00:53:02"
+CONTROL_MAC = "00:00:5e:00:53:01"
+SCORING_TAG = 20
+ALL_THREE = {
+    interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC),
+    interfaces.Role.CONTROL: interfaces.Expected(CONTROL_MAC),
+    interfaces.Role.SCORING: interfaces.Expected(CONTROL_MAC, SCORING_TAG),
+}
+LISTING = interfaces.parse_ifconfig((FIXTURES / "ifconfig-macos.txt").read_text(encoding="utf-8"))
+
+
+def listing_without(*names):
+    return tuple(a for a in LISTING if a.name not in names)
+
+
+def poll(adapters, *, at=1.0, detail=None):
+    return interfaces.Reading(interfaces.Trigger.POLL, at, adapters, detail=detail)
+
+
+def startup(adapters, *, at=0.5):
+    return interfaces.Reading(interfaces.Trigger.STARTUP, at, adapters)
+
+
+class TestInterfaces(AppTestCase):
+    """#234: the laptop's network adapters against the roles the config names.
+    Observed only: it never writes a packet to the console or to Reaper."""
+
+    def make(self, expected=None, **kwargs):
+        return self.build(interfaces_expected=ALL_THREE if expected is None else expected, **kwargs)
+
+    def named(self, key):
+        return [e for e in self.entries() if e.event == key]
+
+    def chip(self, app, role):
+        (found,) = [r for r in app.snapshot()["interfaces"]["roles"] if r["role"] == role]
+        return found
+
+    async def test_the_whole_story_of_one_adapter(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        heard = []
+        app.on_fault(lambda change, fault, present: heard.append((change, fault.kind, present)))
+        app.interfaces_checked(startup(LISTING))
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertEqual(len(self.named(ann.INTERFACES_CHECKED)), 1)
+        # Dante disappears: one fault, one entry, the listener hears it.
+        app.interfaces_checked(poll(listing_without("en8")))
+        (fault,) = app.snapshot()["faults"]
+        self.assertEqual(fault["kind"], "interface-dante")
+        self.assertIn("Network adapter missing", fault["message"])
+        (raised,) = self.named(ann.FAULT_RAISED)
+        self.assertEqual(raised.data["fault"], "interface-dante")
+        self.assertEqual(raised.data["role"], "dante")
+        self.assertEqual(raised.data["mac"], DANTE_MAC)
+        self.assertEqual(raised.data["status"], "missing")
+        self.assertIsNone(raised.data["vlan"])
+        self.assertEqual(len(self.named(ann.INTERFACES_CHECKED)), 2)
+        self.assertEqual(heard, [(faults.Change.RAISED, faults.FaultKind.INTERFACE_DANTE, None)])
+        # A second poll still missing writes nothing.
+        before = len(self.entries())
+        app.interfaces_checked(poll(listing_without("en8"), at=6.0))
+        self.assertEqual(len(self.entries()), before)
+        # Clear while it is still missing: logged as still present, and no re-raise.
+        await app.clear_fault(fault["id"])
+        (cleared,) = self.named(ann.FAULT_CLEARED)
+        self.assertTrue(cleared.data["still_present"])
+        self.assertEqual(app.snapshot()["faults"], [])
+        app.interfaces_checked(poll(listing_without("en8"), at=11.0))
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
+        # It comes back as en9: one entry, no fault, the chip names the new interface.
+        renamed = tuple(
+            interfaces.Adapter("en9", DANTE_MAC, True, True, ("169.254.1.1",)) if a.name == "en9" else a
+            for a in listing_without("en8")
+        )
+        entries = len(self.named(ann.INTERFACES_CHECKED))
+        app.interfaces_checked(poll(renamed, at=16.0))
+        self.assertEqual(len(self.named(ann.INTERFACES_CHECKED)), entries + 1)
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertEqual(self.chip(app, "dante")["status"], "present")
+        self.assertEqual(self.chip(app, "dante")["name"], "en9")
+        # And goes again: a new fault, a greater id, logged.
+        app.interfaces_checked(poll(listing_without("en8", "en9"), at=21.0))
+        (again,) = app.snapshot()["faults"]
+        self.assertGreater(again["id"], fault["id"])
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 2)
+        # Throughout, nothing was sent to anyone.
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(self.reaper_sender.packets, [])
+
+    async def test_a_role_missing_at_startup_is_latched_before_any_poll(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(listing_without("en8")))
+        (fault,) = app.snapshot()["faults"]
+        self.assertEqual(fault["kind"], "interface-dante")
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
+
+    async def test_with_nothing_configured_nothing_is_checked_or_logged(self):
+        app = self.build()
+        self.assertEqual(app.snapshot()["interfaces"]["status"], "not-configured")
+        app.interfaces_checked(startup(listing_without("en8")))
+        app.interfaces_checked(poll(listing_without("en8")))
+        self.assertEqual(app.snapshot()["interfaces"]["status"], "not-configured")
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertEqual(self.named(ann.INTERFACES_CHECKED), [])
+
+    async def test_a_box_that_has_not_read_yet_says_not_checked(self):
+        self.assertEqual(self.make().snapshot()["interfaces"]["status"], "not-checked")
+
+    async def test_could_not_check_is_logged_once_and_raises_nothing(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(LISTING))
+        app.interfaces_checked(poll(None, detail="ifconfig failed (exit 1): nope"))
+        app.interfaces_checked(poll(None, detail="ifconfig failed (exit 1): nope", at=6.0))
+        snapshot = app.snapshot()["interfaces"]
+        self.assertEqual(snapshot["status"], "could-not-check")
+        self.assertEqual(snapshot["detail"], "ifconfig failed (exit 1): nope")
+        # The last known roles are kept, not blanked.
+        self.assertEqual(snapshot["roles"][0]["status"], "present")
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertEqual(len(self.named(ann.INTERFACES_CHECKED)), 2)
+
+    async def test_a_could_not_check_run_does_not_hide_the_adapter_going_missing(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(LISTING))
+        app.interfaces_checked(poll(None, detail="boom"))
+        self.assertEqual(app.snapshot()["faults"], [])
+        app.interfaces_checked(poll(listing_without("en8"), at=6.0))
+        self.assertEqual(len(app.snapshot()["faults"]), 1)
+
+    async def test_link_down_then_missing_while_latched_is_one_fault_with_the_first_message(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(LISTING))
+        down = tuple(interfaces.Adapter("en8", DANTE_MAC, True, False, ()) if a.name == "en8" else a for a in LISTING)
+        app.interfaces_checked(poll(down))
+        (fault,) = app.snapshot()["faults"]
+        self.assertIn("Network adapter has no link", fault["message"])
+        entries = len(self.named(ann.INTERFACES_CHECKED))
+        app.interfaces_checked(poll(listing_without("en8"), at=6.0))
+        (still,) = app.snapshot()["faults"]
+        self.assertEqual(still["id"], fault["id"])
+        self.assertIn("Network adapter has no link", still["message"])
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
+        # The flap is in the log, though: the role's state changed.
+        self.assertEqual(len(self.named(ann.INTERFACES_CHECKED)), entries + 1)
+        self.assertEqual(self.chip(app, "dante")["status"], "missing")
+
+    async def test_control_with_only_a_link_local_address_raises_no_address(self):
+        app = self.make({interfaces.Role.CONTROL: interfaces.Expected(CONTROL_MAC)})
+        selfassigned = tuple(
+            interfaces.Adapter("en7", CONTROL_MAC, True, True, ("169.254.2.2",)) if a.name == "en7" else a
+            for a in LISTING
+        )
+        app.interfaces_checked(startup(selfassigned))
+        (fault,) = app.snapshot()["faults"]
+        self.assertEqual(fault["kind"], "interface-control")
+        self.assertIn("Network adapter has no address", fault["message"])
+
+    async def test_dante_with_only_a_link_local_address_is_fine(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(LISTING))
+        self.assertEqual(app.snapshot()["faults"], [])
+
+    async def test_two_roles_going_bad_latch_two_faults_with_distinct_ids(self):
+        app = self.make(
+            {
+                interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC),
+                interfaces.Role.CONTROL: interfaces.Expected(CONTROL_MAC),
+            }
+        )
+        app.interfaces_checked(startup(LISTING))
+        app.interfaces_checked(poll(listing_without("en8", "en7", "vlan0")))
+        faults_now = app.snapshot()["faults"]
+        self.assertEqual([f["kind"] for f in faults_now], ["interface-dante", "interface-control"])
+        self.assertEqual(len({f["id"] for f in faults_now}), 2)
+
+    async def test_en7_dying_latches_control_then_scoring_each_naming_the_other(self):
+        app = self.make()
+        app.interfaces_checked(startup(LISTING))
+        entries = len(self.named(ann.INTERFACES_CHECKED))
+        app.interfaces_checked(poll(listing_without("en7", "vlan0")))
+        control, scoring = app.snapshot()["faults"]
+        self.assertEqual((control["kind"], scoring["kind"]), ("interface-control", "interface-scoring"))
+        self.assertLess(control["id"], scoring["id"])
+        self.assertTrue(control["message"].endswith(interfaces.SHARED_CABLE.format(other="scoreboard (RTD)")))
+        self.assertTrue(scoring["message"].endswith(interfaces.SHARED_CABLE.format(other="control VLAN")))
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 2)
+        self.assertEqual(len(self.named(ann.INTERFACES_CHECKED)), entries + 1)
+        raised = self.named(ann.FAULT_RAISED)
+        self.assertEqual(raised[1].data["vlan"], SCORING_TAG)
+        # Clearing one leaves the other latched.
+        await app.clear_fault(control["id"])
+        (left,) = app.snapshot()["faults"]
+        self.assertEqual(left["kind"], "interface-scoring")
+
+    async def test_en7_back_without_its_vlan_raises_nothing_new_while_latched(self):
+        app = self.make()
+        app.interfaces_checked(startup(LISTING))
+        app.interfaces_checked(poll(listing_without("en7", "vlan0")))
+        ids = [f["id"] for f in app.snapshot()["faults"]]
+        app.interfaces_checked(poll(listing_without("vlan0"), at=6.0))
+        self.assertEqual([f["id"] for f in app.snapshot()["faults"]], ids)
+        self.assertEqual(self.chip(app, "scoring")["status"], "no-vlan")
+        self.assertEqual(self.chip(app, "control")["status"], "present")
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 2)
+
+    async def test_cleared_after_the_adapter_is_back_it_is_not_still_present(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(listing_without("en8")))
+        app.interfaces_checked(poll(LISTING, at=6.0))
+        (fault,) = app.snapshot()["faults"]
+        await app.clear_fault(fault["id"])
+        (cleared,) = self.named(ann.FAULT_CLEARED)
+        self.assertFalse(cleared.data["still_present"])
+
+    async def test_an_interface_fault_and_take_stopped_coexist(self):
+        now = [100.0]
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)}, monotonic=lambda: now[0])
+        app.interfaces_checked(startup(listing_without("en8")))
+        self.assertEqual([f["kind"] for f in app.snapshot()["faults"]], ["interface-dante"])
+        for at, packet in game_5_stream(dump_meters=False):
+            now[0] = at
+            app.handle_recorder_packet(packet)
+            if len(app.snapshot()["faults"]) == 2:
+                break
+        self.assertEqual({f["kind"] for f in app.snapshot()["faults"]}, {"interface-dante", "take-stopped"})
+        ids = [f["id"] for f in app.snapshot()["faults"]]
+        self.assertEqual(len(set(ids)), 2)
+
+    async def test_a_listener_hears_each_raise(self):
+        app = self.make()
+        kinds = []
+        app.on_fault(lambda change, fault, present: kinds.append(fault.kind))
+        app.interfaces_checked(startup(listing_without("en7", "vlan0")))
+        self.assertEqual(kinds, [faults.FaultKind.INTERFACE_CONTROL, faults.FaultKind.INTERFACE_SCORING])
+
+    async def test_the_page_is_told_only_when_something_changed(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        told = []
+        app.on_change(lambda: told.append(True))
+        app.interfaces_checked(startup(LISTING))
+        count = len(told)
+        self.assertGreaterEqual(count, 1)
+        app.interfaces_checked(poll(LISTING, at=6.0))
+        self.assertEqual(len(told), count)
+        app.interfaces_checked(poll(listing_without("en8"), at=11.0))
+        self.assertGreater(len(told), count)
+
+    async def test_checking_and_faulting_send_nothing_to_the_console_or_reaper(self):
+        app = self.make()
+        app.interfaces_checked(startup(listing_without("en7", "vlan0", "en8")))
+        for fault in app.snapshot()["faults"]:
+            await app.clear_fault(fault["id"])
+        app.interfaces_checked(poll(LISTING, at=6.0))
+        self.assertEqual(self.console_sender.packets, [])
+        self.assertEqual(self.reaper_sender.packets, [])
+        self.assertEqual(app.machine.state, state.State.STANDING_DOWN)
+
+    async def test_the_fader_cycle_is_unchanged_by_the_checks(self):
+        plain = FakeSender()
+        watched = FakeSender()
+        for sender, observe in ((plain, False), (watched, True)):
+            saved = self.root
+            self.root = saved / ("watched" if observe else "plain")
+            self.root.mkdir()
+            try:
+                app = self.make(level_known=False, steady=True, console_sender=sender)
+            finally:
+                self.root = saved
+            for number, name in enumerate(self.OPERATOR_CYCLE):
+                await getattr(app, name)()
+                await app.wait_for_fade()
+                if observe:
+                    before = len(sender.packets)
+                    gone = listing_without("en8") if number % 2 else LISTING
+                    app.interfaces_checked(poll(gone, at=float(number)))
+                    self.assertEqual(len(sender.packets), before, name)
+        self.assertEqual(watched.levels(), plain.levels())
+
+    async def test_ids_are_seeded_from_the_log_so_a_restart_never_reuses_one(self):
+        with ann.AnnotationLog(self.root / "game.jsonl") as earlier:
+            for _ in range(7):
+                earlier.record("note")
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(listing_without("en8")))
+        (fault,) = app.snapshot()["faults"]
+        self.assertEqual(fault["id"], 8)
+
+    async def test_a_second_run_on_the_same_log_starts_above_every_earlier_id(self):
+        first = self.make(ALL_THREE)
+        first.interfaces_checked(startup(listing_without("en7", "vlan0", "en8")))
+        ids = [f["id"] for f in first.snapshot()["faults"]]
+        self.assertEqual(len(ids), 3)
+        self.log.close()
+        second = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        second.interfaces_checked(startup(listing_without("en8")))
+        (fault,) = second.snapshot()["faults"]
+        self.assertGreater(fault["id"], max(ids))
+
+    async def test_a_fresh_log_still_starts_at_one(self):
+        app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
+        app.interfaces_checked(startup(listing_without("en8")))
+        self.assertEqual(app.snapshot()["faults"][0]["id"], 1)
