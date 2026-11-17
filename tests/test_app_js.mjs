@@ -332,7 +332,7 @@ for (const liveness of Object.keys(TAGS)) {
 
 check(
   "a rolling recorder says so",
-  rendered({ liveness: "live", known: true, recording: true, confirmed: true }).get("rec")
+  rendered({ liveness: "live", known: true, recording: true, moving: true, confirmed: true }).get("rec")
     .textContent,
   "ROLLING",
 );
@@ -1051,6 +1051,7 @@ check(
     "retargeting",
     "riding",
     "standing-down",
+    "take-checking",
     "take-stopped",
     "target-stored",
     "tracks-unarmed",
@@ -3898,6 +3899,38 @@ const onMain = (world) => world.nodes.get("tab-main").style.display === "";
   }
   check("a box that sends no faults still renders", error, null);
   check("and shows none", nodes.get("faults").children.length, 0);
+}
+
+// -- the recording line waits for the playhead (#233) ---------------------------
+
+{
+  const waitingState = { liveness: "live", known: true, recording: true, moving: false, confirmed: true, position: 5087.5 };
+  const nodes = rendered(waitingState);
+  check("waiting: the value", nodes.get("rec").textContent, "checking");
+  check("waiting: the tag", nodes.get("rec-tag").textContent, "waiting for the playhead");
+  check("waiting: the tag is neutral", nodes.get("rec-tag").className, "tag pending");
+  check("waiting: no frozen position", nodes.get("rec-pos").textContent, "");
+
+  const moving = rendered({ ...waitingState, moving: true });
+  check("moving: ROLLING", moving.get("rec").textContent, "ROLLING");
+  check("moving: confirmed", moving.get("rec-tag").className, "tag confirmed");
+
+  const old = rendered({ ...waitingState, moving: undefined });
+  check("a box that sends no moving still says ROLLING", old.get("rec").textContent, "ROLLING");
+
+  const faulted = rendered({ ...waitingState, fault: SNAPSHOTS["take-stopped"].recording.fault });
+  check("a fault beats waiting: value", faulted.get("rec").textContent, "TAKE STOPPED");
+  check("a fault beats waiting: tag", faulted.get("rec-tag").textContent, "NO AUDIO DEVICE");
+  check("a fault: no frozen position", faulted.get("rec-pos").textContent, "");
+
+  const stopped = rendered({ ...waitingState, recording: false });
+  check("stopped is not waiting", stopped.get("rec").textContent, "stopped");
+
+  const lost = rendered({ ...waitingState, liveness: "lost" });
+  check("lost is still LINK LOST", lost.get("rec-tag").textContent, "LINK LOST");
+
+  const checking = renderedFixture("take-checking").nodes;
+  check("the checking fixture: the value", checking.get("rec").textContent, "checking");
 }
 
 // -- report -----------------------------------------------------------------

@@ -258,6 +258,7 @@
     "healthy": true,
     "known": true,
     "liveness": "live",
+    "moving": true,
     "position": 754.5,
     "recording": true,
     "refusal": "Reaper is already recording."

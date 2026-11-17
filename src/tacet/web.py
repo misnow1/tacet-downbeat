@@ -670,6 +670,9 @@ font-weight:700;font-size:14px;padding:8px 12px;border-radius:8px;margin-bottom:
 .fault-banner span{flex:1}
 .fault-banner button{min-height:44px;padding:8px 16px;flex:none}
 .tag.fault{background:var(--warn);border-color:var(--warn);color:#fff}
+/* #233: Reaper says it is recording and the playhead has not yet moved. Neutral,
+   not red: every healthy start passes through it. */
+.tag.pending{border-color:var(--line);color:var(--dim)}
 #refusal{color:#ffb4a9;display:none}
 #refusal.loud{color:#fff;background:var(--warn);font-weight:700}
 /* The page's own word on its last tap. The box cannot say a tap did not reach

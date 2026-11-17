@@ -1634,6 +1634,10 @@ class App:
                 # right now. The latch is `faults`.
                 "fault": {"kind": faults.FaultKind.TAKE_STOPPED.value, "message": TAKE_STOPPED} if stopped else None,
                 "known": believed and transport is not None and transport.recording is not None,
+                # Whether a `/time` seen to move arrived within the timeout (#233).
+                # The page says ROLLING only while this holds: a refresh answer
+                # says `/record 1` whether or not the playhead moves.
+                "moving": transport is not None and transport.playhead_moving(now),
                 "recording": bool(transport.recording) if transport is not None else False,
                 "position": transport.position if transport is not None else None,
                 "confirmed": believed,

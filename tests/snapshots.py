@@ -172,6 +172,7 @@ async def open_recording(root: Path) -> dict[str, Any]:
     await box.app.annotate("up-whistle")
     box.reaper_says("/record", 1.0)
     box.reaper_says("/play", 1.0)
+    box.reaper_says("/time", POSITION - 1.0)
     box.reaper_says("/time", POSITION)
     await box.app.annotate("timeout-media-tap")
     return box.app.snapshot()
@@ -338,6 +339,22 @@ async def take_stopped(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+async def take_checking(root: Path) -> dict[str, Any]:
+    """The Game 5 stream stopped at the first burst's reply: Reaper says it is
+    recording and the playhead has not moved yet (#233). No fault yet."""
+    box = _build(root, console=_Sender(), machine=_known())
+    triggered = False
+    for at, packet in game_5_stream(dump_meters=False):
+        box.clock[0] = CLOCK_START + at
+        box.app.handle_recorder_packet(packet)
+        decoded = osc.decode_packet(packet)
+        assert isinstance(decoded, osc.Message)
+        triggered = triggered or decoded.address == "/lastmarker/name"
+        if triggered and decoded.address == "/play":
+            break
+    return box.app.snapshot()
+
+
 STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
@@ -352,6 +369,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "prompt-arm": prompt_arm_refused,
     "faults": faults,
     "take-stopped": take_stopped,
+    "take-checking": take_checking,
 }
 
 

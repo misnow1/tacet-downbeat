@@ -258,6 +258,7 @@
     "healthy": true,
     "known": false,
     "liveness": "live",
+    "moving": false,
     "position": null,
     "recording": false,
     "refusal": null

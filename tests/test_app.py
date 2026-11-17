@@ -5912,3 +5912,75 @@ class TestATakeThatStopped(AppTestCase):
         self.assertNotIn(reaper.DEFAULT_ADDRESSES.record, addresses)
         # One refresh per run of feedback: the first run's and each burst's.
         self.assertLessEqual(len(addresses), len(GAME_5_ANSWER_GAPS) + 2)
+
+
+class TestTheRecordingLineWaitsForThePlayhead(AppTestCase):
+    """#233: ROLLING only while a moved `/time` has arrived within the timeout.
+    A refresh answer says `/record 1` whether or not the playhead moves."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = [100.0]
+        self.stream = iter(game_5_stream(dump_meters=False))
+
+    def feed(self, app, until):
+        for at, packet in self.stream:
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+            if until(packet):
+                return
+        raise AssertionError("the stream ended first")
+
+    @staticmethod
+    def address(packet):
+        decoded = osc.decode_packet(packet)
+        assert isinstance(decoded, osc.Message)
+        return decoded.address
+
+    def to_the_first_reply(self, app):
+        triggered = []
+
+        def until(packet):
+            if self.address(packet) == "/lastmarker/name":
+                triggered.append(True)
+            return bool(triggered) and self.address(packet) == "/play"
+
+        self.feed(app, until)
+
+    async def test_the_healthy_roll_is_moving(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        self.feed(app, lambda _: self.t[0] >= GAME_5_ROLL_ENDS - 1.0)
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["moving"])
+        self.assertTrue(recording["recording"])
+
+    async def test_the_first_burst_reply_says_recording_but_not_moving(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        self.to_the_first_reply(app)
+        recording = app.snapshot()["recording"]
+        self.assertTrue(recording["known"])
+        self.assertTrue(recording["recording"])
+        self.assertFalse(recording["moving"])
+        self.assertIsNone(recording["fault"])
+        # The record path is exactly as it was.
+        self.assertFalse(recording["can_start"])
+        self.assertEqual(recording["refusal"], reaper.RECORD_REFUSED_ROLLING)
+
+    async def test_the_frozen_time_then_raises_the_fault(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        self.to_the_first_reply(app)
+        self.feed(app, lambda packet: self.address(packet) == "/time")
+        recording = app.snapshot()["recording"]
+        self.assertFalse(recording["moving"])
+        self.assertIsNotNone(recording["fault"])
+
+    async def test_a_box_restarted_into_a_healthy_roll_waits_then_moves(self):
+        app = self.build(monotonic=lambda: self.t[0])
+        seen = []
+        for at, packet in rolling_with_refresh(100.0):
+            self.t[0] = at
+            app.handle_recorder_packet(packet)
+            seen.append(app.snapshot()["recording"]["moving"])
+        self.assertFalse(seen[0])
+        self.assertTrue(seen[-1])
+        self.assertEqual(seen, sorted(seen))

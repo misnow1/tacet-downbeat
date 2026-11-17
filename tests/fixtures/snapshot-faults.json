@@ -258,6 +258,7 @@
     "healthy": false,
     "known": false,
     "liveness": "lost",
+    "moving": false,
     "position": null,
     "recording": true,
     "refusal": "Reaper has stopped answering: it says it is recording but its playhead is not moving. Check Reaper, and start the recording there if it is not rolling."

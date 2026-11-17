@@ -419,7 +419,10 @@ on localhost (2026-10-04, #163, #166). Anything the box or the mirror builds on
 Reaper's feedback has to survive all of it.
 
 - **Parked:** VU meters only (`/master/vu*`, `/track/vu*`, `/track/N/vu*`),
-  about 11 packets a second, and only while an audio device is running.
+  only while an audio device is running and has signal. About 1.2 updates a
+  second per address with the Pilot on (1.4 rolling), none at all with no signal
+  (bench, 2026-11-16); the earlier "about 11 packets a second" counted messages
+  across addresses.
 - **Moving:** `/time`, `/time/str`, `/beat/str`, `/samples`, `/frames/str`,
   about 12 a second, only while the transport moves. Play/record start is
   exactly `/record 1, /stop 0, /play 1` (or without `/record` for Play), and a
@@ -458,12 +461,14 @@ Reaper's feedback has to survive all of it.
   answers it. Unanswered (an older Reaper, the action missing), after the 5 s
   guard above the box behaves as #163 shipped it, until Reaper's next record
   start or stop.
-- **A Reaper with no audio device still answers a refresh** (Game 5, #233): with
-  `/record 1`, `/play 1` and the same `/time` as its last, every time, while the
-  meters and the live `/time` stream are gone. That repeated `/time` is how the
-  box knows the take has stopped (it raises `TAKE STOPPED`). The meters stopping
-  with the device is *assumed*, and is what the bench in #233 checks: if they do
-  not stop, the fault never fires and the page stays at `LINK LOST`.
+- **A Reaper with no audio device** (Game 5, bench 2026-11-16, #233): sends
+  nothing for 30 s, meters included. A refresh is still answered, byte for byte
+  the same every time: `/record 1`, `/play 1` and the frozen `/time`. The dump
+  carries one of each `vu` address. Each marker sends `/lastmarker/name`,
+  `/number/str` and `/time`, which is what starts each burst. The repeated
+  `/time` with no meters is how the box knows the take has stopped (`TAKE
+  STOPPED`). Reaper does not reopen the device by itself: stop the transport,
+  then press OK in Settings > Audio > Device.
 - **Quit is silent.** The stream just stops. The box can tell "closed" from
   "parked" only because the meters stop, and only while an audio device runs.
 - **Launch and project load send a placeholder dump first:** generic

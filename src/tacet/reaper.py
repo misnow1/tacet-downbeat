@@ -49,8 +49,12 @@ DEFAULT_RECEIVE_PORT = 9000
 #: How long we wait for a packet, or for the `/time` stream, before calling it
 #: silent.
 #:
-#: What Reaper sends on the game rig (bench, 2026-10-04, #163): meters, about
-#: 11 packets a second, whenever its audio device runs - parked or rolling.
+#: What Reaper sends on the game rig (bench, 2026-10-04, #163): meters whenever
+#: its audio device runs - parked or rolling - and, measured on one address on
+#: 2026-11-16, only with signal: about 1.2 updates a second with the Pilot on
+#: (1.4 rolling), none with no signal. #163's "about 11 packets a second"
+#: counted messages across several addresses. 0.83 s between updates is well
+#: inside this timeout, so a run of meters is never broken.
 #: `/time`, about 12 a second, only while the transport moves. `/record`,
 #: `/play` and `/stop` only when they change, never in a launch or project-load
 #: dump. Quitting is silent. So a packet means Reaper is there, `/time` means
@@ -100,7 +104,9 @@ RECORD_REFUSED_PRIOR = (
 #: share a laptop, so the audio interface is where to look, not the network.
 TAKE_STOPPED = (
     "Recording has stopped: Reaper says it is recording, but its playhead is frozen and its audio device is silent. "
-    "Check the audio interface on the laptop (Dante adapter, DVS), then check Reaper is recording again."
+    "Check the audio interface on the laptop (Dante adapter, DVS). "
+    "Then in Reaper stop the transport, open Settings > Audio > Device and press OK to restart the audio device, "
+    "and start a new take."
 )
 
 _ACTION_PREFIX = "/action"
@@ -167,7 +173,9 @@ DEFAULT_ADDRESSES = AddressMap()
 class Liveness(StrEnum):
     """What silence from Reaper means right now.
 
-    On the game rig Reaper streams meters whenever its audio device runs,
+    On the game rig Reaper streams meters whenever its audio device runs and
+    has signal (about 1.2 updates a second per address with the Pilot on, none
+    with no signal; bench, 2026-11-16),
     `/time` only while the transport moves, and transport state only on change
     - never in a launch or project-load dump - and quitting is silent (bench,
     2026-10-04, #163). There is no heartbeat and no way to ask - probing
@@ -269,6 +277,12 @@ class TransportState:
         if self.position_at is None:
             return False
         return (now - self.position_at) <= timeout
+
+    def playhead_moving(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
+        """A `/time` seen to move arrived within the timeout (#233). What the page
+        needs before it says ROLLING: a refresh answer says `/record 1` whether
+        or not the playhead moves."""
+        return self.position_moved and self.clock_running(now, timeout=timeout)
 
     def meters_flowing(self, now: float, *, timeout: float = DEFAULT_FEEDBACK_TIMEOUT) -> bool:
         """Whether the audio device is running: meters have arrived within the

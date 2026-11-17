@@ -35,7 +35,11 @@ def listened_parked(client: Any, now: float) -> None:
 ROLLING_MIX = (METER, "/track/1/vu", "/time", "/time/str", "/beat/str", "/samples", "/frames/str")
 TICKS_PER_SECOND = 12
 MIX_SECONDS = 5
-METERS_PER_SECOND = 11
+#: Meter updates a second on one address: about 1.2 with the Pilot on (1.4
+#: rolling), none at all with no signal (bench, 2026-11-16). #163's "about 11
+#: packets a second" counted messages across several addresses; the cadence the
+#: box sees on any one is this, about 0.83 s between updates at worst.
+METERS_PER_SECOND = 1.2
 #: The `/time` family: one reading arrives as these five, together.
 CLOCK_FAMILY = ("/time", "/time/str", "/beat/str", "/samples", "/frames/str")
 
@@ -48,7 +52,7 @@ def rolling_tick(address: str, tick: int) -> bytes:
 def mid_take_stream(lead: float, *, clock: bool = True, seconds: float = MIX_SECONDS, start: float = 100.0):
     """A rolling Reaper heard from the middle, one packet at a time.
 
-    Meters at 11 a second and the `/time` family at 12, on independent
+    Meters at `METERS_PER_SECOND` and the `/time` family at 12, on independent
     cadences, the first meter leading the first `/time` by `lead` seconds. No
     `/record` or `/play` was ever announced to this box. Yields `(time, packet)`
     in arrival order.
@@ -189,7 +193,13 @@ GAME_5_ROLLING_SECONDS = 6.0
 GAME_5_ROLL_ENDS = GAME_5_START + reaper.DEFAULT_FEEDBACK_TIMEOUT + LISTEN_MARGIN + GAME_5_ROLLING_SECONDS
 
 
-def game_5_stream(*, dump_meters: bool, rolling_seconds: float = GAME_5_ROLLING_SECONDS, start: float = GAME_5_START):
+def game_5_stream(
+    *,
+    dump_meters: bool,
+    rolling_seconds: float = GAME_5_ROLLING_SECONDS,
+    start: float = GAME_5_START,
+    meters_per_second: float = METERS_PER_SECOND,
+):
     """The Game 5 pattern, one packet at a time as `(time, packet)`.
 
     The stream starts as the field did at 18:09:45 and 19:03:07: the box is
@@ -201,7 +211,7 @@ def game_5_stream(*, dump_meters: bool, rolling_seconds: float = GAME_5_ROLLING_
     and Reaper is silent until a burst: a `/lastmarker/name` that triggers it,
     the reply to the refresh it draws (`/record 1`, `/play 1`), a short dump -
     one `/track/N/vu` per track when `dump_meters` - and the `/time` that has
-    not moved.
+    not moved. `meters_per_second=0` is silent inputs: no signal, no meters.
     """
     events: list[tuple[float, int, bytes]] = []
 
@@ -218,8 +228,9 @@ def game_5_stream(*, dump_meters: bool, rolling_seconds: float = GAME_5_ROLLING_
         at = roll_start + k * TIME_INTERVAL
         add(at, time_packet(GAME_5_TAKE_END - (ticks - 1 - k) * TIME_INTERVAL))
     parked = roll_start - start
-    for k in range(int((parked + rolling_seconds) * METERS_PER_SECOND)):
-        add(start + k / METERS_PER_SECOND, meter_packet())
+    if meters_per_second > 0:
+        for k in range(int((parked + rolling_seconds) * meters_per_second)):
+            add(start + k / meters_per_second, meter_packet())
     last_roll = roll_start + (ticks - 1) * TIME_INTERVAL
     burst_at = last_roll + GAME_5_FIRST_ANSWER_SECONDS
     for gap in (0.0, *GAME_5_ANSWER_GAPS):

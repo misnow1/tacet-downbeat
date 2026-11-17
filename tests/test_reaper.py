@@ -788,7 +788,7 @@ class TestRefreshIsAskedOncePerRun(unittest.TestCase):
         c, sender, clock = timed_client()
         step = 1 / METERS_PER_SECOND
         at = 100.0
-        for _ in range(30 * METERS_PER_SECOND):
+        for _ in range(int(30 * METERS_PER_SECOND)):
             hear(c, clock, meter_packet(), at)
             at += step
         hear(c, clock, osc.encode_message("/record", 1.0), at)
@@ -798,7 +798,7 @@ class TestRefreshIsAskedOncePerRun(unittest.TestCase):
         at += 30
         hear(c, clock, osc.encode_message("/record", 0.0), at)
         hear(c, clock, osc.encode_message("/play", 0.0), at)
-        for _ in range(30 * METERS_PER_SECOND):
+        for _ in range(int(30 * METERS_PER_SECOND)):
             at += step
             hear(c, clock, meter_packet(), at)
         self.assertEqual(actions(sender), 1)
@@ -1391,12 +1391,21 @@ class TestATakeThatHasStopped(unittest.TestCase):
         # `/time` stalls past the still window, then a buffered stale reading
         # arrives, then current ones. That stale reading is evidence on its own
         # (`still_at` is set); it is the meters, flowing throughout because the
-        # device is running, that keep the fault down.
+        # device is running, that keep the fault down. At the old, dense cadence
+        # and at the bench's: about 1.2 updates a second on one address.
+        for step in (0.1, 1 / METERS_PER_SECOND):
+            with self.subTest(meter_step=step):
+                self.stall_and_stale_resume(step)
+
+    def stall_and_stale_resume(self, meter_step):
         state = reaper.apply_feedback(_record(), reaper.TransportState(), now=100.0)
         stale = 500.0 + 19 * 0.1 + TIME_INTERVAL
+        next_meter = 100.0
         for k in range(120):
             now = 100.0 + k * 0.1
-            state = reaper.apply_feedback(meter_packet(), state, now=now)
+            if now >= next_meter:
+                state = reaper.apply_feedback(meter_packet(), state, now=now)
+                next_meter += meter_step
             if k == 90:
                 state = reaper.apply_feedback(time_packet(stale), state, now=now)
                 self.assertIsNotNone(state.still_at)
@@ -1456,3 +1465,82 @@ class TestATakeThatHasStopped(unittest.TestCase):
                         )
                         want = recording is True and still and not meters
                         self.assertEqual(reaper.take_stopped(state, 100.5), want)
+
+
+class TestMetersAtTheBenchCadence(unittest.TestCase):
+    """#233: about 1.2 updates a second on one address, and none with no signal
+    (bench, 2026-11-16)."""
+
+    def test_an_unbroken_run_flows_after_six_seconds(self):
+        state = reaper.TransportState()
+        step = 1 / METERS_PER_SECOND
+        for k in range(int(6 * METERS_PER_SECOND) + 1):
+            state = reaper.apply_feedback(meter_packet(), state, now=100.0 + k * step)
+        self.assertTrue(state.meters_flowing(100.0 + 6.0))
+
+    def test_the_cadence_never_breaks_a_run(self):
+        self.assertLess(1 / METERS_PER_SECOND, reaper.DEFAULT_FEEDBACK_TIMEOUT)
+
+    def test_silent_inputs_still_raise_once_per_burst_and_the_roll_never_does(self):
+        raised = 0
+        for at, _, before, after in stream_states(game_5_stream(dump_meters=False, meters_per_second=0)):
+            if at <= GAME_5_ROLL_ENDS:
+                self.assertFalse(reaper.take_stopped(after, at), at)
+            if reaper.take_stopped_heard(before, after):
+                raised += 1
+        self.assertEqual(raised, 1 + len(GAME_5_ANSWER_GAPS))
+
+
+class TestThePlayheadIsMoving(unittest.TestCase):
+    """#233: what the page needs before it says ROLLING. A refresh answer says
+    `/record 1` whether or not the playhead moves."""
+
+    def test_false_with_no_time(self):
+        self.assertFalse(reaper.TransportState().playhead_moving(100.0))
+
+    def test_false_after_the_first_reading(self):
+        state = feed(reaper.TransportState(), "/time", 4.5, now=100.0)
+        self.assertFalse(state.playhead_moving(100.0))
+
+    def test_true_after_a_moving_pair_and_false_once_the_timeout_has_passed(self):
+        state = moving(reaper.TransportState(), 4.5, 100.0)
+        self.assertTrue(state.playhead_moving(100.0))
+        self.assertTrue(state.playhead_moving(100.0 + reaper.DEFAULT_FEEDBACK_TIMEOUT))
+        self.assertFalse(state.playhead_moving(100.0 + reaper.DEFAULT_FEEDBACK_TIMEOUT + 0.1))
+
+    def test_false_after_a_frozen_burst_reading(self):
+        for at, _, _, after in stream_states(game_5_stream(dump_meters=False)):
+            if after.still_at == at:
+                self.assertFalse(after.playhead_moving(at))
+                return
+        self.fail("no frozen reading")
+
+    def test_game_5_is_moving_through_the_roll_and_not_in_the_first_burst_reply(self):
+        trigger_seen = False
+        checked = 0
+        for at, packet, _, after in stream_states(game_5_stream(dump_meters=False)):
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            if at <= GAME_5_ROLL_ENDS and decoded.address == "/time" and after.position_moved:
+                self.assertTrue(after.playhead_moving(at))
+            if decoded.address == "/lastmarker/name":
+                trigger_seen = True
+            if trigger_seen and after.still_at is None:
+                if decoded.address == "/time":
+                    break
+                if decoded.address in ("/record", "/stop", "/pause", "/play"):
+                    checked += 1
+                    self.assertIs(after.liveness(at), reaper.Liveness.LIVE)
+                    self.assertTrue(after.recording)
+                    self.assertFalse(after.playhead_moving(at))
+        self.assertGreater(checked, 0)
+
+    def test_a_box_restarted_into_a_healthy_roll_waits_for_the_second_time(self):
+        seen = 0
+        for at, packet, _, after in stream_states(rolling_with_refresh(100.0)):
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            if decoded.address == "/time":
+                seen += 1
+            self.assertEqual(after.playhead_moving(at), seen >= 2, at)
+            self.assertFalse(reaper.take_stopped(after, at))

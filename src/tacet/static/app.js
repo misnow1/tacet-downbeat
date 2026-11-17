@@ -840,6 +840,10 @@ const RECORDING_NOT_REPORTED = "not yet reported";
 // #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_ROLLING = "ROLLING";
 // #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const RECORDING_CHECKING = "checking";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const RECORDING_WAITING = "waiting for the playhead";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_TAKE_STOPPED = "TAKE STOPPED";
 // #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const RECORDING_NO_DEVICE = "NO AUDIO DEVICE";
@@ -849,7 +853,7 @@ const FAULT_CLEAR = "Clear";
 // #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
 const FADER_SEND_FAILED = "Console unreachable: ";
 
-function recordingTag(liveness, known, fault) {
+function recordingTag(liveness, known, fault, waiting) {
   // Ahead of every liveness: a Reaper that says it is recording with a frozen
   // playhead and a silent device reads LOST or live depending on the moment,
   // and the cause is the same (#233).
@@ -857,6 +861,10 @@ function recordingTag(liveness, known, fault) {
   if (liveness === "lost") return ["unknown", RECORDING_LINK_LOST];
   if (liveness === "unknown") return ["unknown", RECORDING_NO_FEEDBACK];
   if (!known) return ["unknown", RECORDING_NOT_REPORTED];
+  // Reaper says it is recording and the box has not yet seen the playhead move:
+  // a refresh answer says `/record 1` whether or not it does (#233). Neutral,
+  // since every healthy start passes through it.
+  if (waiting) return ["pending", RECORDING_WAITING];
   return ["confirmed", liveness === "quiet" ? "confirmed (idle)" : "confirmed"];
 }
 
@@ -1139,10 +1147,13 @@ function render(received) {
   paintSlot();
 
   const rec = next.recording;
-  const [recClass, recLabel] = recordingTag(rec.liveness, rec.known, rec.fault);
+  // A box that sends no `moving` keeps saying ROLLING, as it always did.
+  const waiting = !rec.fault && rec.known && rec.recording && rec.moving === false;
+  const [recClass, recLabel] = recordingTag(rec.liveness, rec.known, rec.fault, waiting);
   $("rec").textContent = rec.fault
     ? RECORDING_TAKE_STOPPED
-    : (!rec.known ? "unknown" : (rec.recording ? RECORDING_ROLLING : "stopped"));
+    : (waiting ? RECORDING_CHECKING
+      : (!rec.known ? "unknown" : (rec.recording ? RECORDING_ROLLING : "stopped")));
   const tag = $("rec-tag");
   tag.textContent = recLabel;
   tag.className = "tag " + recClass;
@@ -1155,8 +1166,9 @@ function render(received) {
   setText($("rec-why"), recordReason(rec));
   setText($("rec-error"), rec.healthy === false ? RECORDER_ERROR_PREFIX + rec.error : "");
 
+  // Not while waiting or faulted: it would show the frozen position.
   $("rec-pos").textContent =
-    rec.confirmed && rec.position !== null ? "at " + timecode(rec.position) : "";
+    rec.confirmed && rec.position !== null && !waiting && !rec.fault ? "at " + timecode(rec.position) : "";
 
   paintFaults(next.faults);
   paintButtons(next);
