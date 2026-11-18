@@ -38,7 +38,8 @@
     The invariant is absolute against relative. An absolute command (a snap
     TRIGGER, CLOSE_NOW) lands the fader in one known place whatever the box
     believed, so it is always safe, and it makes the level known. A relative
-    one - RELEASE's fade, READY's ride, a gradual TRIGGER, a retarget ride - ramps from
+    one - RELEASE's fade, READY's ride, a gradual TRIGGER, a retarget ride, a
+    nudge (#242) - ramps from
     `commanded_level`, which is fiction while the level is unknown, so it is
     refused (not queued: there is no intention worth holding onto, and a queued
     tap ran later on a belief nobody had looked at). ARM is refused too: it
@@ -72,10 +73,10 @@ open there made a forgotten Arm into a missed downbeat, and a missed downbeat
 is unrecoverable. A `READY` while standing down arms the box the same way a
 `TRIGGER` does - a forgotten Arm must not cost a heads-up either.
 
-The machine emits `OPEN`, `READY`, `FADE`, `CLOSE_NOW` and `REPORT_READY`, and
-there is no other option. Faders only, never mutes: the band mics feed other
-mixes pre-fader and post-mute, so there is deliberately no mute for anything
-here to reach for. `READY` is still a fader write, to a hold level short of
+The machine emits `OPEN`, `READY`, `FADE`, `CLOSE_NOW`, `REPORT_READY`,
+`RETARGET` and `NUDGE`, and there is no other option. Faders only, never mutes:
+the band mics feed other mixes pre-fader and post-mute, so there is
+deliberately no mute for anything here to reach for. `READY` is still a fader write, to a hold level short of
 target - not a mute and not silence. `CLOSE_NOW` is one write to -inf, the
 complete close, so the mute is never needed. `REPORT_READY` is the one
 exception that writes nothing at all - it corrects a belief, never the fader -
@@ -143,6 +144,10 @@ class Command(StrEnum):
     #: (#128). The target value lives in the app: the machine only decides
     #: whether it rides.
     RETARGET = "retarget"
+    #: The operator trims an open fader by a dB, down or up (#242). Which way,
+    #: and how far it may go, live in the app: the machine only decides whether
+    #: a nudge is allowed.
+    NUDGE = "nudge"
 
 
 class FaderCommand(StrEnum):
@@ -161,6 +166,9 @@ class FaderCommand(StrEnum):
     #: (READY) (#128). Relative, so it needs a known level. Still a level write,
     #: never a mute.
     RETARGET = "retarget"
+    #: A one dB trim of an open fader (#242). Relative, so it needs a known
+    #: level. Still a level write, never a mute, and never to -inf.
+    NUDGE = "nudge"
 
 
 @dataclass(frozen=True)
@@ -182,6 +190,12 @@ class Event:
     #: move's failure must never un-know a level, or a fade that died partway
     #: could not be faded again (#27).
     absolute: bool = False
+    #: Set on NUDGE when a move other than a nudge is still in flight. Only the
+    #: shell knows: a retarget ride in OPEN leaves `riding_in` False on purpose
+    #: (#128), so the machine cannot tell it is under way. Ignored on every other
+    #: command. False by default, which is the permissive direction, so the
+    #: shell has to set it.
+    busy: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,6 +261,11 @@ DETECTOR_CANNOT_HAND_OFF = "handing the DCA over is operator-only; only a person
 #: Why a detector-sourced RETARGET is refused (#128).
 DETECTOR_CANNOT_RETARGET = "the target level is the operator's; a detector cannot choose how loud the band is"
 
+#: Why a detector-sourced NUDGE is refused (#242). Not quoted in
+#: docs/troubleshooting.md: like the other detector refusals it never reaches
+#: the operator's page, since no detector exists before Phase 2.
+DETECTOR_CANNOT_NUDGE = "nudging the level is operator-only; a detector cannot hear the PA ring"
+
 #: Commands only a person can give, each with why. READY is entered on a
 #: prediction that something is about to happen and REPORT_READY says the fader
 #: is already at the hold level: neither is something a detector can know (#6,
@@ -259,6 +278,7 @@ _OPERATOR_ONLY: dict[Command, str] = {
     Command.REPORT_READY: DETECTOR_CANNOT_PREDICT,
     Command.HANDOFF: DETECTOR_CANNOT_HAND_OFF,
     Command.RETARGET: DETECTOR_CANNOT_RETARGET,
+    Command.NUDGE: DETECTOR_CANNOT_NUDGE,
 }
 
 #: The states where a retarget has a fader to ride (#128). Everywhere else it
@@ -283,6 +303,12 @@ UNKNOWN_LEVEL_MOVE = (
 #: Why REPORT_READY is refused once the level is known. Quoted in
 #: docs/troubleshooting.md, where a test holds it.
 LEVEL_ALREADY_KNOWN = "the fader level is already known; ready rides there instead of assuming it"
+#: Why a nudge is refused when the fader is not open (#242). Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+NUDGE_NOT_OPEN = "a nudge trims an open fader, and this one is not open; nothing moved"
+#: Why a nudge is refused while another move is in flight (#242). Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+NUDGE_BUSY = "the fader is still moving, so the nudge was not done; tap again once it lands"
 
 
 def step(machine: Machine, event: Event) -> Outcome:
@@ -334,6 +360,8 @@ def step(machine: Machine, event: Event) -> Outcome:
         return _close_now(machine)
     if event.command is Command.REPORT_READY:
         return _report_ready(machine)
+    if event.command is Command.NUDGE:
+        return _nudge(machine, event)
     if not machine.level_known:
         refused = _refused_while_unknown(machine, event)
         if refused is not None:
@@ -448,6 +476,26 @@ def _report_ready(machine: Machine) -> Outcome:
         ),
         fader=FaderCommand.REPORT_READY,
     )
+
+
+def _nudge(machine: Machine, event: Event) -> Outcome:
+    """A one dB trim of an open fader (#242), every rule in one place.
+
+    Not open is refused first, ahead of the unknown level: from IDLE that is
+    the reason that matters. Then the unknown level, because the nudge ramps
+    from the belief (#107). Then a move in flight: a nudge on top of a ride-in
+    or a retarget ride would cancel it and strand the fader short of where the
+    state says it is going. A nudge never changes what the machine believes
+    except to clear a stall, and it never makes the level known. A trigger
+    afterwards is a no-op in OPEN, so the fader stays nudged until the next
+    open after a close returns it to target."""
+    if machine.state is not State.OPEN:
+        return _unchanged(machine, NUDGE_NOT_OPEN)
+    if not machine.level_known:
+        return _unchanged(machine, UNKNOWN_LEVEL_MOVE)
+    if machine.riding_in or event.busy:
+        return _unchanged(machine, NUDGE_BUSY)
+    return Outcome(machine=replace(machine, stalled=False), fader=FaderCommand.NUDGE)
 
 
 def _standing_down(machine: Machine, event: Event) -> Outcome:

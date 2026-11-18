@@ -99,7 +99,7 @@ class TestConstants(unittest.TestCase):
     def test_ramp_commands_are_fader_commands(self):
         commands = {c.value for c in state.FaderCommand}
         self.assertLessEqual(pilot.RAMP_COMMANDS, commands)
-        self.assertEqual(pilot.RAMP_COMMANDS, {"fade", "ready", "retarget"})
+        self.assertEqual(pilot.RAMP_COMMANDS, {"fade", "ready", "retarget", "nudge"})
 
 
 class TestEnvelope(unittest.TestCase):
@@ -172,6 +172,18 @@ class TestClassification(unittest.TestCase):
         ]
         self.assertTrue(all(pilot.is_ramp(e) for e in entries))
         self.assertEqual([pilot.kind_of(e) for e in entries], ["fade", "ready", "retarget", "up-slow ride"])
+
+    def test_a_nudge_is_a_ramp_of_its_own_kind(self):
+        # #242: a one dB trim, logged as a `commanded` entry like any other move.
+        down = commanded(1, wall(), 1.0, "nudge", "nudge-down", 0, -100)
+        up = commanded(2, wall(), 1.0, "nudge", "nudge-up", -100, 0)
+        self.assertTrue(pilot.is_ramp(down))
+        self.assertTrue(pilot.is_ramp(up))
+        self.assertFalse(pilot.is_snap_open(down))
+        self.assertEqual([pilot.kind_of(e) for e in (down, up)], ["nudge", "nudge"])
+        self.assertIn("nudge", pilot.KINDS)
+        self.assertEqual(pilot.ramp_of(down).direction, pilot.Direction.FALLING)
+        self.assertEqual(pilot.ramp_of(up).direction, pilot.Direction.RISING)
 
     def test_snap_open_close_now_and_report_ready_are_not(self):
         entries = [

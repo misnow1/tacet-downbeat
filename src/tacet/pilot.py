@@ -66,13 +66,21 @@ DATA_LEVEL = "level"
 DATA_TARGET = "target"
 DATA_TARGET_DB = "target_db"
 DATA_DELIVERED = "delivered"
-RAMP_COMMANDS = frozenset({FaderCommand.FADE.value, FaderCommand.READY.value, FaderCommand.RETARGET.value})
+RAMP_COMMANDS = frozenset(
+    {
+        FaderCommand.FADE.value,
+        FaderCommand.READY.value,
+        FaderCommand.RETARGET.value,
+        FaderCommand.NUDGE.value,
+    }
+)
 
 KIND_FADE = "fade"
 KIND_READY = "ready"
 KIND_UP_SLOW = "up-slow ride"
 KIND_RETARGET = "retarget"
-KINDS = (KIND_FADE, KIND_READY, KIND_UP_SLOW, KIND_RETARGET)
+KIND_NUDGE = "nudge"
+KINDS = (KIND_FADE, KIND_READY, KIND_UP_SLOW, KIND_RETARGET, KIND_NUDGE)
 
 _NEG_INF = float("-inf")
 _TIME_FORMAT = "%H:%M:%S"
@@ -367,6 +375,8 @@ def kind_of(entry: Entry) -> str:
         return KIND_READY
     if command == FaderCommand.RETARGET.value:
         return KIND_RETARGET
+    if command == FaderCommand.NUDGE.value:
+        return KIND_NUDGE
     return KIND_UP_SLOW
 
 
