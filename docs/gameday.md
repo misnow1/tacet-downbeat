@@ -428,7 +428,7 @@ reconstructed afterwards from the post-DCA reference channel, but nothing
 reconstructs why.
 Above **Faded out** is a pair of smaller buttons, **Up 1 dB** on the left and
 **Down 1 dB** on the right (#242). They trim an open fader a dB at a time and
-record nothing else.
+and record no reason.
 
 | When | Tap |
 |---|---|
@@ -461,7 +461,7 @@ record nothing else.
   Tapping the current target on MORE while nudged still says `Already the
   target` and changes nothing.
 - A nudge is refused, with the reason on the page, while another move is still
-  running (an **Up slow** ride, a **Ready** ride, a target ride): tap again once
+  running (an **Up slow** ride, a target ride): tap again once
   it lands.
 - A quiet section is not a stop. Under the PAT after a touchdown the band drops
   quiet and comes back; leave it open.

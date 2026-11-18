@@ -906,8 +906,9 @@ border-left:1px solid var(--line);background:var(--bg)}
 /* The retired sixth button (#202) left a slot, kept empty so deletion would not
    move Close now and "It's at ready level" down 84px or change every button's
    height below 760px. #242 put the nudge row in it, at the same 72px and the
-   same shrink floor, so the column still sums to 592 and flex-shrink treats it
-   as it treated the gap. Two buttons side by side, up on the left, in a neutral
+   same 64px shrink floor, so the column still sums to 592. The old gap had
+   padding:8px 0, so its inner size was 56 where the row's is 72, and flex-shrink
+   weighs the two a little differently. Two buttons side by side, up on the left, in a neutral
    colour (not Faded out's blue) with the direction as an arrow as well, never
    colour alone. They override `#fader-column button`, which would stack them at
    full width. Never hidden and never moved: the script only disables them. */

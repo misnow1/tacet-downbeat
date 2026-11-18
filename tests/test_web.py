@@ -1033,7 +1033,8 @@ class TestTheRetiredScoreReversedButton(WebTestCase):
         self.assertIn("flex:0 1 auto", rule)
         self.assertIn("min-height:64px", rule)
         self.assertIn("touch-action:manipulation", rule)
-        self.assertGreaterEqual(64, _min_tap_px())
+        floor = int(rule.split("min-height:", 1)[1].split("px", 1)[0])
+        self.assertGreaterEqual(floor, _min_tap_px())
 
 
 class TestTheNudgeButtons(WebTestCase):

@@ -228,6 +228,13 @@ NUDGE_AT_CAP = "Not nudged up: the fader is at the cap, {db:g} dB (fader.max_tar
 NUDGE_AT_FLOOR = (
     "Not nudged down: a nudge goes no lower than {below:g} dB under the target. Lower the target on MORE, or fade out."
 )
+#: What the page says when the state is OPEN but the box believes the fader is
+#: at -inf, which a slow open whose first send failed leaves behind (#242).
+#: Quoted in docs/troubleshooting.md, where a test holds it. The buttons are the
+#: page's own labels.
+NUDGE_CLOSED = (
+    "Not nudged: the box believes the fader is closed; open it first with Up on whistle, Up on drums or Up slow."
+)
 #: The `detail` a nudge's `commanded` entry and its move carry, by direction.
 NUDGE_DETAIL: Mapping[targets.Nudge, str] = {
     targets.Nudge.DOWN: "nudge-down",
@@ -558,7 +565,7 @@ class App:
             if isinstance(ends, targets.NudgeLimit):
                 return self._nudge_limited(ends)
             plan = NudgePlan(level=ends, basis=basis, direction=direction)
-            return await self._command(state.Command.NUDGE, detail=detail, nudge=plan)
+            return await self._command(state.Command.NUDGE, detail=detail, busy=busy, nudge=plan)
 
     def _nudge_limited(self, limit: targets.NudgeLimit) -> state.Outcome:
         """A nudge that goes nowhere: said on the page, never logged."""
@@ -567,8 +574,8 @@ class App:
         elif limit is targets.NudgeLimit.FLOOR:
             refusal = NUDGE_AT_FLOOR.format(below=targets.NUDGE_FLOOR_BELOW_TARGET / dm7.UNITS_PER_DB)
         else:
-            # Believed closed: there is nothing open to trim.
-            refusal = state.NUDGE_NOT_OPEN
+            # Believed closed while the state says open: there is nothing to trim.
+            refusal = NUDGE_CLOSED
         self._last_refusal = refusal
         self._notify()
         return state.Outcome(machine=self.machine, refusal=refusal, changed=False)

@@ -3911,7 +3911,11 @@ class TestANudge(AppTestCase):
         self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
         for direction in ("down", "up"):
             outcome = await getattr(app, f"nudge_{direction}")()
-            self.assertEqual(outcome.refusal, state.NUDGE_NOT_OPEN)
+            self.assertEqual(outcome.refusal, tacet_app.NUDGE_CLOSED)
+            self.assertEqual(app.snapshot()["refusal"], tacet_app.NUDGE_CLOSED)
+        self.assertNotEqual(tacet_app.NUDGE_CLOSED, state.NUDGE_NOT_OPEN)
+        for label in ("Up on whistle", "Up on drums", "Up slow"):
+            self.assertIn(label, tacet_app.NUDGE_CLOSED)
         self.assertEqual(self.sent(), 0)
 
     async def test_it_is_refused_in_every_state_but_open(self):
@@ -3993,6 +3997,24 @@ class TestANudge(AppTestCase):
         self.assertEqual(self.console.commanded_level, 0)
         self.assertEqual(self.nudges(), [])
         self.assertIsNone(opened.refusal)
+
+    async def test_it_is_refused_while_a_snap_back_from_a_fade_is_still_ramping(self):
+        # The real hazard: from a known level mid-fade, the snap open is a short
+        # ramp with no move description. A nudge starting under it would cancel
+        # the console's ramp and strand the fader near the nudge's own level.
+        app = self.build(fade=2.0)
+        await self.open_it(app)
+        await app.release()
+        await asyncio.sleep(UNDER_WAY)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        self.assertGreater(self.console.commanded_level, dm7.MINUS_INF)
+        opened, nudged = await asyncio.gather(app.trigger(), app.nudge_down())
+        self.assertIsNone(opened.refusal)
+        self.assertEqual(nudged.refusal, state.NUDGE_BUSY)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, 0)
+        self.assertEqual(self.nudges(), [])
 
     async def test_the_next_open_after_a_close_returns_to_target(self):
         app = self.build()

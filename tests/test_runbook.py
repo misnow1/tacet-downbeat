@@ -198,6 +198,7 @@ BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (state, "WHY_STALLED", (TROUBLESHOOTING,)),
     (state, "NUDGE_NOT_OPEN", (TROUBLESHOOTING,)),
     (state, "NUDGE_BUSY", (TROUBLESHOOTING,)),
+    (app, "NUDGE_CLOSED", (TROUBLESHOOTING,)),
     (app, "NUDGE_AT_CAP", (RUNBOOK, TROUBLESHOOTING)),
     (app, "NUDGE_AT_FLOOR", (RUNBOOK, TROUBLESHOOTING)),
     (app, "RECORD_SEND_FAILED", (TROUBLESHOOTING,)),
