@@ -371,6 +371,9 @@ No milestone, from the Game 5 review:
 - [#249](https://github.com/misnow1/tacet-downbeat/issues/249), a
   `recording-found` written just after `recording-started` for one take. Found
   at the #233 bench check.
+- [#251](https://github.com/misnow1/tacet-downbeat/issues/251), the box's
+  console output through the standard `logging` library. Raised during #234,
+  not for Game 6.
 - [#236](https://github.com/misnow1/tacet-downbeat/issues/236), taps through
   touchscreen gloves. It is a maintainer decision (2026-11-15) to leave it off
   Game 6.
