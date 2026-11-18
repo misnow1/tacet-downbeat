@@ -428,7 +428,7 @@ reconstructed afterwards from the post-DCA reference channel, but nothing
 reconstructs why.
 Above **Faded out** is a pair of smaller buttons, **Up 1 dB** on the left and
 **Down 1 dB** on the right (#242). They trim an open fader a dB at a time and
-and record no reason.
+record no reason.
 
 | When | Tap |
 |---|---|
