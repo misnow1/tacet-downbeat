@@ -371,6 +371,29 @@ class TestAnnotationLog(LogTestCase):
         with self.log() as log:
             self.assertEqual(log.record("note").seq, 2)
 
+    def test_last_seq_is_zero_for_a_fresh_log_and_follows_every_entry(self):
+        with self.log() as log:
+            self.assertEqual(log.last_seq, 0)
+            log.record("note")
+            self.assertEqual(log.last_seq, 1)
+            log.record("note")
+            self.assertEqual(log.last_seq, 2)
+
+    def test_last_seq_after_a_reopen_is_the_count_of_entries_already_there(self):
+        with self.log() as log:
+            for _ in range(7):
+                log.record("note")
+        with self.log() as log:
+            self.assertEqual(log.last_seq, 7)
+            self.assertEqual(log.record("note").seq, 8)
+
+    def test_interfaces_checked_is_an_instant_the_box_writes_not_a_button(self):
+        event = ann.EVENTS[ann.INTERFACES_CHECKED]
+        self.assertEqual(ann.INTERFACES_CHECKED, "interfaces-checked")
+        self.assertFalse(event.button)
+        self.assertEqual(event.category, ann.Category.SESSION)
+        self.assertEqual(event.kind, ann.Kind.INSTANT)
+
     def test_recording_an_unknown_event_raises(self):
         with self.log() as log, self.assertRaises(ann.UnknownEventError):
             log.record("no-such-event")

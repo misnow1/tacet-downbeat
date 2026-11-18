@@ -29,6 +29,9 @@ Unknown sections and unknown keys are errors. A config that silently ignores
 `dca_number` because the key is spelled `dca` is a config that drives the wrong
 fader while looking correct.
 
+The one section with no flags is `[interfaces]` (#234): a MAC address is a site
+fact, so its values reach a tool as `argparse` defaults and nothing else.
+
 TOML rather than anything else because `tomllib` is in the standard library at
 3.11, which is the floor this project already sets. No dependency is added --
 this module is importable from the control path without breaking the policy in
@@ -46,7 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from . import targets
+# interfaces pulls in reach and asyncio: all standard library.
+from . import interfaces, targets
 
 #: Environment variable naming a config file, checked after `--config`.
 CONFIG_ENV_VAR = "TACET_CONFIG"
@@ -86,7 +90,9 @@ class ConfigError(Exception):
 #: `Path` afterwards, with `~` expanded, because every path here is typed by a
 #: human who will write `~/games`. `port` is an `int` in `PORT_MIN..PORT_MAX`.
 #: `floats` is a non-empty list of numbers, held as a tuple of `float`.
-Kind = Literal["str", "int", "float", "floats", "bool", "path", "port"]
+#: `adapter` is a MAC string, or a table with a required `mac` and an optional
+#: `vlan`, and becomes an `interfaces.Expected` (#234).
+Kind = Literal["str", "int", "float", "floats", "bool", "path", "port", "adapter"]
 
 
 @dataclass(frozen=True)
@@ -137,6 +143,14 @@ SCHEMA: tuple[Option, ...] = (
     ),
     Option("fader", "default_target_db", "float", "the preset an open goes to; defaults to the first preset"),
     Option("fader", "max_target_db", "float", "cap: a preset above this refuses at load, set by the on-site ring-out"),
+    Option("interfaces", "dante", "adapter", "the Dante adapter: a MAC, checked present with a link"),
+    Option("interfaces", "control", "adapter", "the control VLAN's adapter: a MAC, with a link and an IPv4 address"),
+    Option(
+        "interfaces",
+        "scoring",
+        "adapter",
+        "the scoreboard's adapter: a MAC, or { mac = ..., vlan = N } for a VLAN interface on one",
+    ),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "port", "port the web UI binds to"),
 )
@@ -153,6 +167,9 @@ RETIRED: dict[str, str] = {
     "capture.log": "the log changes every game, so pass --log on the command line instead",
 }
 
+#: The section whose roles may not share an adapter.
+INTERFACES_SECTION = "interfaces"
+
 _BY_NAME: dict[str, Option] = {option.name: option for option in SCHEMA}
 
 _SECTIONS: dict[str, tuple[Option, ...]] = {
@@ -166,6 +183,11 @@ def _coerce(option: Option, value: object, *, where: str) -> object:
 
     Pure. `where` names the file for the error message and nothing else.
     """
+    if option.kind == "adapter":
+        try:
+            return interfaces.expected_from_config(value)
+        except interfaces.ExpectedError as exc:
+            raise ConfigError(f"{where}: {option.name} {exc}") from exc
     # bool before int: in Python `True` is an int, and `port = true` is a typo
     # worth catching rather than quietly dialling port 1.
     if option.kind == "bool":
@@ -242,6 +264,28 @@ def _check_targets(values: Mapping[str, object], *, where: str) -> None:
         raise ConfigError(f"{where}: {named}: {exc}") from exc
 
 
+def _check_interfaces(values: Mapping[str, object], *, where: str) -> None:
+    """Two roles may not name the same adapter: one MAC and tag is one role.
+
+    The same MAC with different tags is fine (scoring is a VLAN on the control
+    adapter). Two roles on one `(mac, vlan)` would raise two faults for one
+    thing, so it is refused at load and the message says how to resolve it.
+    """
+    seen: dict[tuple[str, int | None], str] = {}
+    for option in _SECTIONS.get(INTERFACES_SECTION, ()):
+        expected = values.get(option.name)
+        if expected is None:
+            continue
+        assert isinstance(expected, interfaces.Expected)
+        key = (expected.mac, expected.vlan)
+        if key in seen:
+            raise ConfigError(
+                f"{where}: {seen[key]} and {option.name} both name {expected.describe()}. "
+                "Leave one out if one adapter serves both."
+            )
+        seen[key] = option.name
+
+
 def _in_port_range(value: int) -> bool:
     return PORT_MIN <= value <= PORT_MAX
 
@@ -297,6 +341,7 @@ def values_from_mapping(data: Mapping[str, object], *, where: str = "config") ->
                 raise ConfigError(f"{where}: unknown key {key!r} in [{section}]. Known keys: {keys}")
             values[option.name] = _coerce(option, value, where=where)
     _check_targets(values, where=where)
+    _check_interfaces(values, where=where)
     return values
 
 

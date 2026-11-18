@@ -49,6 +49,30 @@ class TestTheLatch(unittest.TestCase):
         self.assertIsNone(got)
         self.assertEqual(held.latched(KIND), second)
 
+    def test_different_kinds_latch_together_each_with_its_own_id(self):
+        latch = faults.FaultLatch()
+        latch, dante = latch.latch(faults.FaultKind.INTERFACE_DANTE, MESSAGE, now=1.0)
+        latch, control = latch.latch(faults.FaultKind.INTERFACE_CONTROL, MESSAGE, now=1.0)
+        assert dante is not None and control is not None
+        self.assertEqual((dante.id, control.id), (1, 2))
+        self.assertEqual(
+            {f.kind for f in latch.faults}, {faults.FaultKind.INTERFACE_DANTE, faults.FaultKind.INTERFACE_CONTROL}
+        )
+        cleared, _ = latch.clear(dante.id)
+        self.assertIsNone(cleared.latched(faults.FaultKind.INTERFACE_DANTE))
+        self.assertEqual(cleared.latched(faults.FaultKind.INTERFACE_CONTROL), control)
+
+    def test_the_interface_kinds_are_pinned_strings(self):
+        self.assertEqual(
+            [faults.FaultKind.INTERFACE_DANTE, faults.FaultKind.INTERFACE_CONTROL, faults.FaultKind.INTERFACE_SCORING],
+            ["interface-dante", "interface-control", "interface-scoring"],
+        )
+
+    def test_a_latch_seeded_with_next_id_starts_there(self):
+        latch, fault = faults.FaultLatch(next_id=8).latch(KIND, MESSAGE, now=1.0)
+        assert fault is not None
+        self.assertEqual((fault.id, latch.next_id), (8, 9))
+
     def test_the_log_and_the_page_shapes(self):
         latch, fault = faults.FaultLatch().latch(KIND, MESSAGE, now=3.0)
         assert fault is not None

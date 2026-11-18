@@ -182,6 +182,56 @@ class TestTheConsoleCheckCannotSendOsc(unittest.TestCase):
             self.assertNotIn("reach", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
 
 
+class TestTheAdapterCheckCannotSendAnything(unittest.TestCase):
+    """#234: a read of the laptop's own adapter table, never a packet of ours.
+
+    `interfaces` is outside the control path and moves nothing. It runs a child
+    through `reach`'s runner, imports only the standard library plus `faults`
+    and `reach`, and these tests read its source for the ways round that.
+    """
+
+    PATH = PACKAGE_ROOT / "interfaces.py"
+
+    def test_it_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(self.PATH):
+            self.assertIn(module, allowed, f"tacet.interfaces imports {module!r}")
+
+    def test_it_imports_no_tacet_module_but_faults_and_reach(self):
+        self.assertEqual(_imported_tacet_modules(self.PATH) - {"faults", "reach"}, set())
+
+    def test_it_cannot_send_to_the_console_or_the_recorder(self):
+        self.assertNotIn("socket", _imported_top_level_modules(self.PATH))
+        for forbidden in ("osc", "net", "dm7", "state", "targets", "reaper", "config"):
+            self.assertNotIn(forbidden, _imported_tacet_modules(self.PATH))
+
+    def test_it_has_no_way_round_the_import_check(self):
+        tree = ast.parse(self.PATH.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, TestTheConsoleCheckCannotSendOsc.FORBIDDEN_NAMES)
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, TestTheConsoleCheckCannotSendOsc.FORBIDDEN_ATTRIBUTES)
+            if isinstance(node, ast.alias | ast.ImportFrom):
+                names = [node.name] if isinstance(node, ast.alias) else [node.module or ""]
+                for name in names:
+                    self.assertNotEqual(name.split(".")[0], "importlib")
+
+    def test_it_starts_no_process_of_its_own(self):
+        self.assertNotIn("subprocess", _imported_top_level_modules(self.PATH))
+        source = self.PATH.read_text(encoding="utf-8")
+        self.assertNotIn("create_subprocess", source)
+        self.assertNotIn("probe(", source)
+
+    def test_no_control_path_module_imports_it(self):
+        for name in CONTROL_PATH:
+            self.assertNotIn("interfaces", _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py"), name)
+
+    def test_config_may_import_it_but_it_never_imports_config(self):
+        self.assertIn("interfaces", _imported_tacet_modules(PACKAGE_ROOT / "config.py"))
+        self.assertNotIn("config", _imported_tacet_modules(self.PATH))
+
+
 class TestTheMirrorReportStaysOutsideTheControlPath(unittest.TestCase):
     """#204: `mirror_report` reads a file the mirror script writes. Standard
     library only, no socket, and nothing that moves the fader imports it."""
