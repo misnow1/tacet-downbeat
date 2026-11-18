@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import math
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -132,7 +133,10 @@ def _build(
         # and never finishes. Harmless before `sent_at` existed, since nothing
         # read the console's clock; #12 made the mismatch a real bug (fixture
         # values computed against a live wall clock, and non-reproducible).
-        clock[0] += seconds
+        # Never less than the next representable time: a remainder below the
+        # resolution of a clock near 5000 would otherwise leave it where it was,
+        # and a ramp that runs to its end - the nudged fixture's - never would.
+        clock[0] = max(clock[0] + seconds, math.nextafter(clock[0], math.inf))
 
     disk = Disk()
     log = ann.AnnotationLog(root / "game.jsonl", opener=disk.open).open()
@@ -276,6 +280,39 @@ async def retargeting(root: Path) -> dict[str, Any]:
     return snapshot
 
 
+async def nudging(root: Path) -> dict[str, Any]:
+    """Open at unity; the operator taps Down 1 dB and the fader trims there
+    (#242). The push that follows the tap, before the nudge has taken a step."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.nudge_down()
+    snapshot = box.app.snapshot()
+    box.app._cancel_move()
+    return snapshot
+
+
+async def nudged(root: Path) -> dict[str, Any]:
+    """Open, and nudged down a dB: settled at -1 dB against a target of unity,
+    so the page says how far it is from the target (#242)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.nudge_down()
+    await box.app.wait_for_fade()
+    return box.app.snapshot()
+
+
+async def nudge_refused(root: Path) -> dict[str, Any]:
+    """Open at unity, which is the cap as shipped: Up 1 dB is refused and says
+    so (#242). Nothing moves."""
+    box = _build(root, console=_Sender(), machine=_known())
+    await box.app.arm()
+    await box.app.annotate("up-whistle")
+    await box.app.nudge_up()
+    return box.app.snapshot()
+
+
 async def prompt_open(root: Path) -> dict[str, Any]:
     """The box has asked: the band left the stands mid-game, and a Stand down
     question is on the page, unanswered. Produced the way the box produces it -
@@ -365,6 +402,9 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "riding": riding,
     "target-stored": target_stored,
     "retargeting": retargeting,
+    "nudging": nudging,
+    "nudged": nudged,
+    "nudge-refused": nudge_refused,
     "prompt": prompt_open,
     "prompt-arm": prompt_arm_refused,
     "faults": faults,
@@ -420,7 +460,7 @@ def _units(db: float) -> int:
 
 def curves() -> list[dict[str, Any]]:
     """The cases `moveDbAt` must reproduce: every shape and every edge."""
-    fade, ride = moves.MoveKind.FADE, moves.MoveKind.RIDE
+    fade, ride, nudge = moves.MoveKind.FADE, moves.MoveKind.RIDE, moves.MoveKind.NUDGE
     taper = dm7.RIDE_IN_TAPER
     return [
         _curve("fade from unity", fade, dm7.UNITY, dm7.MINUS_INF, dm7.DEFAULT_FADE_SECONDS, None),
@@ -435,6 +475,8 @@ def curves() -> list[dict[str, Any]]:
         _curve("retarget up from -6 dB to unity", ride, _units(-6.0), dm7.UNITY, RETARGET_SECONDS, taper),
         _curve("retarget the hold from -15 to -21 dB", ride, _units(-15.0), _units(-21.0), RETARGET_SECONDS, taper),
         _curve("retarget mid ride-in from -40 dB to -3 dB", ride, _units(-40.0), _units(-3.0), RETARGET_SECONDS, taper),
+        _curve("nudge down from unity to -1 dB", nudge, dm7.UNITY, -dm7.NUDGE_STEP, dm7.NUDGE_SECONDS, None),
+        _curve("nudge up from -2 dB to -1 dB", nudge, -2 * dm7.NUDGE_STEP, -dm7.NUDGE_STEP, dm7.NUDGE_SECONDS, None),
     ]
 
 

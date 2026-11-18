@@ -230,7 +230,7 @@ class TestPage(WebTestCase):
         self.assertGreaterEqual(floor_px, _min_tap_px())
 
     async def test_the_fader_column_still_fits_a_short_landscape_screen(self):
-        # The column is five buttons and an empty slot (112 + 112 + 80 + 80 + 72 + 136 = 592, #202), six
+        # The column is five buttons and the nudge row (112 + 112 + 80 + 80 + 72 + 136 = 592, #202, #242), six
         # 12px gaps between its seven children (72) and the readout gap. At
         # 96px that is 592 + 72 + 96 = 760px, which fits a 768px-tall landscape
         # iPad. Raising it to fit the belief row (148px, 812px in all) makes
@@ -974,7 +974,8 @@ class TestAnnotation(WebTestCase):
 
 
 class TestTheRetiredScoreReversedButton(WebTestCase):
-    """#202: the button is gone, and the empty slot keeps the column's layout."""
+    """#202: the button is gone. Its slot first stayed empty to keep the column's
+    layout; #242 put the nudge row in it, at the same size."""
 
     async def body(self):
         return await (await self.client.get("/")).text()
@@ -990,27 +991,150 @@ class TestTheRetiredScoreReversedButton(WebTestCase):
         self.assertNotIn("score-reversed", web.PAGE)
         self.assertNotIn("Score reversed", web.PAGE)
 
-    async def test_an_empty_slot_sits_between_the_readout_and_the_bottom_group(self):
+    async def test_the_slot_is_gone_and_the_nudge_row_sits_in_its_place(self):
         body = await self.body()
-        self.assertIn('<div id="fader-spacer"></div>', body)
-        self.assertLess(body.index('id="readout"'), body.index('id="fader-spacer"'))
-        self.assertLess(body.index('id="fader-spacer"'), body.index('id="fader-bottom"'))
+        self.assertNotIn("fader-spacer", body)
+        self.assertLess(body.index('id="readout"'), body.index('id="nudge"'))
+        self.assertLess(body.index('id="nudge"'), body.index('id="fader-bottom"'))
 
-    async def test_the_column_still_sums_to_592(self):
+    async def test_the_column_still_sums_to_592_with_the_nudge_row_in_the_slot(self):
         body = await self.body()
         heights = [self.height(body, key) for key in ("up-whistle", "up-drums", "up-slow", "up-ready")]
-        slot = int(self.rule(body, "#fader-spacer").split("height:", 1)[1].split("px", 1)[0])
+        slot = int(self.rule(body, "#nudge").split("height:", 1)[1].split("px", 1)[0])
         heights.append(self.height(body, "out"))
         self.assertEqual(heights, [112, 112, 80, 80, 136])
         self.assertEqual(slot, 72)
         self.assertEqual(sum(heights) + slot, 592)
 
-    async def test_the_slot_shrinks_like_a_button(self):
-        rule = self.rule(await self.body(), "#fader-spacer")
+    async def test_the_row_shrinks_like_a_button_and_stays_above_the_minimum_tap(self):
+        rule = self.rule(await self.body(), "#nudge")
         self.assertIn("flex:0 1 auto", rule)
         self.assertIn("min-height:64px", rule)
-        self.assertIn("padding:8px 0", rule)
         self.assertIn("touch-action:manipulation", rule)
+        self.assertGreaterEqual(64, _min_tap_px())
+
+
+class TestTheNudgeButtons(WebTestCase):
+    """#242: Up 1 dB on the left and Down 1 dB on the right, in the slot above
+    Faded out. Whether a tap does anything is `tests/test_app.py`'s job; this is
+    the page they are on and the routes they reach."""
+
+    def build_app(self, monotonic=time.monotonic):
+        self.clock = [5000.0]
+        return super().build_app(monotonic=lambda: self.clock[0])
+
+    async def body(self):
+        return await (await self.client.get("/")).text()
+
+    async def open_it(self):
+        await self.client.post("/api/close-now")
+        await self.client.post("/api/arm")
+        await self.client.post("/api/trigger")
+
+    async def test_the_row_holds_both_buttons_up_on_the_left(self):
+        body = await self.body()
+        row = body.split('<div id="nudge">', 1)[1].split("</div>", 1)[0]
+        self.assertEqual(
+            row,
+            '<button id="btn-nudge-up">Up 1 dB</button><button id="btn-nudge-down">Down 1 dB</button>',
+        )
+
+    async def test_the_db_in_each_label_is_the_step_the_box_takes(self):
+        body = await self.body()
+        step = dm7.NUDGE_STEP / dm7.UNITS_PER_DB
+        for direction in ("Up", "Down"):
+            found = re.search(rf'<button id="btn-nudge-{direction.lower()}">{direction} (\d+) dB</button>', body)
+            assert found is not None
+            self.assertEqual(float(found.group(1)), step)
+
+    async def test_the_nudge_buttons_are_not_annotation_buttons(self):
+        body = await self.body()
+        row = body.split('<div id="nudge">', 1)[1].split("</div>", 1)[0]
+        self.assertNotIn("data-key", row)
+        self.assertNotIn("data-action", row)
+
+    async def test_the_arrows_reach_the_browser_as_css_escapes(self):
+        # The stylesheet sits in a Python string, where a single backslash
+        # would be an octal escape (\21 is "!") and the arrow would reach
+        # the screen as "!91". The page has to carry the CSS escape itself, one
+        # backslash, and no doubled one.
+        body = await self.body()
+        self.assertIn('#btn-nudge-up::before{content:"\\2191\\a0"}', body)
+        self.assertIn('#btn-nudge-down::before{content:"\\2193\\a0"}', body)
+        self.assertNotIn("\\\\2191", body)
+        self.assertNotIn("\\\\2193", body)
+
+    async def test_the_buttons_share_the_row_and_are_not_the_blue_of_faded_out(self):
+        body = await self.body()
+        rule = body.split("#nudge button{", 1)[1].split("}", 1)[0]
+        self.assertIn("flex:1 1 0", rule)
+        self.assertIn("min-width:0", rule)
+        self.assertNotIn("--state-fading", rule)
+        self.assertIn("border:2px solid", rule)
+
+    async def test_the_note_has_a_line_of_its_own_beside_the_unknown_level_note(self):
+        body = await self.body()
+        self.assertIn('<div id="col-nudged"></div>', body)
+        self.assertLess(body.index('id="col-unknown"'), body.index('id="col-nudged"'))
+        self.assertLess(body.index('id="col-nudged"'), body.index('id="belief"'))
+
+    async def test_the_nudged_note_ships_hidden_and_cannot_grow_the_readout(self):
+        # The same budget as the unknown-level note (see
+        # test_the_note_cannot_grow_the_readout): a yielding one-line row.
+        body = await self.body()
+        rule = body.split("#col-nudged{", 1)[1].split("}", 1)[0]
+        for wanted in (
+            "display:none",
+            "flex:0 1 auto",
+            "min-height:0",
+            "overflow:hidden",
+            "white-space:nowrap",
+            "text-overflow:ellipsis",
+            "line-height:15px",
+        ):
+            self.assertIn(wanted, rule)
+        readout = body.split('<div id="readout">', 1)[1]
+        self.assertIn('id="col-nudged"', readout.split('id="belief"', 1)[0])
+
+    async def test_nudge_down_trims_the_open_fader_through_the_route(self):
+        await self.open_it()
+        payload = await (await self.client.post("/api/nudge-down")).json()
+        self.assertEqual(payload["state"], "open")
+        self.assertIsNone(payload["refusal"])
+        self.assertEqual(payload["fader"]["move"]["kind"], "nudge")
+        self.assertEqual(payload["fader"]["move"]["to_db"], -1.0)
+        await self.tacet.wait_for_fade()
+        self.assertEqual(self.tacet._console.commanded_level, -100)
+        self.assertEqual((await (await self.client.get("/api/state")).json())["target"]["db"], 0.0)
+
+    async def test_nudge_up_goes_through_the_route_and_is_refused_at_the_cap(self):
+        await self.open_it()
+        payload = await (await self.client.post("/api/nudge-up")).json()
+        self.assertEqual(payload["refusal"], tacet_app.NUDGE_AT_CAP.format(db=0.0))
+        self.assertIsNone(payload["fader"]["move"])
+
+    async def test_a_refused_nudge_is_a_200_with_the_reason(self):
+        response = await self.client.post("/api/nudge-down")
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["refusal"], state.NUDGE_NOT_OPEN)
+        self.assertEqual(self.console_sender.packets, [])
+
+    async def test_a_nudge_while_the_level_is_unknown_is_refused_for_that(self):
+        self.tacet.machine = state.Machine(state=state.State.OPEN, level_known=False)
+        payload = await (await self.client.post("/api/nudge-down")).json()
+        self.assertEqual(payload["refusal"], state.UNKNOWN_LEVEL_MOVE)
+
+    async def test_a_late_nudge_is_refused_like_any_fader_tap(self):
+        await self.open_it()
+        before = len(self.console_sender.packets)
+        # Placed on the box's clock: tapped 30 s before it was received.
+        now = self.clock[0]
+        body = {"tap": {"at": now - 30.0, "offset": 0.0, "uncertainty": 0.05}}
+        for route in ("/api/nudge-down", "/api/nudge-up"):
+            response = await self.client.post(route, json=body)
+            self.assertEqual(response.status, 200)
+            self.assertIsNotNone((await response.json())["stale_tap"])
+        self.assertEqual(len(self.console_sender.packets), before)
 
 
 class TestPromptRoutes(WebTestCase):

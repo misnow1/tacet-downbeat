@@ -936,7 +936,7 @@ check(
 
 // The three column buttons whose move ramps from the believed level, and the two
 // snaps that do not. Keys, not actions: the column is five named, pinned
-// buttons and an empty slot (#5, #202).
+// buttons and the nudge row (#5, #202, #242).
 const RAMPING_KEYS = ["up-slow", "up-ready", "out"];
 const SNAP_KEYS = ["up-whistle", "up-drums"];
 const COLUMN_KEYS = [...RAMPING_KEYS, ...SNAP_KEYS];
@@ -1042,6 +1042,9 @@ check(
   Object.keys(SNAPSHOTS).sort(),
   [
     "faults",
+    "nudge-refused",
+    "nudged",
+    "nudging",
     "open-recording",
     "parked-unreported",
     "project-unsaved",
@@ -3755,12 +3758,23 @@ const onMain = (world) => world.nodes.get("tab-main").style.display === "";
     check(`swipe: Close now on ${tab} keeps the tab`, tab === "MAIN" ? onMain(world) : onMore(world), true);
     check(`swipe: Close now on ${tab} is not suppressed`, end.defaultPrevented, false);
   }
+  for (const id of ["btn-nudge-up", "btn-nudge-down"]) {
+    for (const [tab, move] of Object.entries(lateral)) {
+      const world = swipeWorld(tab.toLowerCase());
+      const end = gesture(world, world.nodes.get(id), move);
+      check(`swipe: ${id} on ${tab} keeps the tab`, tab === "MAIN" ? onMain(world) : onMore(world), true);
+      check(`swipe: ${id} on ${tab} is not suppressed`, end.defaultPrevented, false);
+    }
+  }
 }
 
 {
   const world = swipeWorld();
   const heard = (node) => Object.keys(node.listeners).filter((type) => type.startsWith("touch"));
-  const column = ["fader-column", "fader-top", "fader-bottom", "readout", "belief", "btn-close-now", "btn-report-ready"];
+  const column = [
+    "fader-column", "fader-top", "fader-bottom", "readout", "belief", "btn-close-now", "btn-report-ready",
+    "nudge", "btn-nudge-up", "btn-nudge-down", "col-nudged",
+  ];
   const nodesToCheck = column.map((id) => world.nodes.get(id)).concat(FADER_KEYS.map((k) => world.byKey.get(k)));
   check("swipe: nothing listens for touches in the fader column or above it", nodesToCheck.flatMap(heard), []);
   check(
@@ -3937,6 +3951,143 @@ const onMain = (world) => world.nodes.get("tab-main").style.display === "";
 
   const checking = renderedFixture("take-checking").nodes;
   check("the checking fixture: the value", checking.get("rec").textContent, "checking");
+}
+
+// -- the nudge row (#242) -------------------------------------------------------
+
+const NUDGE_IDS = ["btn-nudge-up", "btn-nudge-down"];
+const NUDGED_COPY = runInContext("NUDGED_FROM_TARGET", browser().context);
+const NUDGE_STATES = ["standing-down", "idle", "ready", "open", "releasing"];
+
+// A fixture with the fields a test is about changed. The box's own fields only,
+// as `overlay` does for the others.
+function nudgeBox(name, changes = {}, faderChanges = {}) {
+  const base = SNAPSHOTS[name];
+  const snap = overlay(base, changes, name);
+  snap.fader = overlay(base.fader, faderChanges, `${name}.fader`);
+  const { context, nodes, posted, created } = browser({ now: STILL });
+  context.render(snap);
+  return { context, nodes, posted, created };
+}
+
+{
+  const { nodes, posted } = nudgeBox("nudged");
+  posted.length = 0;
+  nodes.get("btn-nudge-up").onclick();
+  nodes.get("btn-nudge-down").onclick();
+  check("nudge: each button posts to its own route", posted.map((p) => p.path), ["/api/nudge-up", "/api/nudge-down"]);
+  check("nudge: neither asks first", posted.length, 2);
+  check("nudge: nor sends anything with the tap but its timing", posted.map((p) => Object.keys(p.body)), [["tap"], ["tap"]]);
+  check("nudge: nor changes the tab", nodes.get("tab-main").style.display, "");
+}
+
+{
+  // Never hidden, never rewritten, in every state the box can be in; greyed in
+  // place unless open with a known level.
+  for (const name of Object.keys(SNAPSHOTS)) {
+    const { nodes } = nudgeBox(name);
+    const snap = SNAPSHOTS[name];
+    const want = snap.state === "open" && snap.fader.level_known;
+    for (const id of NUDGE_IDS) {
+      check(`nudge: ${id} on ${name} is disabled unless open and known`, nodes.get(id).disabled, !want);
+      check(`nudge: ${id} on ${name} is never hidden`, nodes.get(id).style.display, undefined);
+      check(`nudge: ${id} on ${name} is never relabelled`, nodes.get(id).writes, 0);
+    }
+  }
+}
+
+{
+  const { context } = browser();
+  for (const stateName of NUDGE_STATES) {
+    for (const known of [true, false]) {
+      check(
+        `nudgeEnabled: ${stateName}, level ${known ? "known" : "unknown"}`,
+        context.nudgeEnabled(stateName, { level_known: known, move: null }),
+        stateName === "open" && known,
+      );
+    }
+  }
+  // A move in flight does not grey it: the second tap has to reach the box.
+  const move = SNAPSHOTS.nudging.fader.move;
+  check("nudgeEnabled: still enabled mid-nudge", context.nudgeEnabled("open", { level_known: true, move }), true);
+  const ride = SNAPSHOTS.riding.fader.move;
+  check("nudgeEnabled: and mid-ride, where the box refuses it in words", context.nudgeEnabled("open", { level_known: true, move: ride }), true);
+}
+
+{
+  const { nodes } = nudgeBox("nudging");
+  check("nudge: enabled while the nudge is still running", NUDGE_IDS.map((id) => nodes.get(id).disabled), [false, false]);
+  check("nudge: the tag says nudging", nodes.get("level-tag").textContent, "nudging");
+  check("nudge: and is not the commanded tag", nodes.get("level-tag").className.includes("commanded"), false);
+  check("nudge: no note while the move runs", nodes.get("col-nudged").style.display, "none");
+  // A move heading somewhere other than the target already says "next open",
+  // and a nudge is one: the target is not where it is going.
+  check("nudge: the chip says next open while it runs", nodes.get("target-level").textContent, "target 0 dB (next open)");
+}
+
+{
+  const { nodes } = nudgeBox("nudged");
+  check("nudged: the note says how far and where the next open goes",
+        nodes.get("col-nudged").textContent, "-1 dB from target; next open: 0 dB");
+  check("nudged: and is shown", nodes.get("col-nudged").style.display, "block");
+  check("nudged: the quoted words are in it", nodes.get("col-nudged").textContent.includes(NUDGED_COPY), true);
+  check("nudged: the target chip says next open", nodes.get("target-level").textContent, "target 0 dB (next open)");
+  check("nudged: and the level is still commanded, never confirmed", nodes.get("level-tag").textContent, "commanded");
+  check("nudged: the readout is the commanded level", nodes.get("level").textContent.startsWith("-1.00 dB"), true);
+  check("nudged: the unknown-level note is not shown with it", nodes.get("col-unknown").style.display, "none");
+}
+
+{
+  const { context } = browser();
+  const fader = (db, extra = {}) => ({ db, level_known: true, move: null, ...extra });
+  const target = { db: 0 };
+  check("nudgedNote: down a dB", context.nudgedNote("open", fader(-1), target), "-1 dB from target; next open: 0 dB");
+  check("nudgedNote: down two", context.nudgedNote("open", fader(-2), target), "-2 dB from target; next open: 0 dB");
+  check("nudgedNote: up from a quieter target is signed", context.nudgedNote("open", fader(-2), { db: -3 }), "+1 dB from target; next open: -3 dB");
+  check("nudgedNote: a fraction survives float noise", context.nudgedNote("open", fader(-2.9), { db: -3 }), "+0.1 dB from target; next open: -3 dB");
+  check("nudgedNote: none at the target", context.nudgedNote("open", fader(0), target), "");
+  check("nudgedNote: none while a move runs", context.nudgedNote("open", fader(-1, { move: {} }), target), "");
+  check("nudgedNote: none when the level is unknown", context.nudgedNote("open", fader(-1, { level_known: false }), target), "");
+  check("nudgedNote: none when the fader reads closed", context.nudgedNote("open", fader(null), target), "");
+  for (const stateName of ["standing-down", "idle", "ready", "releasing"]) {
+    check(`nudgedNote: none while ${stateName}`, context.nudgedNote(stateName, fader(-1), target), "");
+  }
+}
+
+{
+  // The refusal takes the line, and the page says the box's words there.
+  const { nodes } = nudgeBox("nudge-refused");
+  check("nudge refused: the box's words reach the column", nodes.get("col-refusal").textContent.startsWith("Not nudged up"), true);
+  check("nudge refused: and the header", nodes.get("refusal").textContent.startsWith("Not nudged up"), true);
+  check("nudge refused: nothing moved", nodes.get("level-tag").textContent, "commanded");
+  check("nudge refused: the buttons stay live for the next tap", NUDGE_IDS.map((id) => nodes.get(id).disabled), [false, false]);
+  // Off target and refused at once: the refusal wins the line.
+  const both = nudgeBox("nudged", { refusal: "Not nudged down: x" });
+  check("nudge note: gives way to a refusal", both.nodes.get("col-nudged").style.display, "none");
+  check("nudge note: and is empty then", both.nodes.get("col-nudged").textContent, "");
+  check("nudge note: the refusal shows", both.nodes.get("col-refusal").textContent, "Not nudged down: x");
+  // And it comes back when the refusal clears.
+  both.context.render({ ...SNAPSHOTS.nudged, at: SNAPSHOTS.nudged.at + 1 });
+  check("nudge note: returns when the refusal clears", both.nodes.get("col-nudged").style.display, "block");
+}
+
+{
+  // Never both lines: one needs a known level and the other an unknown one.
+  for (const name of Object.keys(SNAPSHOTS)) {
+    const { nodes } = nudgeBox(name);
+    const both = nodes.get("col-nudged").style.display === "block" && nodes.get("col-unknown").style.display === "block";
+    check(`nudge note: never with the unknown-level note (${name})`, both, false);
+  }
+  // Nor shown anywhere it has no business: only the nudged fixture has it.
+  const shown = Object.keys(SNAPSHOTS).filter((name) => nudgeBox(name).nodes.get("col-nudged").style.display === "block");
+  check("nudge note: shown on the nudged fixture and no other", shown, ["nudged"]);
+}
+
+{
+  // A retarget that has landed is not a nudge: the fader and the target agree.
+  const { nodes } = nudgeBox("open-recording");
+  check("nudge note: not shown at the target", nodes.get("col-nudged").style.display, "none");
+  check("nudge: the chip says nothing of the next open at the target", nodes.get("target-level").textContent, "target 0 dB");
 }
 
 // -- report -----------------------------------------------------------------

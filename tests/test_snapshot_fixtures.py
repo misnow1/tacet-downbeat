@@ -107,6 +107,27 @@ class TestSnapshotFixtures(unittest.TestCase):
         self.assertEqual(retargeting["fader"]["move"]["seconds"], 1.0)
         self.assertIsNotNone(retargeting["fader"]["move"]["knee"])
         self.assertIsNone(retargeting["target"]["stored"])
+        nudging = states["snapshot-nudging.json"]
+        self.assertEqual(nudging["state"], "open")
+        self.assertEqual(nudging["fader"]["move"]["kind"], "nudge")
+        self.assertEqual(nudging["fader"]["move"]["by"], "nudge-down")
+        self.assertEqual(nudging["fader"]["move"]["from_db"], 0.0)
+        self.assertEqual(nudging["fader"]["move"]["to_db"], -1.0)
+        self.assertEqual(nudging["fader"]["move"]["seconds"], 0.1)
+        self.assertIsNone(nudging["fader"]["move"]["knee"])
+        self.assertEqual(nudging["target"]["db"], 0.0)
+        nudged = states["snapshot-nudged.json"]
+        self.assertEqual(nudged["state"], "open")
+        self.assertIsNone(nudged["fader"]["move"])
+        self.assertEqual(nudged["fader"]["db"], -1.0)
+        self.assertTrue(nudged["fader"]["level_known"])
+        self.assertEqual(nudged["target"]["db"], 0.0)
+        self.assertIsNone(nudged["refusal"])
+        refused = states["snapshot-nudge-refused.json"]
+        self.assertEqual(refused["state"], "open")
+        self.assertIsNone(refused["fader"]["move"])
+        self.assertEqual(refused["fader"]["db"], 0.0)
+        self.assertTrue(refused["refusal"].startswith("Not nudged up"))
         prompt = states["snapshot-prompt.json"]
         self.assertEqual(prompt["state"], "open")
         self.assertEqual(prompt["prompt"], {"seq": 1, "kind": "stand-down", "source": "band-exits-stands"})
@@ -163,6 +184,7 @@ class TestSnapshotFixtures(unittest.TestCase):
             "snapshot-riding.json",
             "snapshot-retargeting.json",
             "snapshot-target-stored.json",
+            "snapshot-nudging.json",
         }
     )
 

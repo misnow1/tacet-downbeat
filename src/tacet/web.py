@@ -536,6 +536,10 @@ def create_app(
             # `_command_route` covers them without a handler of its own.
             web.post("/api/handoff", _command_route("handoff")),
             web.post("/api/close-now", _command_route("close_now")),
+            # A one dB trim of an open fader (#242): a tap and nothing else, so
+            # `_command_route` covers both.
+            web.post("/api/nudge-up", _command_route("nudge_up")),
+            web.post("/api/nudge-down", _command_route("nudge_down")),
             web.post("/api/report-ready", _command_route("report_ready")),
             web.post("/api/still-mine", _command_route("confirm_still_mine")),
             web.post("/api/annotate", _annotate),
@@ -890,18 +894,26 @@ border-left:1px solid var(--line);background:var(--bg)}
 #fader-column button[data-key="up-drums"]{height:112px}
 #fader-column button[data-key="up-slow"]{height:80px}
 #fader-column button[data-key="up-ready"]{height:80px}
-/* The retired sixth button (#202) leaves a slot: plain deletion would move
-   Close now and "It's at ready level" down 84px and change every button's
-   height below 760px. Padding gives the slot a button's inner size (72 - 12
-   padding - 4 border = 56), so flex-shrink treats it the same at every height. */
-#fader-spacer{flex:0 1 auto;height:72px;min-height:64px;padding:8px 0;touch-action:manipulation}
+/* The retired sixth button (#202) left a slot, kept empty so deletion would not
+   move Close now and "It's at ready level" down 84px or change every button's
+   height below 760px. #242 put the nudge row in it, at the same 72px and the
+   same shrink floor, so the column still sums to 592 and flex-shrink treats it
+   as it treated the gap. Two buttons side by side, up on the left, in a neutral
+   colour (not Faded out's blue) with the direction as an arrow as well, never
+   colour alone. They override `#fader-column button`, which would stack them at
+   full width. Never hidden and never moved: the script only disables them. */
+#nudge{display:flex;gap:8px;flex:0 1 auto;height:72px;min-height:64px;touch-action:manipulation}
+#nudge button{flex:1 1 0;min-width:0;width:auto;height:auto;min-height:0;padding:6px 8px;
+border:2px solid var(--dim);color:var(--text);font-weight:700;white-space:nowrap}
+#btn-nudge-up::before{content:"\\2191\\a0"}
+#btn-nudge-down::before{content:"\\2193\\a0"}
 #fader-column button[data-key="out"]{height:136px}
 /* A move in flight (#154): the button that started it, until the box says the
    move has landed. An id selector so it outranks button[data-action=...] and
    stays out of the category rules. White on #e040a0 is about 4.8:1. */
 #fader-column button.fading{background:var(--state-fading);border-color:var(--state-fading);color:#fff}
 /* The readout gap: exactly 96px of room, never more asked for. The column is 592
-   of buttons and the empty slot + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
+   of buttons and the nudge row + 6 gaps of 12 + this = 760px, which fits a 768px-tall landscape
    iPad (#107 put the belief row in here without changing that). Since #140 a
    shorter screen takes the difference out of the buttons rather than scrolling
    the page, but this gap is not part of that: it does not shrink, because what
@@ -934,6 +946,11 @@ border-left:1px solid var(--line);background:var(--bg)}
    on #readout is only the backstop: a deficit beyond what they can absorb
    would clip the bottom, which is where the belief row sits, so keep the
    sum above under 96 if any of these numbers change.
+   #col-nudged (#242), "-2 dB from target; next open: 0 dB", is a third line of
+   the same yielding class and takes the same place: it is painted only when
+   there is no refusal, and the unknown-level note needs an unknown level while
+   this needs a known one, so it is never a fifth row and the worst case above
+   stands.
    The level is 18px, not the 22px it used to be, so the fade destination stays
    inside the ellipsis: during a close it reads "-3.00 dB -> -inf dB", which at
    22px is ~181px against ~183px available and would start clipping the
@@ -956,6 +973,11 @@ min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
    fault, so the dim colour rather than the refusal's. Same yielding class as
    the refusal line, and never shown with it (see the budget above). */
 #col-unknown{color:var(--dim);font-size:12px;line-height:15px;display:none;flex:0 1 auto;
+min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* #242: how far a nudge has taken the open fader from the target. The same
+   yielding class and the same dim colour as the note above, and the same
+   place: it is never shown with it or with a refusal (see the budget above). */
+#col-nudged{color:var(--dim);font-size:12px;line-height:15px;display:none;flex:0 1 auto;
 min-height:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 /* The two answers to "where is the fader" (#107): always here, never shown or
    hidden, never moved. The script only ever disables one in place, so a thumb
@@ -1052,12 +1074,13 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     <div id="fader-error"></div>
     <div id="col-refusal"></div>
     <div id="col-unknown"></div>
+    <div id="col-nudged"></div>
     <div id="belief">
       <button id="btn-close-now">Close now</button>
       <button id="btn-report-ready">It's at ready level</button>
     </div>
   </div>
-  <div id="fader-spacer"></div>
+  <div id="nudge"><button id="btn-nudge-up">Up 1 dB</button><button id="btn-nudge-down">Down 1 dB</button></div>
   <div id="fader-bottom"></div>
 </div>
 </div>
