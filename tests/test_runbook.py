@@ -126,7 +126,7 @@ PAGE_STRING_CONSTANT = re.compile(r'^const ([A-Z][A-Z0-9_]*) = "', re.MULTILINE)
 #: Families with tests of their own that read every member (#204, #167, #234).
 PAGE_FAMILIES = ("PROJECT_", "TRACKS_", "INTERFACE")
 #: How many string constants the page names today; fewer means the scan broke.
-NAMES_FLOOR = 68
+NAMES_FLOOR = 69
 
 
 def fixed_words(message: str) -> str:
@@ -165,6 +165,7 @@ PAGE_QUOTES: tuple[tuple[str, tuple[Path, ...]], ...] = (
     ("STORED_UNKNOWN", (RUNBOOK, TROUBLESHOOTING)),
     ("TARGET_NEXT_OPEN", (RUNBOOK, TROUBLESHOOTING)),
     ("TARGET_BLOCKED", (RUNBOOK, TROUBLESHOOTING)),
+    ("NUDGED_FROM_TARGET", (RUNBOOK, TROUBLESHOOTING)),
     ("EARLIER_RUN_HEADING", (RUNBOOK, TROUBLESHOOTING)),
     ("RECORDER_ERROR_PREFIX", (TROUBLESHOOTING,)),
     ("RECORDING_LINK_LOST", (TROUBLESHOOTING, REAPER)),
@@ -195,6 +196,11 @@ PAGE_QUOTES: tuple[tuple[str, tuple[Path, ...]], ...] = (
 BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (state, "WHY_ARMED_BY_OPERATOR", (TROUBLESHOOTING,)),
     (state, "WHY_STALLED", (TROUBLESHOOTING,)),
+    (state, "NUDGE_NOT_OPEN", (TROUBLESHOOTING,)),
+    (state, "NUDGE_BUSY", (TROUBLESHOOTING,)),
+    (app, "NUDGE_CLOSED", (TROUBLESHOOTING,)),
+    (app, "NUDGE_AT_CAP", (RUNBOOK, TROUBLESHOOTING)),
+    (app, "NUDGE_AT_FLOOR", (RUNBOOK, TROUBLESHOOTING)),
     (app, "RECORD_SEND_FAILED", (TROUBLESHOOTING,)),
     (serve, "REUSED_LOG_WARNING", (TROUBLESHOOTING,)),
     (serve, "CLOCK_RESTARTED_WARNING", (TROUBLESHOOTING,)),
@@ -584,7 +590,8 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         # whitespace collapsed: a label split across a line break once hid a
         # stale one from a plain search.
         runbook = " ".join((DOCS / "gameday.md").read_text(encoding="utf-8").split())
-        for button in ("btn-close-now", "btn-report-ready"):
+        # And the nudge pair (#242), which sits in the slot above Faded out.
+        for button in ("btn-close-now", "btn-report-ready", "btn-nudge-up", "btn-nudge-down"):
             with self.subTest(button=button):
                 found = re.search(rf'<button id="{button}">([^<]+)</button>', web.PAGE)
                 self.assertIsNotNone(found, f"{button} is not on the page")
@@ -634,13 +641,13 @@ class TheBannerMatchesTheRunbook(unittest.TestCase):
         # #154: the tags and the lateness word the page shows while a move is in
         # flight, read out of app.js rather than typed twice.
         script = (REPO_ROOT / "src" / "tacet" / "static" / "app.js").read_text(encoding="utf-8")
-        tags = re.search(r'const MOVE_TAGS = \{fade: "([^"]+)", ride: "([^"]+)"\};', script)
+        tags = re.search(r'const MOVE_TAGS = \{fade: "([^"]+)", ride: "([^"]+)", nudge: "([^"]+)"\};', script)
         late = re.search(r'const MOVE_LATE_WORD = "([^"]+)";', script)
         self.assertIsNotNone(tags, "app.js no longer defines MOVE_TAGS this way")
         self.assertIsNotNone(late, "app.js no longer defines MOVE_LATE_WORD")
         assert tags is not None and late is not None
         runbook = (DOCS / "gameday.md").read_text(encoding="utf-8")
-        for word in (tags[1], tags[2]):
+        for word in (tags[1], tags[2], tags[3]):
             with self.subTest(word=word):
                 self.assertIn(f"`{word}`", runbook.replace("**", "`"))
         # The lateness is quoted in the readout's own words: "... - 3s late".

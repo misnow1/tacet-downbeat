@@ -278,6 +278,14 @@ Worth checking:
   night, check that the hues and icons are legible, that Faded out reads blue
   rather than amber, that the column labels sit on one line at 723px, and
   that the five scoring buttons fit one row.
+- **The nudge pair (#242).** On the iPad, with a gloved finger if that is how it
+  is used: does **Down 1 dB** fit its half of the 72px row on one line, with the
+  arrow, at the 64px shrink floor? Can a thumb tell the pair from **Close now**
+  just above and **Faded out** just below without looking, and never hit one
+  for the other? Tap each with the band open: the readout sweeps and tags
+  `nudging`, then settles on `commanded`, with the `from target` note under it.
+  Run `python -m tacet.verify_dm7 --nudge` on the console first. Report any
+  mis-tap.
 - **Swiping between MAIN and MORE (#156).** On the iPad: a swipe in the left
   panel changes tab both ways; a slid stab on Up on drums never changes tab; a
   swipe across a MAIN button never fires it; MAIN still scrolls vertically.

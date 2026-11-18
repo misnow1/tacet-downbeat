@@ -13,5 +13,9 @@
   "readout": "fader-column",
   "belief": "readout",
   "btn-close-now": "belief",
-  "btn-report-ready": "belief"
+  "btn-report-ready": "belief",
+  "nudge": "fader-column",
+  "btn-nudge-up": "nudge",
+  "btn-nudge-down": "nudge",
+  "col-nudged": "readout"
 }

@@ -154,9 +154,26 @@ or, once `tacet.toml` has the console in it, just:
 python -m tacet.verify_dm7 --granularity
 ```
 
-`--granularity`, `--fade` and `--level` are never taken from the config file.
-They choose what this tool *does* to a console, and a file that could select one
-of them would move a fader nobody asked to move.
+```
+python -m tacet.verify_dm7 --nudge
+```
+
+`--nudge` (#242) opens the DCA at unity and then nudges it to -1, -2, -1 and
+0 dB through the code the page's **Down 1 dB** and **Up 1 dB** use. Read each
+level on the console and listen for zipper noise: each nudge is five 0.2 dB
+steps 20 ms apart (`NUDGE_TICKS` in `dm7.py`; raise it if it zippers).
+Run it before the first game that uses the buttons, and after any firmware
+update.
+
+`--granularity`, `--fade`, `--level` and `--nudge` are never taken from the
+config file. They choose what this tool *does* to a console, and a file that
+could select one of them would move a fader nobody asked to move.
+
+The nudge relies on the console taking arbitrary hundredths of a dB. With
+`quantized` on (it is off at this site) a nudge is rounded to Table 1, whose
+spacing is a whole dB from -10 to +10 dB and 2 dB below -10 dB, so below -10 dB
+a nudge up can round back to where it started and look as though nothing
+happened.
 
 ---
 

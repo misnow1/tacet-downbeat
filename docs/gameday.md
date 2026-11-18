@@ -149,6 +149,13 @@ built and tested against is not established. **Do not update the console
 before game day.** If it has been updated anyway, re-run `verify_dm7`
 ([box.md](box.md#the-console)) before kickoff.
 
+**Try the nudge on the console** (#242), once, before the first game it is
+used: `python -m tacet.verify_dm7 --nudge` opens the DCA at unity and nudges it
+to -1, -2, -1 and 0 dB. Read each of those on the console, and listen for
+zipper noise on a signal through the band mics. It is a flag, never a config
+key, so it cannot run by itself. If it zippers, the ramp's step count goes up
+(`NUDGE_TICKS` in `dm7.py`) and the tool is run again.
+
 Check the config before leaving for the stadium: `tacet-serve --log
 ~/games/<YYYY-MM-DD>.jsonl --check` prints the banner or the refusal and starts
 nothing. It does send one ping to the console's address, so away from the
@@ -419,7 +426,9 @@ in the log, and it is what will keep the detector out when there is one.
 *and* records why, in one tap. Nothing else does that: the move can be
 reconstructed afterwards from the post-DCA reference channel, but nothing
 reconstructs why.
-The empty gap above **Faded out** is deliberate and does nothing.
+Above **Faded out** is a pair of smaller buttons, **Up 1 dB** on the left and
+**Down 1 dB** on the right (#242). They trim an open fader a dB at a time and
+record no reason.
 
 | When | Tap |
 |---|---|
@@ -427,11 +436,33 @@ The empty gap above **Faded out** is deliberate and does nothing.
 | The drums start before any whistle | **Up on drums** |
 | The band has already started and you missed it | **Up slow**. Rides in over 1.5 s rather than snapping open under a phrase in progress |
 | The music has stopped, for any reason | **Faded out**. The same 2 s fade whatever the reason |
+| The band PA rings | **Down 1 dB**, again for each further dB |
 
 - **Up on whistle** or **Up on drums** while **Up slow** is still riding in
   **snaps the rest of the way**: the whistle means the band is about to play. If
   the play is then called back or flagged and nothing plays, fade as usual.
 - Tapping **Up slow** again mid-ride does not restart it.
+- **The nudge pair** trims only while the band is open and the box knows where
+  the fader is; in any other state, or while the level is `unknown`, both are
+  greyed. Each tap moves a dB over a tenth of a second, and the readout says
+  `nudging` while it does. Tap again for each further dB: a second tap while
+  the first is still moving carries on from where the first was heading, so
+  three taps are three dB.
+- A nudge goes no lower than 6 dB under the target, and never closes the fader.
+  The note under the level says where you are: `-2 dB from target; next open:
+  0 dB`. If that floor is not enough, the target is wrong: lower it on MORE, or
+  fade out. **Up 1 dB** comes back up a dB at a time and never past
+  `fader.max_target_db`; at the cap the page says `Not nudged up: the fader is
+  at the cap`, and at the floor `Not nudged down: a nudge goes no lower than`
+  6 dB under the target.
+- A nudge is a trim, not a new target. **The next open after a fade goes back to
+  the target**, nudged or not, and an open tapped while the fader is up and
+  nudged changes nothing. To undo a nudge without fading, tap **Up 1 dB**.
+  Tapping the current target on MORE while nudged still says `Already the
+  target` and changes nothing.
+- A nudge is refused, with the reason on the page, while another move is still
+  running (an **Up slow** ride, a target ride): tap again once
+  it lands.
 - A quiet section is not a stop. Under the PAT after a touchdown the band drops
   quiet and comes back; leave it open.
 

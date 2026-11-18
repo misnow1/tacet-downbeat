@@ -10,6 +10,11 @@ is the only display. Read it.
 
     python -m tacet.verify_dm7 --host 10.0.0.5 --dca 3 --granularity
 
+`--nudge` opens at unity and then nudges to -1, -2, -1 and 0 dB through the
+same code the page's Down 1 dB and Up 1 dB use (#242). Read the DCA after each
+and listen for zipper noise. It is the check that five 0.2 dB steps 20 ms apart
+are fine on this console, which nothing else can show.
+
 `--host`, `--port`, `--dca` and `--quantized` can come from the config file
 instead, as `console.host`, `console.port`, `console.dca` and
 `console.quantized`. With a `tacet.toml` in the working directory -- or named
@@ -17,7 +22,7 @@ by `--config PATH` or `$TACET_CONFIG` -- that shortens to:
 
     python -m tacet.verify_dm7 --granularity
 
-`--granularity`, `--fade` and `--level` are deliberately NOT config keys. They
+`--granularity`, `--fade`, `--level` and `--nudge` are deliberately NOT config keys. They
 choose what this tool does to a console, and a file able to select one of them
 would move a fader nobody asked to move. See `tacet.config`.
 """
@@ -27,12 +32,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from . import config
-from .dm7 import DEFAULT_PORT, MINUS_INF, TABLE_1, UNITY, Dm7Client, to_db
+from . import config, targets
+from .dm7 import DEFAULT_PORT, MINUS_INF, NUDGE_STEP, TABLE_1, UNITY, Dm7Client, to_db
 
 #: Deliberately not a Table 1 value. -15.50 dB sits between -15 and -16.
 PROBE_LEVEL = -1550
 _SETTLE_SECONDS = 2.0
+#: What the nudge probe does, in order: down, down, up, up, so it lands on -1,
+#: -2, -1 and 0 dB from unity. The same rule the page's buttons go through.
+_NUDGE_PROBE = (targets.Nudge.DOWN, targets.Nudge.DOWN, targets.Nudge.UP, targets.Nudge.UP)
 
 
 async def _granularity(client: Dm7Client) -> None:
@@ -55,6 +63,23 @@ async def _fade(client: Dm7Client, seconds: float) -> None:
     print("watch for stepping. Smooth means arbitrary values are accepted.")
 
 
+async def _nudge(client: Dm7Client, *, settle: float = _SETTLE_SECONDS) -> None:
+    print("\n--- nudge: unity, then -1, -2, -1 and 0 dB ---")
+    client.send_level(UNITY)
+    await asyncio.sleep(settle)
+    floor = targets.nudge_floor(UNITY)
+    for direction in _NUDGE_PROBE:
+        ends = targets.nudge_level(client.commanded_level, direction, step=NUDGE_STEP, cap=UNITY, floor=floor)
+        if isinstance(ends, targets.NudgeLimit):
+            raise RuntimeError(
+                f"the nudge probe was stopped by {ends.value} at {to_db(client.commanded_level):+.2f} dB"
+            )
+        await client.nudge(ends)
+        await asyncio.sleep(settle)
+        print(f"nudged {direction.value} to {to_db(ends):+.2f} dB: read the DCA; listen for zipper")
+    print("each nudge is five 0.2 dB steps, 20 ms apart. Zipper noise means raising NUDGE_TICKS (dm7.py).")
+
+
 async def _run(args: argparse.Namespace) -> None:
     client = Dm7Client(args.host, args.port, dca=args.dca, quantized=args.quantized)
     print(f"DM7 at {args.host}:{args.port}, DCA {args.dca}")
@@ -67,6 +92,8 @@ async def _run(args: argparse.Namespace) -> None:
         if args.level is not None:
             client.send_level(args.level)
             print(f"sent {args.level} ({to_db(args.level):+.2f} dB)")
+        if args.nudge:
+            await _nudge(client)
     finally:
         client.close()
 
@@ -93,6 +120,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--granularity", action="store_true", help="the -1550 probe")
     p.add_argument("--fade", type=float, metavar="SECONDS")
     p.add_argument("--level", type=int, help="send one level and exit")
+    p.add_argument("--nudge", action="store_true", help="unity, then nudge to -1, -2, -1 and 0 dB")
     p.add_argument("--quantized", action=argparse.BooleanOptionalAction, default=False, help="snap to Table 1")
     return p
 
@@ -102,8 +130,8 @@ def main(argv: list[str] | None = None) -> int:
     args, config_path = config.resolve_or_exit(parser_, CONFIG_MAPPING, argv)
     config.require(parser_, args, CONFIG_MAPPING, "host", "dca")
 
-    if not (args.granularity or args.fade or args.level is not None):
-        parser_.error("choose --granularity, --fade or --level")
+    if not (args.granularity or args.fade or args.level is not None or args.nudge):
+        parser_.error("choose --granularity, --fade, --level or --nudge")
     if config_path:
         print(f"config: {config_path}")
     asyncio.run(_run(args))

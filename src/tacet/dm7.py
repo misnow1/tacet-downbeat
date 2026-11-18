@@ -74,6 +74,14 @@ DEFAULT_READY_RIDE_SECONDS = 4.0
 #: Retunable per site as `fader.retarget_ride_seconds`.
 DEFAULT_RETARGET_RIDE_SECONDS = 1.0
 DEFAULT_TICK_HZ = 50.0
+#: One nudge of the open fader (#242): a dB down or up, derived from the
+#: console's own unit rather than written as 100 twice.
+NUDGE_STEP = 1 * UNITS_PER_DB
+#: A nudge is five linear steps of 0.2 dB, 20 ms apart, the last exactly on the
+#: end: short enough to feel like a tap, fine enough not to zipper. Untested on
+#: the console until `verify_dm7 --nudge` has been run; raise this if it zippers.
+NUDGE_TICKS = 5
+NUDGE_SECONDS = NUDGE_TICKS / DEFAULT_TICK_HZ
 #: A ramp always emits at least one step, however short its duration.
 MIN_RAMP_TICKS = 1
 
@@ -390,6 +398,12 @@ class Dm7Client:
         """A deliberate, tapered open: fast through the inaudible bottom, slow
         through the top (#8). Superseded like any other move."""
         await self._move(level, seconds, taper=RIDE_IN_TAPER)
+
+    async def nudge(self, level: int, seconds: float = NUDGE_SECONDS) -> None:
+        """A short, linear trim to `level` (#242). Never tapered: a nudge is a
+        dB, not a gesture, and a taper would reshape it across the ride-in knee.
+        Superseded like any other move."""
+        await self._move(level, seconds)
 
     async def _move(self, target: int, seconds: float, *, taper: Taper | None = None) -> None:
         self.cancel_ramp()

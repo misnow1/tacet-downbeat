@@ -1012,14 +1012,99 @@ class TestARetargetRidesOnlyWhileTheFaderIsUp(unittest.TestCase):
         self.assertFalse(outcome.changed)
 
 
+class TestANudgeTrimsAnOpenFader(unittest.TestCase):
+    """#242: one dB down or up while the band is open. The machine only decides
+    whether a nudge is allowed; the level, the floor and the cap live in the
+    app. A relative move, so it needs a known level (#107)."""
+
+    NOT_OPEN = (st.State.STANDING_DOWN, st.State.IDLE, st.State.READY, st.State.RELEASING)
+
+    def test_while_open_known_and_still_a_nudge_moves_the_fader_and_stays_open(self):
+        start = opened(level_known=True)
+        outcome = send(start, st.Command.NUDGE)
+        self.assertEqual(outcome.fader, st.FaderCommand.NUDGE)
+        self.assertEqual(outcome.machine.state, st.State.OPEN)
+        self.assertTrue(outcome.machine.level_known)
+        self.assertFalse(outcome.machine.riding_in)
+        self.assertIsNone(outcome.refusal)
+        self.assertEqual(outcome.machine, start)
+
+    def test_a_nudge_clears_a_stall(self):
+        outcome = send(opened(level_known=True, stalled=True), st.Command.NUDGE)
+        self.assertEqual(outcome.fader, st.FaderCommand.NUDGE)
+        self.assertFalse(outcome.machine.stalled)
+
+    def test_a_nudge_never_makes_the_level_known(self):
+        outcome = send(opened(level_known=False), st.Command.NUDGE)
+        self.assertFalse(outcome.machine.level_known)
+
+    def test_anywhere_but_open_a_nudge_is_refused_with_its_own_reason(self):
+        for value in self.NOT_OPEN:
+            for known in (True, False):
+                with self.subTest(state=value, known=known):
+                    start = st.Machine(state=value, level_known=known)
+                    outcome = send(start, st.Command.NUDGE)
+                    self.assertIsNone(outcome.fader)
+                    self.assertEqual(outcome.refusal, st.NUDGE_NOT_OPEN)
+                    self.assertFalse(outcome.changed)
+                    self.assertEqual(outcome.machine, start)
+
+    def test_open_with_the_level_unknown_is_refused_for_the_unknown_level(self):
+        outcome = send(opened(level_known=False), st.Command.NUDGE)
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(outcome.refusal, st.UNKNOWN_LEVEL_MOVE)
+        self.assertFalse(outcome.changed)
+
+    def test_a_ride_in_under_way_refuses_a_nudge_as_busy(self):
+        start = opened(level_known=True, riding_in=True)
+        outcome = send(start, st.Command.NUDGE)
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(outcome.refusal, st.NUDGE_BUSY)
+        self.assertEqual(outcome.machine, start)
+
+    def test_a_move_the_shell_reports_in_flight_refuses_a_nudge_as_busy(self):
+        # A retarget ride in OPEN leaves riding_in False on purpose (#128), so
+        # only the shell knows it is still moving.
+        start = opened(level_known=True)
+        outcome = st.step(start, st.Event(st.Command.NUDGE, busy=True))
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(outcome.refusal, st.NUDGE_BUSY)
+        self.assertEqual(outcome.machine, start)
+
+    def test_busy_is_off_by_default(self):
+        self.assertFalse(st.Event(st.Command.NUDGE).busy)
+
+    def test_a_detector_cannot_nudge_even_when_allowed(self):
+        for value in ALL_STATES:
+            for known in (True, False):
+                with self.subTest(state=value, known=known):
+                    start = st.Machine(state=value, level_known=known, allow_detector=True)
+                    outcome = send(start, st.Command.NUDGE, st.Source.DETECTOR)
+                    self.assertIsNone(outcome.fader)
+                    self.assertEqual(outcome.refusal, st.DETECTOR_CANNOT_NUDGE)
+
+    def test_a_trigger_after_a_nudge_while_open_is_still_a_no_op(self):
+        nudged = send(opened(level_known=True), st.Command.NUDGE).machine
+        outcome = send(nudged, st.Command.TRIGGER)
+        self.assertIsNone(outcome.fader)
+        self.assertFalse(outcome.changed)
+
+    def test_a_release_after_a_nudge_fades(self):
+        nudged = send(opened(level_known=True), st.Command.NUDGE).machine
+        outcome = send(nudged, st.Command.RELEASE)
+        self.assertEqual(outcome.fader, st.FaderCommand.FADE)
+        self.assertEqual(outcome.machine.state, st.State.RELEASING)
+
+
 class TestNeverMutes(unittest.TestCase):
-    def test_the_only_fader_commands_are_open_ready_fade_close_now_report_ready_and_retarget(self):
+    def test_the_only_fader_commands_are_open_ready_fade_close_now_report_ready_retarget_and_nudge(self):
         # Faders only, never mutes. READY is a level short of target, not
         # silence, so it belongs on this list rather than being a third,
         # unwritten option (#6). REPORT_READY writes nothing at all - a belief
         # correction, not a fader move - and CLOSE_NOW is one packet to -inf,
         # never a mute (#12, #107). RETARGET is a ride to a different level
-        # while the fader is up, still a level write (#128).
+        # while the fader is up, still a level write (#128). NUDGE is a one dB
+        # trim of an open fader, a level write too (#242).
         self.assertEqual(
             set(st.FaderCommand),
             {
@@ -1029,6 +1114,7 @@ class TestNeverMutes(unittest.TestCase):
                 st.FaderCommand.CLOSE_NOW,
                 st.FaderCommand.REPORT_READY,
                 st.FaderCommand.RETARGET,
+                st.FaderCommand.NUDGE,
             },
         )
 
@@ -1045,7 +1131,7 @@ class TestNeverMutes(unittest.TestCase):
         self.assertNotIn("TAKE_BACK_DOWN", {c.name for c in st.FaderCommand})
 
     def test_the_two_enums_agree_where_they_share_a_name(self):
-        for name in ("CLOSE_NOW", "REPORT_READY", "RETARGET"):
+        for name in ("CLOSE_NOW", "REPORT_READY", "RETARGET", "NUDGE"):
             self.assertEqual(st.Command[name].value, st.FaderCommand[name].value)
 
 

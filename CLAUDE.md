@@ -96,7 +96,7 @@ Full detail in design.md §5.
   `built-in default < config file < explicit flag`, asserted per tool. Unknown
   sections and keys are errors, never silent no-ops. **No flag that initiates
   something is ever a config key** — the file supplies addresses, not actions,
-  which is why `verify_dm7 --fade/--granularity/--level` and `verify_reaper
+  which is why `verify_dm7 --fade/--granularity/--level/--nudge` and `verify_reaper
   --listen` are excluded. Keys live in `tacet.toml.example`; the real
   `tacet.toml` is gitignored and its values belong in `docs/gameday.md`.
 - **AES67 is not available** on this Dante domain and is out of scope.

@@ -104,6 +104,15 @@ STILL_MINE = "still-mine"
 TARGET_SET = "target-set"
 
 
+@dataclass(frozen=True)
+class NudgePlan:
+    """Where one nudge ends, decided before the machine is asked to move (#242)."""
+
+    level: int  # where the nudge ends, console units
+    basis: int  # where it was measured from: the in-flight nudge's end, or the commanded level
+    direction: targets.Nudge
+
+
 class AbandonedBecause(enum.StrEnum):
     """Why the box, stopping, left a move where it had got to (#44)."""
 
@@ -210,6 +219,27 @@ STALE_REFUSAL = (
 #: page, whose control offers only presets; it is what a stale page or a hand-
 #: made request meets. Quoted in docs/troubleshooting.md, where a test holds it.
 TARGET_NOT_A_PRESET = "Not a target level: {db:g} dB is not one of the presets ({presets}). Nothing was changed."
+#: What the page says when Up 1 dB would take the fader past the cap (#242).
+#: Operator-facing, so it names the config key to change. Quoted in
+#: docs/troubleshooting.md, where a test holds it.
+NUDGE_AT_CAP = "Not nudged up: the fader is at the cap, {db:g} dB (fader.max_target_db)."
+#: What the page says when Down 1 dB would take the fader below the nudge floor
+#: (#242). Quoted in docs/troubleshooting.md, where a test holds it.
+NUDGE_AT_FLOOR = (
+    "Not nudged down: a nudge goes no lower than {below:g} dB under the target. Lower the target on MORE, or fade out."
+)
+#: What the page says when the state is OPEN but the box believes the fader is
+#: at -inf, which a slow open whose first send failed leaves behind (#242).
+#: Quoted in docs/troubleshooting.md, where a test holds it. The buttons are the
+#: page's own labels.
+NUDGE_CLOSED = (
+    "Not nudged: the box believes the fader is closed; open it first with Up on whistle, Up on drums or Up slow."
+)
+#: The `detail` a nudge's `commanded` entry and its move carry, by direction.
+NUDGE_DETAIL: Mapping[targets.Nudge, str] = {
+    targets.Nudge.DOWN: "nudge-down",
+    targets.Nudge.UP: "nudge-up",
+}
 #: Not a fourth spelling of the string: `tacet.markers` anchors the timeline to
 #: this event and the box warns when a log already holds one, so all of them
 #: have to agree or the warning goes quiet.
@@ -495,6 +525,61 @@ class App:
                 return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
             return await self._command(state.Command.REPORT_READY, detail="report-ready")
 
+    async def nudge_down(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+        """Trim the open fader a dB down (#242)."""
+        return await self._nudge(targets.Nudge.DOWN, tap)
+
+    async def nudge_up(self, *, tap: taps.TapTiming | None = None) -> state.Outcome:
+        """Trim the open fader a dB up, never past the cap (#242)."""
+        return await self._nudge(targets.Nudge.UP, tap)
+
+    async def _nudge(self, direction: targets.Nudge, tap: taps.TapTiming | None) -> state.Outcome:
+        """One dB of trim on an open fader, down or up (#242). Stale-checked
+        like every fader tap (#16).
+
+        The machine decides whether a nudge is allowed at all; this decides
+        where it ends. A second tap while the first is still ramping carries on
+        from where the first was heading, so n taps are n dB however quickly
+        they come. A refusal at the cap or the floor is said on the page and
+        not logged: nothing was commanded. The standing target is never touched,
+        so the next open after a close goes back to it."""
+        with _tapped(tap):
+            if self._refuse_stale(f"nudge_{direction.value}", tap):
+                return state.Outcome(machine=self.machine, refusal=self._last_refusal, changed=False)
+            in_flight = self._move if self._move is not None and self._move.kind is moves.MoveKind.NUDGE else None
+            # Another move: anything in flight that is not a nudge, or a snap open
+            # still ramping, which has no description of its own.
+            busy = in_flight is None and (self._move is not None or self._console.is_ramping)
+            detail = NUDGE_DETAIL[direction]
+            if state.step(self.machine, state.Event(state.Command.NUDGE, busy=busy)).fader is None:
+                # Refused by the machine: through `_command` so it is shown and notified.
+                return await self._command(state.Command.NUDGE, detail=detail, busy=busy)
+            basis = in_flight.end if in_flight is not None else self._console.commanded_level
+            ends = targets.nudge_level(
+                basis,
+                direction,
+                step=dm7.NUDGE_STEP,
+                cap=self._targets.max_level,
+                floor=targets.nudge_floor(self._target),
+            )
+            if isinstance(ends, targets.NudgeLimit):
+                return self._nudge_limited(ends)
+            plan = NudgePlan(level=ends, basis=basis, direction=direction)
+            return await self._command(state.Command.NUDGE, detail=detail, busy=busy, nudge=plan)
+
+    def _nudge_limited(self, limit: targets.NudgeLimit) -> state.Outcome:
+        """A nudge that goes nowhere: said on the page, never logged."""
+        if limit is targets.NudgeLimit.CAP:
+            refusal = NUDGE_AT_CAP.format(db=self._targets.max_level / dm7.UNITS_PER_DB)
+        elif limit is targets.NudgeLimit.FLOOR:
+            refusal = NUDGE_AT_FLOOR.format(below=targets.NUDGE_FLOOR_BELOW_TARGET / dm7.UNITS_PER_DB)
+        else:
+            # Believed closed while the state says open: there is nothing to trim.
+            refusal = NUDGE_CLOSED
+        self._last_refusal = refusal
+        self._notify()
+        return state.Outcome(machine=self.machine, refusal=refusal, changed=False)
+
     async def confirm_still_mine(self, *, tap: taps.TapTiming | None = None) -> None:
         """The return prompt's negative answer (#12): a pure log entry, never
         refused - the operator answered a question, and that answer is itself
@@ -602,9 +687,11 @@ class App:
         source: state.Source = state.Source.OPERATOR,
         detail: str = "",
         ride_seconds: float | None = None,
+        busy: bool = False,
+        nudge: NudgePlan | None = None,
     ) -> state.Outcome:
         before = self.machine
-        event = state.Event(command, source=source, detail=detail, gradual=ride_seconds is not None)
+        event = state.Event(command, source=source, detail=detail, gradual=ride_seconds is not None, busy=busy)
         outcome = state.step(before, event)
         self.machine = outcome.machine
         self._last_refusal = outcome.refusal
@@ -626,6 +713,7 @@ class App:
                 detail=detail,
                 ride_seconds=ride_seconds,
                 level_was_known=before.level_known,
+                nudge=nudge,
             )
         # `outcome.machine`, captured before `_move_fader` ran, not
         # `self.machine`: a failed absolute move un-knows the level through
@@ -661,7 +749,11 @@ class App:
         """The READY hold level: short of target by `hold_below_db` (#6)."""
         return dm7.clamp(self._target - round(self._hold_below_db * dm7.UNITS_PER_DB))
 
-    def _fader_target(self, command: state.FaderCommand) -> int:
+    def _fader_target(self, command: state.FaderCommand, nudge: NudgePlan | None = None) -> int:
+        if command is state.FaderCommand.NUDGE:
+            # Where the plan ends, not the standing target: a nudge trims.
+            assert nudge is not None, "a nudge needs its plan"
+            return nudge.level
         if command is state.FaderCommand.OPEN:
             return self._target
         if command in (state.FaderCommand.READY, state.FaderCommand.REPORT_READY):
@@ -679,6 +771,7 @@ class App:
         detail: str,
         ride_seconds: float | None = None,
         level_was_known: bool,
+        nudge: NudgePlan | None = None,
     ) -> None:
         """Carry out what the machine asked for. A failure is recorded and
         shown, never raised: the operator stays in control.
@@ -690,13 +783,15 @@ class App:
         # The fault is recorded and shown; the operator stays in control.
         failed = False
         # A move left running in the background has delivered nothing yet.
-        # FADE and READY are always background; an OPEN is only when ridden.
+        # FADE, READY, RETARGET and NUDGE are always background; an OPEN is only
+        # when ridden.
         # CLOSE_NOW and REPORT_READY are always synchronous, like a snap open:
         # one packet or none, never a ramp of their own.
         background = command in (
             state.FaderCommand.FADE,
             state.FaderCommand.READY,
             state.FaderCommand.RETARGET,
+            state.FaderCommand.NUDGE,
         ) or (command is state.FaderCommand.OPEN and ride_seconds is not None)
         try:
             if command is state.FaderCommand.OPEN:
@@ -732,6 +827,12 @@ class App:
                 # READY's ride, and never held back for the same reason.
                 self._cancel_move()
                 self._start_ride_in(self._fader_target(command), self._retarget_ride_seconds, by=detail)
+            elif command is state.FaderCommand.NUDGE:
+                # A one dB trim of an open fader (#242): relative, short, and
+                # never held back for the same reason as the rides above.
+                assert nudge is not None, "a nudge needs its plan"
+                self._cancel_move()
+                self._start_nudge(nudge.level, by=detail)
             elif command is state.FaderCommand.REPORT_READY:
                 # Belief only - never a packet. The operator says the fader is
                 # already at the hold level, and READY has no fast form to
@@ -757,7 +858,7 @@ class App:
         # `_move_end`, though the snapshot's fader block has none since #135:
         # recorded logs carry it, design.md's Phase 1 labels read it, and in the
         # log nothing else is called a target (`target-set` says `level`).
-        target = self._fader_target(command)
+        target = self._fader_target(command, nudge)
         self._record(
             COMMANDED,
             data={
@@ -774,6 +875,7 @@ class App:
                 # has not been late yet, and `move-landed` or `move-failed`
                 # carries its timing when it ends.
                 **_timing(None if background and not failed else self._console.timing),
+                **_nudge_fields(nudge),
             },
             project_seconds=self._playhead(),
         )
@@ -899,6 +1001,37 @@ class App:
             run=self._run_ride_in(level, seconds),
         )
 
+    def _start_nudge(self, level: int, *, by: str) -> None:
+        """Trim the fader to `level` over `dm7.NUDGE_SECONDS`, linear. Callers
+        cancel any move in flight first. A task, for the reason the rides are:
+        the operator has tapped, and the log and the page must not wait."""
+        self._start_move(
+            moves.MoveKind.NUDGE,
+            level,
+            dm7.NUDGE_SECONDS,
+            by=by,
+            taper=None,
+            run=self._run_nudge(level),
+        )
+
+    async def _run_nudge(self, level: int) -> None:
+        this = asyncio.current_task()
+        try:
+            await self._console.nudge(level, seconds=dm7.NUDGE_SECONDS)
+        except TransportError:
+            if self._move_task is this:
+                # A nudge is relative: its failure leaves the belief where it
+                # was, and the machine stalled so the next tap tries again (#116).
+                self._move_failed(level, absolute=False)
+            return
+        except asyncio.CancelledError:
+            return
+        else:
+            if self._move_task is this:
+                self._move_landed(level)
+        finally:
+            self._settle(this)
+
     async def _run_ride_in(self, level: int, seconds: float) -> None:
         this = asyncio.current_task()
         try:
@@ -984,7 +1117,8 @@ class App:
         move = self._move
         if move is None or self._move_task is None or self._move_task.done():
             return None
-        if move.kind is moves.MoveKind.RIDE:
+        if move.kind is not moves.MoveKind.FADE:
+            # A ride or a nudge: the box never moves the fader after being told to stop.
             self._abandon_move(AbandonedBecause.RIDE)
             return None
         self._landing = move
@@ -1799,13 +1933,28 @@ def _finite(value: float) -> float | None:
     return None if value in (float("-inf"), float("inf")) else value
 
 
+def _nudge_fields(plan: NudgePlan | None) -> dict[str, Any]:
+    """What a nudge's `commanded` entry adds to the ones every move has (#242).
+    `level` there is where the fader was when tapped and `target` where the
+    nudge ends; `from_level` is what it was measured from, which differs from
+    `level` while a first nudge is still ramping."""
+    if plan is None:
+        return {}
+    return {
+        "direction": plan.direction.value,
+        "step_db": dm7.NUDGE_STEP / dm7.UNITS_PER_DB,
+        "from_level": plan.basis,
+        "from_db": _finite(dm7.to_db(plan.basis)),
+    }
+
+
 def _absolute(command: state.FaderCommand, ride_seconds: float | None) -> bool:
     """Whether this move puts the fader in one known place whatever the box
     believed (design.md 5.3): the snap open, and the instant close. Those are
     the moves that mark the level known, so those are the ones whose failure
     un-knows it again (#116). A ridden open is relative - it ramps from the
     belief, and `step` refuses it outright while the level is unknown - and so
-    are the fade, READY's ride and the retarget ride. REPORT_READY writes no packet, so it has no
+    are the fade, READY's ride, the retarget ride and the nudge. REPORT_READY writes no packet, so it has no
     send to fail."""
     if command is state.FaderCommand.CLOSE_NOW:
         return True

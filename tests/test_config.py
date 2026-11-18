@@ -289,6 +289,15 @@ class TestFlagsTheConfigMustNotReach(_TempConfig):
         self.assertIsNone(args.fade)
         self.assertNotIn("fade", verify_dm7.CONFIG_MAPPING)
 
+    def test_verify_dm7_nudge_is_not_settable_from_the_config(self):
+        # --nudge moves the fader (#242): a file that could select it would trim
+        # a console nobody asked to touch, on every run.
+        path = self.write(SAMPLE)
+        args, _ = config.resolve(verify_dm7.parser(), verify_dm7.CONFIG_MAPPING, [], environ={}, search=[path])
+        self.assertIs(args.nudge, False)
+        self.assertNotIn("nudge", verify_dm7.CONFIG_MAPPING)
+        self.assertEqual([o.name for o in config.SCHEMA if "nudge" in o.name], [])
+
     def test_serve_check_is_not_a_config_key(self):
         # --check chooses what the tool does (#79). A file that set it would
         # make the box never start.

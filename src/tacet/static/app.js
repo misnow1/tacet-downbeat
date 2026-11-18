@@ -109,7 +109,10 @@ function showRefusal(text, loud = false) {
 // is a reviewed, hallway-tested fact, not something that should shift because
 // a new key happened to be declared before it in annotations.py. A future
 // fader reason is data on an existing button, not a new button - the column
-// holds these five and one empty slot. The slot keeps them in place and is not room for a new button.
+// holds these five and the nudge row (#242), two buttons that are not
+// vocabulary keys and sit in the slot #202 left empty. That reverses #202's
+// note that the slot was not room for a new button: it keeps the column in
+// place, and it is the one place a pair that has to be always on screen fits.
 //
 // Split around the readout gap, which is its own fixed slot in the HTML
 // (level, target, and the refusal duplicate) rather than another entry here.
@@ -440,7 +443,8 @@ function paintTarget(target, fader, stateName) {
   const move = fader.move;
   const ridingElsewhere = Boolean(move) && move.to_db !== null && move.to_db !== target.db;
   const stored = target.stored || null;
-  const nextOpenOnly = ridingElsewhere || (stored !== null && STORED_ATTENTION.has(stored.because));
+  const nudged = nudgeOffset(stateName, fader, target) !== null;
+  const nextOpenOnly = ridingElsewhere || nudged || (stored !== null && STORED_ATTENTION.has(stored.because));
   const chip = $("target-level");
   chip.textContent = targetChipText(target.db, nextOpenOnly);
   chip.classList.toggle("off-default", target.db !== target.default_db);
@@ -450,6 +454,42 @@ function paintTarget(target, fader, stateName) {
   const noteNode = $("target-note");
   setText(noteNode, [note.text, blocked ? TARGET_BLOCKED : ""].filter(Boolean).join(" "));
   noteNode.className = note.attention || blocked ? "attention" : "";
+}
+
+// The nudge row (#242): Up 1 dB and Down 1 dB. Always on the page and never
+// moved; only disabled in place, like the belief controls. A nudge trims an
+// OPEN fader whose level the box knows, so it is greyed in every other state
+// and while the level is unknown (the column note says why then). It is NOT
+// greyed while a move is in flight: a second tap mid-ramp has to reach the
+// box, which carries on from where the first was heading. The cap, the floor
+// and another move in flight are the box's refusals, said in its words.
+function nudgeEnabled(stateName, fader) {
+  return stateName === "open" && Boolean(fader.level_known);
+}
+
+// How far the settled fader sits from the standing target, in dB, or null when
+// it does not: not open, level unknown, a move still running, a closed fader,
+// or already at the target. Pure. The same condition shows the note under the
+// level and puts "(next open)" on the target chip, since a nudge changes where
+// the fader is and not where the next open goes.
+function nudgeOffset(stateName, fader, target) {
+  if (stateName !== "open" || !fader.level_known || fader.move) return null;
+  if (fader.db === null || fader.db === target.db) return null;
+  return Math.round((fader.db - target.db) * 100) / 100;
+}
+
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const NUDGED_FROM_TARGET = "from target; next open:";
+
+// Pure: the line under the level while a nudge stands, "-2 dB from target;
+// next open: 0 dB", or "" when none does. The caller keeps it off the screen
+// while a refusal is showing, which takes the same line (see the budget in
+// web.py).
+function nudgedNote(stateName, fader, target) {
+  const offset = nudgeOffset(stateName, fader, target);
+  if (offset === null) return "";
+  const signed = (offset > 0 ? "+" : "") + String(offset);
+  return signed + " dB " + NUDGED_FROM_TARGET + " " + String(target.db) + " dB";
 }
 
 // -- MAIN / MORE ---------------------------------------------------------
@@ -685,7 +725,7 @@ function commandAge(sentAt, at, since) {
 // `confirmed`: a number still changing is neither, and the two must stay
 // tellable apart from it. A kind this page does not know (a newer box) reads
 // as the fallback rather than as nothing.
-const MOVE_TAGS = {fade: "fading", ride: "riding"};
+const MOVE_TAGS = {fade: "fading", ride: "riding", nudge: "nudging"};
 const MOVE_TAG_FALLBACK = "moving";
 
 // How far past its expected end a move may run before the readout says it is
@@ -1159,6 +1199,15 @@ function render(received) {
   const blocked = !fader.level_known && !next.refusal;
   $("col-unknown").textContent = blocked ? RAMPING_BLOCKED : "";
   $("col-unknown").style.display = blocked ? "block" : "none";
+  // The nudge row (#242): disabled in place, never hidden. The note under the
+  // level needs a known level, so it is never shown with the unknown-level
+  // note above, and it gives way to a refusal the same way that note does.
+  const nudgeOn = nudgeEnabled(next.state, fader);
+  setDisabled($("btn-nudge-up"), !nudgeOn);
+  setDisabled($("btn-nudge-down"), !nudgeOn);
+  const nudged = next.refusal || !next.target ? "" : nudgedNote(next.state, fader, next.target);
+  setText($("col-nudged"), nudged);
+  $("col-nudged").style.display = nudged ? "block" : "none";
 
   // The two belief controls are always on the page and never hidden (#107):
   // nothing here may appear, disappear or move on a belief change, only a
@@ -1460,6 +1509,14 @@ $("btn-handoff-no").onclick = () => {
 // nothing at all. Not navigation either - both live in the fader column, which
 // is on screen whatever tab is showing.
 for (const [id, path] of [["btn-close-now", "/api/close-now"], ["btn-report-ready", "/api/report-ready"]]) {
+  const node = $(id);
+  node.onclick = () => post(path, undefined, node);
+}
+
+// The nudge pair (#242). Neither asks first: a dB is small, the fade and Close
+// now are right there to undo a mistake, and a question would cost the second
+// tap the pair exists for. Not navigation: the column is on screen on both tabs.
+for (const [id, path] of [["btn-nudge-up", "/api/nudge-up"], ["btn-nudge-down", "/api/nudge-down"]]) {
   const node = $(id);
   node.onclick = () => post(path, undefined, node);
 }

@@ -113,10 +113,11 @@ class Option:
 #: Every key the file may contain. Sections are by subject, not by tool: the
 #: console is the console whether `tacet-serve` or `verify_dm7` is asking.
 #:
-#: Deliberately absent: `verify_dm7 --fade` and `verify_reaper --listen`. Both
-#: read like keys that belong here and neither does. In those two tools the flag
-#: is what *selects* the probe, so giving it a value from a file would make
-#: every run fire a fade at a console, or sit listening, without being asked.
+#: Deliberately absent: `verify_dm7 --fade` and `--nudge`, and `verify_reaper
+#: --listen`. They read like keys that belong here and none does. In those
+#: tools the flag is what *selects* the probe, so giving it a value from a file
+#: would make every run fire a fade or a nudge at a console, or sit listening,
+#: without being asked.
 SCHEMA: tuple[Option, ...] = (
     Option("console", "host", "str", "the DM7's For Mixer Control IP"),
     Option("console", "port", "port", "OSC port on the console"),

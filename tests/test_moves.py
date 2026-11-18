@@ -60,6 +60,25 @@ class TestAMoveDescription(unittest.TestCase):
         self.assertEqual(data["to_db"], 0.0)
         self.assertEqual(data["kind"], "ride")
 
+    def test_a_nudge_is_its_own_kind_and_carries_no_knee(self):
+        nudge = moves.MoveDescription(
+            seq=3,
+            kind=moves.MoveKind.NUDGE,
+            by="nudge-down",
+            start=dm7.UNITY,
+            end=-dm7.NUDGE_STEP,
+            seconds=dm7.NUDGE_SECONDS,
+            started_at=STARTED_AT,
+            floor=dm7.DEFAULT_FADE_FLOOR,
+            taper=None,
+        )
+        data = nudge.as_data()
+        self.assertEqual(data["kind"], "nudge")
+        self.assertEqual(data["from_db"], 0.0)
+        self.assertEqual(data["to_db"], -1.0)
+        self.assertIsNone(data["knee"])
+        self.assertEqual(set(data), PAGE_CONTRACT)
+
     def test_the_page_contract_is_exactly_these_keys(self):
         self.assertEqual(set(fade().as_data()), PAGE_CONTRACT)
         self.assertEqual(set(ride().as_data()), PAGE_CONTRACT)

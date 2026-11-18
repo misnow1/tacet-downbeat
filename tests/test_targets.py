@@ -174,5 +174,83 @@ class TestTheTargetsObject(unittest.TestCase):
             self.built.default = 0  # type: ignore[misc]
 
 
+class TestANudgeLevel(unittest.TestCase):
+    """#242: the pure rule for one dB trim of an open fader. A nudge is a trim,
+    never a close, so -inf is not a level it can reach."""
+
+    STEP = 100
+    CAP = 0
+    FLOOR = -600
+
+    def nudge(self, basis, direction, *, cap=CAP, floor=FLOOR):
+        return targets.nudge_level(basis, direction, step=self.STEP, cap=cap, floor=floor)
+
+    def test_the_step_is_a_db(self):
+        self.assertEqual(dm7.NUDGE_STEP, self.STEP)
+
+    def test_down_from_unity_is_a_db_lower(self):
+        self.assertEqual(self.nudge(0, targets.Nudge.DOWN), -100)
+
+    def test_up_from_a_db_below_is_unity(self):
+        self.assertEqual(self.nudge(-100, targets.Nudge.UP), 0)
+
+    def test_up_clamps_to_a_cap_less_than_a_step_away(self):
+        self.assertEqual(self.nudge(-30, targets.Nudge.UP), 0)
+
+    def test_up_at_the_cap_is_the_cap_limit(self):
+        self.assertIs(self.nudge(0, targets.Nudge.UP), targets.NudgeLimit.CAP)
+
+    def test_up_above_the_cap_is_the_cap_limit_and_never_moves_down(self):
+        self.assertIs(self.nudge(50, targets.Nudge.UP), targets.NudgeLimit.CAP)
+        self.assertIs(self.nudge(300, targets.Nudge.UP), targets.NudgeLimit.CAP)
+
+    def test_down_clamps_to_a_floor_less_than_a_step_away(self):
+        self.assertEqual(self.nudge(-550, targets.Nudge.DOWN), self.FLOOR)
+
+    def test_down_at_the_floor_is_the_floor_limit(self):
+        self.assertIs(self.nudge(self.FLOOR, targets.Nudge.DOWN), targets.NudgeLimit.FLOOR)
+
+    def test_down_below_the_floor_is_the_floor_limit(self):
+        self.assertIs(self.nudge(-700, targets.Nudge.DOWN), targets.NudgeLimit.FLOOR)
+
+    def test_up_from_below_the_floor_is_allowed_a_db_at_a_time(self):
+        self.assertEqual(self.nudge(-700, targets.Nudge.UP), -600)
+        self.assertEqual(self.nudge(-1000, targets.Nudge.UP), -900)
+
+    def test_either_direction_from_silence_is_the_closed_limit(self):
+        self.assertIs(self.nudge(dm7.MINUS_INF, targets.Nudge.DOWN), targets.NudgeLimit.CLOSED)
+        self.assertIs(self.nudge(dm7.MINUS_INF, targets.Nudge.UP), targets.NudgeLimit.CLOSED)
+
+    def test_an_off_grid_basis_keeps_exact_db_steps(self):
+        self.assertEqual(self.nudge(-250, targets.Nudge.DOWN), -350)
+        self.assertEqual(self.nudge(-350, targets.Nudge.UP), -250)
+
+    def test_the_floor_is_six_db_below_the_target(self):
+        self.assertEqual(targets.nudge_floor(0), -600)
+        self.assertEqual(targets.nudge_floor(-300), -900)
+        self.assertEqual(targets.nudge_floor(300), -300)
+        self.assertEqual(targets.NUDGE_FLOOR_BELOW_TARGET, 600)
+
+    def test_the_floor_is_never_silence(self):
+        self.assertEqual(targets.nudge_floor(dm7.LEVEL_MIN + 1), dm7.LEVEL_MIN + 1)
+        self.assertGreater(targets.nudge_floor(-30000), dm7.MINUS_INF)
+
+    def test_repeated_downs_from_every_preset_end_at_the_floor_never_silence(self):
+        for target in targets.DEFAULT_TARGETS.levels:
+            floor = targets.nudge_floor(target)
+            level = target
+            for _ in range(20):
+                result = targets.nudge_level(
+                    level, targets.Nudge.DOWN, step=dm7.NUDGE_STEP, cap=targets.DEFAULT_TARGETS.max_level, floor=floor
+                )
+                if isinstance(result, targets.NudgeLimit):
+                    self.assertIs(result, targets.NudgeLimit.FLOOR)
+                    break
+                self.assertNotEqual(result, dm7.MINUS_INF)
+                level = result
+            self.assertEqual(level, floor)
+            self.assertNotEqual(level, dm7.MINUS_INF)
+
+
 if __name__ == "__main__":
     unittest.main()

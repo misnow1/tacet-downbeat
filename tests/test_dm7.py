@@ -272,6 +272,40 @@ class TestARetargetRide(unittest.TestCase):
         self.assertEqual([level for _, level in steps], sorted((level for _, level in steps), reverse=True))
 
 
+class TestANudge(unittest.TestCase):
+    """#242: a one dB trim of an open fader. No ramp code of its own: it is a
+    short, untapered move, so what is pinned is its size, its shape and where
+    it lands."""
+
+    HZ = 50.0
+
+    def test_nudge_constants_are_derived_and_pinned(self):
+        self.assertEqual(dm7.NUDGE_STEP, 100)
+        self.assertEqual(dm7.NUDGE_STEP, dm7.UNITS_PER_DB)
+        self.assertEqual(dm7.NUDGE_TICKS, 5)
+        self.assertEqual(dm7.NUDGE_SECONDS, 0.1)
+
+    def test_a_nudge_ramp_is_five_even_steps_of_a_fifth_of_a_db(self):
+        down = list(dm7.ramp_steps(0, -100, dm7.NUDGE_SECONDS, tick_hz=self.HZ))
+        self.assertEqual([level for _, level in down], [-20, -40, -60, -80, -100])
+        self.assertAlmostEqual(down[-1][0], 0.1)
+        self.assertAlmostEqual(down[1][0] - down[0][0], 0.02)
+        up = list(dm7.ramp_steps(-100, 0, dm7.NUDGE_SECONDS, tick_hz=self.HZ))
+        self.assertEqual([level for _, level in up], [-80, -60, -40, -20, 0])
+        self.assertAlmostEqual(up[-1][0], 0.1)
+
+    def test_quantized_nudges_land_on_whole_db_between_minus_10_and_plus_10(self):
+        # Table 1 is whole dB between -10 and +10 dB, so a quantized console
+        # still lands a nudge exactly there. Below -10 dB the spacing is 2 dB
+        # and it may not: that is noted in docs/box.md.
+        for start in range(-900, 900 + 1, dm7.UNITS_PER_DB):
+            for end in (start - dm7.NUDGE_STEP, start + dm7.NUDGE_STEP):
+                if abs(end) > 10 * dm7.UNITS_PER_DB:
+                    continue
+                steps = list(dm7.ramp_steps(start, end, dm7.NUDGE_SECONDS, tick_hz=self.HZ, quantized=True))
+                self.assertEqual(steps[-1][1], end, (start, end))
+
+
 class TestSending(unittest.TestCase):
     def test_send_level_emits_one_int_argument_at_the_fader_address(self):
         c, sender = client()
@@ -567,12 +601,28 @@ class TestMoves(unittest.IsolatedAsyncioTestCase):
         # and down, never anything but a level write.
         await c.ride_in(-300, seconds=0.05)
         await c.ride_in(dm7.UNITY, seconds=0.05)
+        # And so is a nudge (#242): down, down, up, from the open level.
+        await c.nudge(-100)
+        await c.nudge(-200)
+        await c.nudge(-100)
         await c.fade_out(seconds=0.05)
         self.assertGreater(len(sender.packets), 3)
         for message in sender.messages():
             self.assertEqual(message.address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3")
             self.assertEqual(len(message.args), 1)
             self.assertIsInstance(message.args[0], int)
+
+    async def test_a_nudge_is_never_tapered(self):
+        # -2050 -> -1950 straddles the ride-in knee (-2000), where a taper
+        # would reshape it; a nudge must stay linear.
+        clock = FakeLoopClock()
+        c = stalled_client(clock, initial_level=-2050)
+        await c.nudge(-1950)
+        expected = dm7.ramp_steps(-2050, -1950, dm7.NUDGE_SECONDS, tick_hz=dm7.DEFAULT_TICK_HZ)
+        self.assertEqual([level for _, level in clock.sends], [level for _, level in expected])
+        tapered = dm7.ramp_steps(-2050, -1950, dm7.NUDGE_SECONDS, tick_hz=dm7.DEFAULT_TICK_HZ, taper=dm7.RIDE_IN_TAPER)
+        self.assertNotEqual([level for _, level in clock.sends], [level for _, level in tapered])
+        self.assertEqual(c.commanded_level, -1950)
 
     async def test_a_move_superseded_by_another_returns_quietly(self):
         c, _ = client(initial_level=dm7.UNITY)

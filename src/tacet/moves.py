@@ -25,6 +25,7 @@ from . import dm7
 class MoveKind(enum.StrEnum):
     FADE = "fade"  # to -inf
     RIDE = "ride"  # up-slow, READY, and any retarget ride
+    NUDGE = "nudge"  # a one dB trim of an open fader (#242)
 
 
 @dataclass(frozen=True)

@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 
 from . import dm7
 
@@ -121,3 +122,47 @@ def build(presets_db: Iterable[float], max_db: float, default_db: float | None =
 
 
 DEFAULT_TARGETS: Targets = build(DEFAULT_PRESETS_DB, DEFAULT_MAX_TARGET_DB)
+
+
+#: How far a nudge may take the fader below the standing target (#242): a trim
+#: for a ringing PA, not a close. Derived from the console's unit.
+NUDGE_FLOOR_BELOW_TARGET: int = 6 * dm7.UNITS_PER_DB
+
+
+class Nudge(StrEnum):
+    """Which way the operator trims an open fader."""
+
+    DOWN = "down"
+    UP = "up"
+
+
+class NudgeLimit(StrEnum):
+    """Why a nudge is not possible, when it is not."""
+
+    #: Up, at or above `fader.max_target_db`.
+    CAP = "cap"
+    #: Down, at or below the nudge floor.
+    FLOOR = "floor"
+    #: The fader is believed closed (-inf): there is nothing to trim.
+    CLOSED = "closed"
+
+
+def nudge_floor(target: int) -> int:
+    """The lowest level a nudge may reach: `NUDGE_FLOOR_BELOW_TARGET` under the
+    standing target, and always above -inf, so a nudge never closes the fader."""
+    return max(target - NUDGE_FLOOR_BELOW_TARGET, dm7.LEVEL_MIN + 1)
+
+
+def nudge_level(basis: int, direction: Nudge, *, step: int, cap: int, floor: int) -> int | NudgeLimit:
+    """Where a nudge from `basis` ends, or the limit that stops it. Pure.
+
+    Down clamps to `floor`, and is refused at or below it. Up clamps to `cap`,
+    is refused at or above it, and so never moves the fader down. Either way a
+    partial step is taken rather than refused: with less than a step of room
+    the nudge goes as far as it can. Up from below the floor is allowed, one
+    step at a time. -inf is a close, not a level to trim from."""
+    if basis == dm7.MINUS_INF:
+        return NudgeLimit.CLOSED
+    if direction is Nudge.UP:
+        return NudgeLimit.CAP if basis >= cap else min(basis + step, cap)
+    return NudgeLimit.FLOOR if basis <= floor else max(basis - step, floor)

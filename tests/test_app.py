@@ -238,7 +238,18 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
     #: The operator's whole cycle, from a cold boot (#107): every move the page asks for.
-    OPERATOR_CYCLE = ("close_now", "arm", "trigger", "release", "handoff", "report_ready", "trigger", "close_now")
+    OPERATOR_CYCLE = (
+        "close_now",
+        "arm",
+        "trigger",
+        "nudge_down",
+        "nudge_up",
+        "release",
+        "handoff",
+        "report_ready",
+        "trigger",
+        "close_now",
+    )
 
     #: What a ping can find, one after another: answered, no reply, nothing there, could not check.
     PING_OUTCOMES = (
@@ -3495,11 +3506,22 @@ class TestTheStandingTarget(AppTestCase):
         await app.wait_for_fade()
         await app.release()
         await app.wait_for_fade()
+        await app.trigger()
+        await app.nudge_down()  # a one dB trim while open (#242)
+        await app.wait_for_fade()
+        await app.nudge_down()
+        await app.wait_for_fade()
+        await app.nudge_up()
+        await app.wait_for_fade()
+        await app.release()
+        await app.wait_for_fade()
         self.assertGreater(self.sent(), 3)
         levels = self.console_sender.levels()
         self.assertIn(-300, levels)
         self.assertIn(-600, levels)
         self.assertIn(-1500, levels)
+        self.assertIn(-100, levels)
+        self.assertIn(-200, levels)
         for address in self.console_sender.addresses():
             self.assertEqual(address, "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3")
         for level in levels:
@@ -3717,6 +3739,451 @@ class TestARetargetRide(AppTestCase):
         await app.set_target(-3.0)
         await app.wait_for_fade()
         self.assertIsNone(app.snapshot()["target"]["stored"])
+
+
+class TestANudge(AppTestCase):
+    """#242: one dB down or up while the band is open. A fader tap, so it is
+    stale-checked (#16); relative, so refused while the level is unknown
+    (#107); a trim, so it never closes and never touches the standing target.
+    Step counts are not asserted here: the console runs at 200 Hz in these
+    tests, and the ramp's own shape is pinned in test_dm7."""
+
+    def commanded_entries(self):
+        return [e for e in self.entries() if e.event == tacet_app.COMMANDED]
+
+    def nudges(self):
+        return [e for e in self.commanded_entries() if e.data["command"] == "nudge"]
+
+    def build_with_cap(self, cap_db, presets=(0.0, -3.0, -6.0)):
+        app = self.build()
+        app._targets = targets.build(presets, cap_db)
+        app._target = app._targets.default
+        return app
+
+    async def open_it(self, app):
+        await app.arm()
+        await app.trigger()
+        self.assertEqual(app.machine.state, state.State.OPEN)
+
+    async def nudge(self, app, direction):
+        outcome = await getattr(app, f"nudge_{direction}")()
+        await app.wait_for_fade()
+        return outcome
+
+    def sent(self):
+        return len(self.console_sender.packets)
+
+    async def test_down_one_db_commands_minus_100_and_leaves_the_target_alone(self):
+        app = self.build()
+        await self.open_it(app)
+        outcome = await self.nudge(app, "down")
+        self.assertIsNone(outcome.refusal)
+        self.assertEqual(self.console.commanded_level, -100)
+        self.assertEqual(self.console_sender.levels()[-1], -100)
+        snap = app.snapshot()
+        self.assertEqual(app._target, 0)
+        self.assertEqual(snap["target"]["db"], 0.0)
+        self.assertEqual(snap["state"], "open")
+        self.assertTrue(snap["fader"]["level_known"])
+        self.assertEqual(snap["fader"]["db"], -1.0)
+        self.assertFalse(snap["fader"]["confirmed"])
+        self.assertIsNone(snap["fader"]["move"])
+
+    async def test_two_taps_down_are_two_db_and_down_then_up_is_back_to_unity(self):
+        app = self.build()
+        await self.open_it(app)
+        await self.nudge(app, "down")
+        await self.nudge(app, "down")
+        self.assertEqual(self.console.commanded_level, -200)
+        await self.nudge(app, "up")
+        self.assertEqual(self.console.commanded_level, -100)
+        await self.nudge(app, "up")
+        self.assertEqual(self.console.commanded_level, 0)
+
+    async def test_a_second_nudge_mid_ramp_carries_on_from_where_the_first_was_heading(self):
+        app = self.build()
+        await self.open_it(app)
+        with mock.patch.object(dm7, "NUDGE_SECONDS", 0.5):
+            await app.nudge_down()
+            await asyncio.sleep(UNDER_WAY)
+            partway = self.console.commanded_level
+            self.assertLess(partway, 0)
+            self.assertGreater(partway, -100)
+            outcome = await app.nudge_down()
+            self.assertIsNone(outcome.refusal)
+            move = app.snapshot()["fader"]["move"]
+            self.assertEqual(move["kind"], "nudge")
+            self.assertEqual(move["to_db"], -2.0)
+            self.assertEqual(move["from_db"], partway / dm7.UNITS_PER_DB)
+            await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -200)
+        first, second = self.nudges()
+        self.assertEqual(first.data["target"], -100)
+        self.assertEqual(second.data["from_level"], -100)
+        self.assertEqual(second.data["target"], -200)
+        self.assertEqual(second.data["level"], partway)
+
+    async def test_a_second_nudge_the_other_way_mid_ramp_also_goes_from_the_end(self):
+        app = self.build()
+        await self.open_it(app)
+        with mock.patch.object(dm7, "NUDGE_SECONDS", 0.5):
+            await app.nudge_down()
+            await asyncio.sleep(UNDER_WAY)
+            await app.nudge_up()
+            self.assertEqual(app.snapshot()["fader"]["move"]["to_db"], 0.0)
+            await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, 0)
+
+    async def test_up_goes_a_db_at_a_time_to_the_cap_and_is_then_refused_with_no_packet(self):
+        app = self.build_with_cap(3.0)
+        await self.open_it(app)
+        for expected in (100, 200, 300):
+            await self.nudge(app, "up")
+            self.assertEqual(self.console.commanded_level, expected)
+        packets = self.sent()
+        commanded = len(self.commanded_entries())
+        outcome = await app.nudge_up()
+        self.assertEqual(outcome.refusal, tacet_app.NUDGE_AT_CAP.format(db=3.0))
+        self.assertFalse(outcome.changed)
+        self.assertEqual(app.snapshot()["refusal"], tacet_app.NUDGE_AT_CAP.format(db=3.0))
+        self.assertIn("3 dB", app.snapshot()["refusal"])
+        self.assertEqual(self.sent(), packets)
+        self.assertEqual(len(self.commanded_entries()), commanded)
+        self.assertEqual(self.console.commanded_level, 300)
+
+    async def test_a_cap_less_than_a_db_away_is_clamped_to_not_refused(self):
+        app = self.build_with_cap(0.5, presets=(0.0,))
+        await self.open_it(app)
+        outcome = await self.nudge(app, "up")
+        self.assertIsNone(outcome.refusal)
+        self.assertEqual(self.console.commanded_level, 50)
+        self.assertEqual(self.nudges()[-1].data["target"], 50)
+        self.assertIsNotNone((await app.nudge_up()).refusal)
+
+    async def test_down_stops_six_db_under_the_target_and_never_reaches_minus_infinity(self):
+        app = self.build()
+        await self.open_it(app)
+        for expected in (-100, -200, -300, -400, -500, -600):
+            outcome = await self.nudge(app, "down")
+            self.assertIsNone(outcome.refusal)
+            self.assertEqual(self.console.commanded_level, expected)
+        packets = self.sent()
+        commanded = len(self.commanded_entries())
+        outcome = await app.nudge_down()
+        self.assertEqual(outcome.refusal, tacet_app.NUDGE_AT_FLOOR.format(below=6.0))
+        self.assertIn("6 dB", outcome.refusal)
+        self.assertEqual(app.snapshot()["refusal"], outcome.refusal)
+        self.assertEqual(self.sent(), packets)
+        self.assertEqual(len(self.commanded_entries()), commanded)
+        self.assertNotIn(dm7.MINUS_INF, self.console_sender.levels()[1:])
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        # Up from the floor is allowed.
+        await self.nudge(app, "up")
+        self.assertEqual(self.console.commanded_level, -500)
+
+    async def test_the_floor_follows_the_standing_target(self):
+        app = self.build()
+        app._retarget_ride_seconds = 0.05
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await app.wait_for_fade()
+        for _ in range(6):
+            await self.nudge(app, "down")
+        self.assertEqual(self.console.commanded_level, -900)
+        self.assertIsNotNone((await app.nudge_down()).refusal)
+        self.assertEqual(self.console.commanded_level, -900)
+
+    async def test_while_open_and_the_level_unknown_it_is_refused_and_sends_nothing(self):
+        app = self.build(level_known=False)
+        app.machine = state.Machine(state=state.State.OPEN, level_known=False)
+        for direction in ("down", "up"):
+            outcome = await getattr(app, f"nudge_{direction}")()
+            self.assertEqual(outcome.refusal, state.UNKNOWN_LEVEL_MOVE)
+            self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_MOVE)
+        self.assertEqual(self.sent(), 0)
+        self.assertEqual(self.commanded_entries(), [])
+        self.assertFalse(app.machine.level_known)
+
+    async def test_an_open_fader_believed_closed_is_not_something_to_trim(self):
+        # A slow open whose first send failed leaves OPEN, known, at -inf.
+        app = self.build()
+        app.machine = state.Machine(state=state.State.OPEN, level_known=True, stalled=True)
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        for direction in ("down", "up"):
+            outcome = await getattr(app, f"nudge_{direction}")()
+            self.assertEqual(outcome.refusal, tacet_app.NUDGE_CLOSED)
+            self.assertEqual(app.snapshot()["refusal"], tacet_app.NUDGE_CLOSED)
+        self.assertNotEqual(tacet_app.NUDGE_CLOSED, state.NUDGE_NOT_OPEN)
+        for label in ("Up on whistle", "Up on drums", "Up slow"):
+            self.assertIn(label, tacet_app.NUDGE_CLOSED)
+        self.assertEqual(self.sent(), 0)
+
+    async def test_it_is_refused_in_every_state_but_open(self):
+        app = self.build()
+        # STANDING DOWN
+        self.assertEqual((await app.nudge_down()).refusal, state.NUDGE_NOT_OPEN)
+        self.assertEqual(app.snapshot()["refusal"], state.NUDGE_NOT_OPEN)
+        # IDLE
+        await app.arm()
+        self.assertEqual((await app.nudge_up()).refusal, state.NUDGE_NOT_OPEN)
+        # READY, landed
+        app._ready_ride_seconds = 0.05
+        await app.annotate("up-ready")
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.READY)
+        self.assertEqual((await app.nudge_down()).refusal, state.NUDGE_NOT_OPEN)
+        self.assertEqual(self.console.commanded_level, -1500)
+        self.assertEqual(self.nudges(), [])
+
+    async def test_it_is_refused_during_the_ready_ride(self):
+        app = self.build()
+        app._ready_ride_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-ready")
+        await asyncio.sleep(UNDER_WAY)
+        self.assertEqual((await app.nudge_down()).refusal, state.NUDGE_NOT_OPEN)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -1500)
+
+    async def test_it_is_refused_while_releasing_and_the_fade_still_ends_at_minus_infinity(self):
+        app = self.build(fade=0.3)
+        await self.open_it(app)
+        await app.release()
+        await asyncio.sleep(SUPERSEDED_WAKES)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        self.assertEqual((await app.nudge_up()).refusal, state.NUDGE_NOT_OPEN)
+        self.assertEqual((await app.nudge_down()).refusal, state.NUDGE_NOT_OPEN)
+        self.assertEqual(app.snapshot()["fader"]["move"]["kind"], "fade")
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertEqual(app.machine.state, state.State.IDLE)
+
+    async def test_it_is_refused_mid_up_slow_ride_and_the_ride_still_lands_at_target(self):
+        app = self.build()
+        app._slow_open_seconds = 0.4
+        await app.arm()
+        await app.annotate("up-slow")
+        await asyncio.sleep(UNDER_WAY)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assertTrue(app.machine.riding_in)
+        for direction in ("down", "up"):
+            self.assertEqual((await getattr(app, f"nudge_{direction}")()).refusal, state.NUDGE_BUSY)
+        self.assertEqual(app.snapshot()["fader"]["move"]["by"], "up-slow")
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, 0)
+        self.assertEqual(self.nudges(), [])
+
+    async def test_it_is_refused_mid_retarget_ride_while_open(self):
+        # A retarget ride in OPEN leaves riding_in False on purpose (#128), so
+        # the machine cannot know it is moving: this pins that the shell says so.
+        app = self.build()
+        app._retarget_ride_seconds = 0.4
+        await self.open_it(app)
+        await app.set_target(-3.0)
+        await asyncio.sleep(UNDER_WAY)
+        self.assertFalse(app.machine.riding_in)
+        self.assertEqual(app.snapshot()["fader"]["move"]["by"], tacet_app.TARGET_SET)
+        self.assertEqual((await app.nudge_down()).refusal, state.NUDGE_BUSY)
+        self.assertEqual(app.snapshot()["refusal"], state.NUDGE_BUSY)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, -300)
+        self.assertEqual(self.nudges(), [])
+
+    async def test_it_is_refused_while_the_snap_open_is_still_ramping(self):
+        app = self.build()
+        await app.arm()
+        opened, nudged = await asyncio.gather(app.trigger(), app.nudge_down())
+        self.assertEqual(nudged.refusal, state.NUDGE_BUSY)
+        self.assertEqual(self.console.commanded_level, 0)
+        self.assertEqual(self.nudges(), [])
+        self.assertIsNone(opened.refusal)
+
+    async def test_it_is_refused_while_a_snap_back_from_a_fade_is_still_ramping(self):
+        # The real hazard: from a known level mid-fade, the snap open is a short
+        # ramp with no move description. A nudge starting under it would cancel
+        # the console's ramp and strand the fader near the nudge's own level.
+        app = self.build(fade=2.0)
+        await self.open_it(app)
+        await app.release()
+        await asyncio.sleep(UNDER_WAY)
+        self.assertEqual(app.machine.state, state.State.RELEASING)
+        self.assertGreater(self.console.commanded_level, dm7.MINUS_INF)
+        opened, nudged = await asyncio.gather(app.trigger(), app.nudge_down())
+        self.assertIsNone(opened.refusal)
+        self.assertEqual(nudged.refusal, state.NUDGE_BUSY)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, 0)
+        self.assertEqual(self.nudges(), [])
+
+    async def test_the_next_open_after_a_close_returns_to_target(self):
+        app = self.build()
+        await self.open_it(app)
+        await self.nudge(app, "down")
+        await self.nudge(app, "down")
+        await app.release()
+        await app.wait_for_fade()
+        self.assertEqual(app.machine.state, state.State.IDLE)
+        await app.trigger()
+        self.assertEqual(self.console.commanded_level, 0)
+        self.assertEqual(self.commanded_entries()[-1].data["target"], 0)
+
+    async def test_a_trigger_while_open_and_nudged_changes_nothing(self):
+        app = self.build()
+        await self.open_it(app)
+        await self.nudge(app, "down")
+        packets = self.sent()
+        outcome = await app.trigger()
+        self.assertIsNone(outcome.fader)
+        self.assertEqual(self.sent(), packets)
+        self.assertEqual(self.console.commanded_level, -100)
+
+    async def test_a_fade_mid_nudge_takes_over_from_where_it_got_to(self):
+        app = self.build(fade=0.4)
+        await self.open_it(app)
+        with mock.patch.object(dm7, "NUDGE_SECONDS", 1.0):
+            await app.nudge_down()
+            await asyncio.sleep(UNDER_WAY)
+            reached = self.console.commanded_level
+            self.assertLess(reached, 0)
+            self.assertGreater(reached, -100)
+            packets = self.sent()
+            await app.release()
+            await asyncio.sleep(SUPERSEDED_WAKES)
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "fade")
+        self.assertLessEqual(move["from_db"], reached / dm7.UNITS_PER_DB)
+        await app.wait_for_fade()
+        self.assertEqual(self.console.commanded_level, dm7.MINUS_INF)
+        self.assertTrue(all(level <= reached for level in self.console_sender.levels()[packets:]))
+
+    async def test_a_handoff_mid_nudge_cancels_it(self):
+        app = self.build()
+        await self.open_it(app)
+        with mock.patch.object(dm7, "NUDGE_SECONDS", 1.0):
+            await app.nudge_down()
+            await asyncio.sleep(UNDER_WAY)
+            await app.handoff()
+            snap = app.snapshot()
+            self.assertIsNone(snap["fader"]["move"])
+            self.assertFalse(snap["fader"]["level_known"])
+            packets = self.sent()
+            await asyncio.sleep(UNDER_WAY)
+        self.assertEqual(self.sent(), packets)
+
+    async def test_the_commanded_entry_says_which_way_and_from_where(self):
+        app = self.build()
+        await self.open_it(app)
+        await self.nudge(app, "down")
+        (entry,) = self.nudges()
+        data = entry.data
+        self.assertEqual(data["detail"], "nudge-down")
+        self.assertEqual(data["source"], "operator")
+        self.assertEqual(data["state"], "open")
+        self.assertEqual(data["level"], 0)
+        self.assertEqual(data["target"], -100)
+        self.assertEqual(data["target_db"], -1.0)
+        self.assertEqual(data["direction"], "down")
+        self.assertEqual(data["step_db"], 1.0)
+        self.assertEqual(data["from_level"], 0)
+        self.assertEqual(data["from_db"], 0.0)
+        self.assertIsNone(data["delivered"])
+        landed = [e for e in self.entries() if e.event == tacet_app.MOVE_LANDED][-1]
+        self.assertEqual(landed.data["level"], -100)
+        self.assertEqual(landed.data["target"], -100)
+        await self.nudge(app, "up")
+        self.assertEqual(self.nudges()[-1].data["detail"], "nudge-up")
+        self.assertEqual(self.nudges()[-1].data["direction"], "up")
+
+    async def test_every_entry_a_nudge_tap_produces_carries_the_tap_timing(self):
+        app = self.build()
+        await self.open_it(app)
+        tap = late(0.1)
+        await app.nudge_down(tap=tap)
+        await app.wait_for_fade()
+        for entry in self.entries()[-2:]:
+            self.assertIn(taps.TAP_FIELD, entry.data)
+
+    async def test_a_late_tap_is_refused_logged_and_sends_nothing(self):
+        app = self.build()
+        await self.open_it(app)
+        packets = self.sent()
+        for direction in ("down", "up"):
+            await getattr(app, f"nudge_{direction}")(tap=late(taps.DEFAULT_STALE_TAP_SECONDS + 1.0))
+            stale = [e for e in self.entries() if e.event == tacet_app.STALE_TAP]
+            self.assertEqual(stale[-1].data["command"], f"nudge_{direction}")
+            self.assertIsNotNone(app.snapshot()["stale_tap"])
+        self.assertEqual(self.sent(), packets)
+        self.assertEqual(self.nudges(), [])
+
+    async def test_a_refused_nudge_logs_nothing(self):
+        app = self.build()
+        await app.arm()
+        before = self.keys()
+        await app.nudge_down()
+        self.assertEqual(self.keys(), before)
+
+    async def test_a_failed_nudge_stalls_the_machine_but_not_the_belief_and_a_healed_one_clears_it(self):
+        sender = FlakySender()
+        app = self.build(console_sender=sender, steady=True)
+        await self.open_it(app)
+        sender.fail_after = len(sender.packets) + 2
+        await app.nudge_down()
+        await app.wait_for_fade()
+        self.assertIn(tacet_app.MOVE_FAILED, self.keys())
+        self.assertTrue(app.machine.level_known)
+        self.assertTrue(app.machine.stalled)
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        partway = self.console.commanded_level
+        self.assertLess(partway, 0)
+        sender.heal()
+        outcome = await app.nudge_down()
+        await app.wait_for_fade()
+        self.assertIsNone(outcome.refusal)
+        self.assertFalse(app.machine.stalled)
+        self.assertEqual(self.console.commanded_level, partway - dm7.NUDGE_STEP)
+
+    async def test_the_move_the_page_animates_is_a_nudge(self):
+        app = self.build()
+        await self.open_it(app)
+        await app.nudge_down()
+        move = app.snapshot()["fader"]["move"]
+        self.assertEqual(move["kind"], "nudge")
+        self.assertEqual(move["by"], "nudge-down")
+        self.assertIsNone(move["knee"])
+        self.assertEqual(move["seconds"], 0.1)
+        self.assertEqual(move["seconds"], dm7.NUDGE_SECONDS)
+        self.assertEqual(move["from_db"], 0.0)
+        self.assertEqual(move["to_db"], -1.0)
+        await app.wait_for_fade()
+        self.assertIsNone(app.snapshot()["fader"]["move"])
+
+    async def test_stopping_mid_nudge_abandons_it_like_a_ride(self):
+        app = self.build()
+        await self.open_it(app)
+        with mock.patch.object(dm7, "NUDGE_SECONDS", 1.0):
+            await app.nudge_down()
+            await asyncio.sleep(UNDER_WAY)
+            self.assertIsNone(app.begin_stop())
+            result = await app.finish_stop(abandon=asyncio.Event())
+        self.assertEqual(result.abandoned, tacet_app.AbandonedBecause.RIDE)
+        self.assertEqual(result.kind, moves.MoveKind.NUDGE)
+        abandoned = [e for e in self.entries() if e.event == tacet_app.MOVE_ABANDONED]
+        self.assertEqual(abandoned[-1].data["because"], "ride")
+        self.assertEqual(abandoned[-1].data["kind"], "nudge")
+
+    async def test_tapping_the_current_target_while_nudged_still_changes_nothing(self):
+        # To undo a nudge the operator taps Up 1 dB; MORE says what it always did.
+        app = self.build()
+        await self.open_it(app)
+        await self.nudge(app, "down")
+        packets = self.sent()
+        await app.set_target(0.0)
+        self.assertEqual(self.sent(), packets)
+        snap = app.snapshot()
+        self.assertEqual(snap["target"]["stored"], {"db": 0.0, "because": "unchanged"})
+        self.assertIsNone(snap["refusal"])
+        self.assertEqual(self.console.commanded_level, -100)
 
 
 class TestATargetTapThatOnlyStoresSaysSo(AppTestCase):
