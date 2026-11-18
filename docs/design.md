@@ -362,10 +362,11 @@ What the flag gates is absolute against relative:
   belief it briefly held, immediately followed by `move-failed`: read that
   pair together, since the `took-back` alone did not survive its own packet.
 - A **relative** command ramps from the believed level: the 2 s fade, READY's
-  ride to the hold level, the slow open, and the retarget ride (#128). Each is
+  ride to the hold level, the slow open, the retarget ride (#128) and the
+  one dB nudge (#242). Each is
   refused while the level is unknown, with the reason on the page. Refused, not queued - a tap held back
   and run later runs on a belief nobody has looked at since. The page also
-  greys the three column buttons that make these moves, in place, so the refusal
+  greys the buttons that make these moves, in place, so the refusal
   is rarely reached.
 - `ARM` is refused too. It sends nothing and calls the fader closed, which only
   a known level makes true.
@@ -430,6 +431,18 @@ Minimum during-game requirements:
 - A fade or ride is described once and animated on the page; its in-flight
   state ends only on the box's word, never on the page's own timer (#154)
 - **Open** and **fade out** buttons
+- **Up 1 dB** and **Down 1 dB** (#242), in the fader column's slot above Faded
+  out: a trim of an open fader, for a band PA that begins to ring. Up on the
+  left, Down on the right, neutral in colour, with arrows so direction is never
+  colour alone. They sit where the slot #202 left empty; #202's note that the
+  slot was not room for a new button is reversed, because this is the one
+  control that has to be always on screen and always one tap away. Each moves a
+  dB in five 0.2 dB steps over 0.1 s, untapered. Never below 6 dB under the
+  standing target and never to -inf (a nudge is not a close), never above
+  `fader.max_target_db`, refused with a reason while another move is in flight,
+  and a second tap mid-nudge carries on from where the first was heading. A
+  trim is not a new target: the next open after a close returns to the target,
+  and the page says how far off it is, `-2 dB from target; next open: 0 dB`
 - A target tap rides the fader to the new level while it is up (#128), and says
   so where the operator tapped, under the Target level segments, when it only
   stored. The box owns the note and clears it on the next tap, fader move or
@@ -857,7 +870,11 @@ IDLE ──(operator: band likely)──> READY ──(any trigger)──> OPEN
   covers the level-unknown case), because the fader is up and the box cannot be
   sure the band has not quietly started.
 - **OPEN** — DCA at 0 dB. Held by tonality and envelope consensus, reinforced by
-  on-grid whistle. **Must hold through the PAT diminuendo.**
+  on-grid whistle. **Must hold through the PAT diminuendo.** The operator may
+  trim it a dB at a time (#242, §5.5): that moves the fader within OPEN and
+  changes nothing about the state, so a trigger is still only a confirmation and
+  the fader stays where it was trimmed to. Only the next open after a close
+  returns it to the target.
 - **RELEASING** — 2 s fade. Any qualifying trigger snaps straight back to OPEN.
   This is what makes the reactive close survivable: the machine cannot see arms
   come down and will always trail the operator, and the fade absorbs that.
@@ -1351,6 +1368,10 @@ Game 3:
   and no fade was sent (§5.3).
 - *Why the operator got ready:* the game instants `touchdown`, `field-goal`,
   `safety`, `first-down` and `defensive-stop`.
+- *Trims while open:* `commanded` entries with `command` `nudge`, `detail`
+  `nudge-down` or `nudge-up`, `direction`, `step_db` and `from_level`, with
+  `state` `"open"`. `level` is where the fader was when tapped and `target`
+  where the nudge ends (#242).
 - *How it ended:* `up-whistle`, `up-drums` or `up-slow` for a commit,
   `out` for an abandon (`score-reversed` in logs from before #202).
 - *Duty and where the band was:* `armed`, `stood-down`, `band-enters-stands`,
