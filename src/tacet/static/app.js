@@ -949,6 +949,41 @@ function consoleChip(c) {
   return null;
 }
 
+// #234: the laptop's network adapters, by role. Plain constants: the runbook tests
+// read them out of this file and look for them in the docs.
+const INTERFACES_OK = "Network adapters:";
+const INTERFACES_BAD = "Network adapter down:";
+const INTERFACES_UNCHECKED = "Network adapters not checked";
+const INTERFACES_UNCONFIGURED = "no [interfaces] in tacet.toml";
+const INTERFACES_COULD_NOT = "Could not check the network adapters";
+const INTERFACE_MISSING = "missing";
+const INTERFACE_LINK_DOWN = "no link";
+const INTERFACE_NO_ADDRESS = "no IPv4 address";
+const INTERFACE_NO_VLAN = "no VLAN interface";
+
+// What the laptop's adapters look like against the roles the config names
+// (#234), or null for a box from before it, which sends no `interfaces`. The box
+// sends facts; the sentences are built here. The latched banners say what to do.
+function interfacesChip(i) {
+  if (!i) return null;
+  if (i.status === "not-configured") {
+    return ["note", INTERFACES_UNCHECKED + ": " + INTERFACES_UNCONFIGURED + "."];
+  }
+  if (i.status === "not-checked") return ["note", INTERFACES_UNCHECKED + " yet."];
+  if (i.status === "could-not-check") return ["note", INTERFACES_COULD_NOT + ": " + i.detail + "."];
+  const words = {
+    "missing": INTERFACE_MISSING,
+    "link-down": INTERFACE_LINK_DOWN,
+    "no-address": INTERFACE_NO_ADDRESS,
+    "no-vlan": INTERFACE_NO_VLAN,
+  };
+  const bad = i.roles.filter((r) => r.status !== "present");
+  if (bad.length) {
+    return ["fault", INTERFACES_BAD + " " + bad.map((r) => r.role + " " + (words[r.status] || r.status)).join(", ") + "."];
+  }
+  return ["ok", INTERFACES_OK + " " + i.roles.map((r) => r.role + " " + r.name).join(", ")];
+}
+
 // #204: where Reaper will record, from the mirror's report. Plain constants:
 // the runbook tests read them out of this file and look for them in the docs.
 const PROJECT_SAVED = "Recording to";
@@ -1138,6 +1173,10 @@ function render(received) {
   const reachChip = consoleChip(next.console);
   $("console-reach").className = reachChip ? reachChip[0] : "";
   setText($("console-reach"), reachChip ? reachChip[1] : "");
+  // #234: guarded the same way, and in the strip in every state.
+  const adapters = interfacesChip(next.interfaces);
+  $("interfaces").className = adapters ? adapters[0] : "";
+  setText($("interfaces"), adapters ? adapters[1] : "");
   // #204: guarded the same way. In the strip, present in every state.
   const projectNote = projectChip(next.reaper_project);
   $("reaper-project").className = projectNote ? projectNote[0] : "";
@@ -1489,7 +1528,7 @@ for (const [id, path] of [["btn-nudge-up", "/api/nudge-up"], ["btn-nudge-down", 
 // than a class: the functional colour classes above (loud, failed, fault...)
 // are overwritten wholesale on every render, and a class toggled here would be
 // wiped the next time one of those runs.
-for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach", "reaper-project", "reaper-tracks"]) {
+for (const id of ["link", "refusal", "tap", "saving", "provenance", "console-reach", "interfaces", "reaper-project", "reaper-tracks"]) {
   $(id).onclick = () => {
     const node = $(id);
     node.dataset.expanded = node.dataset.expanded ? "" : "1";

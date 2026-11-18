@@ -6,9 +6,13 @@
 # site values and stay out of the repo; docs/gameday.md is where they are
 # written down. This file is the shape, not the values.
 #
-# Everything here is optional, and every key has a flag that overrides it:
+# Everything here is optional. Every key but [interfaces] has a flag that
+# overrides it:
 #
 #     built-in default  <  this file  <  the flag on the command line
+#
+# [interfaces] has no flags: a MAC address is a site fact, not something to
+# retype on the day.
 #
 # Found in this order, and the tool prints which one it used:
 #
@@ -111,6 +115,34 @@ default_target_db = 0.0     # --default-target
 # empty. Anything the operator taps is one of the presets, never an
 # arbitrary value.
 max_target_db = 0.0         # --max-target
+
+# The box's own network adapters, by role (#234). Optional: leave the section
+# out and the box checks nothing, and the banner and the page say so. There is
+# no flag for these.
+#
+# A role is a MAC address. These are documentation placeholders (RFC 7042):
+# replace each with the real one from
+#
+#     networksetup -listallhardwareports
+#
+# (the "Ethernet Address" under the adapter's Hardware Port). A copied example
+# reads MISSING on the day, which is the point: the box says so rather than
+# checking nothing. Names such as en7 are never used, since macOS renumbers a
+# USB adapter when it is replugged; the MAC does not change.
+#
+# A role that rides a VLAN is a table, { mac = "...", vlan = N }: the VLAN
+# interface with that tag on the adapter with that MAC, whatever macOS calls it
+# (vlan0). A VLAN interface shares its parent's MAC, so the same MAC may be
+# named twice only with different tags. The 20 below is a placeholder too:
+# use the tag the scoreboard VLAN really has.
+[interfaces]
+# Dante: present with a link is enough. No address is needed.
+dante = "00:00:5e:00:53:02"
+# The control VLAN's adapter: a link and a real IPv4 address (a 169.254 address
+# does not count).
+control = "00:00:5e:00:53:01"
+# The scoreboard's RTD stream arrives on the control adapter, on another VLAN.
+scoring = { mac = "00:00:5e:00:53:01", vlan = 20 }
 
 # The operator page.
 [ui]

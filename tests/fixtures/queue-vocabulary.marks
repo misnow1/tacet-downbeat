@@ -1,5 +1,6 @@
 marker	SYS|box-started
 marker	SYS|console-checked
+marker	SYS|interfaces-checked
 marker	SYS|fault-raised
 marker	SYS|fault-cleared
 marker	SYS|recording-started

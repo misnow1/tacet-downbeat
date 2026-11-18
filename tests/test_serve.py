@@ -18,6 +18,7 @@ from tacet import (
     disk,
     dm7,
     faults,
+    interfaces,
     mirror_report,
     moves,
     provenance,
@@ -55,6 +56,32 @@ def console_check(kind=reach.Reach.ANSWERED, *, detail=None, rtt_ms=1.234):
 
 
 ANSWERED_CHECK = console_check()
+FIXTURES = Path(__file__).parent / "fixtures"
+#: The laptop's adapters, as a fixture with documentation MACs (#234). Never the real table.
+LISTING = interfaces.parse_ifconfig((FIXTURES / "ifconfig-macos.txt").read_text(encoding="utf-8"))
+DANTE_MAC = "00:00:5e:00:53:02"
+CONTROL_MAC = "00:00:5e:00:53:01"
+ALL_THREE = {
+    interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC),
+    interfaces.Role.CONTROL: interfaces.Expected(CONTROL_MAC),
+    interfaces.Role.SCORING: interfaces.Expected(CONTROL_MAC, 20),
+}
+CONFIG_ALL_THREE = f"""
+[interfaces]
+dante = "{DANTE_MAC}"
+control = "{CONTROL_MAC}"
+scoring = {{ mac = "{CONTROL_MAC}", vlan = 20 }}
+"""
+
+
+def interface_reading(adapters, *, detail=None):
+    return interfaces.Reading(interfaces.Trigger.STARTUP, 1.0, adapters, detail=detail)
+
+
+def listing_without(*names):
+    return tuple(a for a in LISTING if a.name not in names)
+
+
 #: What the Reaper script check found. Never the real one: no test here reads
 #: the real REAPER folder or stdin (#223).
 SCRIPT_SUM = "0badf00d"
@@ -252,6 +279,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.sender = ClosableFakeSender()
+        self.adapter_roles = {}
         self.addCleanup(signal.signal, signal.SIGTERM, signal.SIG_DFL)
         self.addCleanup(signal.signal, signal.SIGINT, signal.default_int_handler)
         # The terminal lines, for the whole run.
@@ -268,9 +296,12 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
             http_port=0,
             reaper_feedback_port=0,
             queue=self.queue,
+            **{dest: self.adapter_roles.get(role) for role, dest in serve.INTERFACE_DESTS.items()},
         )
 
     queue = None
+    #: The adapter roles the config names (#234); none unless a test says.
+    adapter_roles: dict[Any, Any]
 
     def build_app(self, *, fade, slow_open=5.0):
         log = annotations.AnnotationLog(self.root / "game.jsonl").open()
@@ -378,6 +409,55 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, 5)
         self.assertFalse(started.is_set())
         self.assertEqual(app.snapshot()["reaper_project"]["reason"], "no-report")
+
+    async def run_and_stop(self, **kwargs):
+        built = []
+
+        class Watch:
+            def __init__(self, tools, **options):
+                built.append((tools, options))
+
+            async def run(self):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        app, log = self.build_app(fade=0.1)
+        with (
+            mock.patch("tacet.serve.interfaces.Watch", Watch),
+            mock.patch("tacet.serve.build", return_value=(app, log, None)),
+        ):
+            task = asyncio.ensure_future(serve._run(self.args(), CLEAN_CODE, tools=self.NO_TOOLS, **kwargs))
+            for _ in range(500):
+                if signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL:
+                    break
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, 5)
+        return app, built, started, cancelled
+
+    async def test_no_interfaces_no_watch(self):
+        self.adapter_roles = {}
+        _, built, started, _ = await self.run_and_stop()
+        self.assertEqual(built, [])
+        self.assertFalse(started.is_set())
+
+    async def test_configured_starts_a_watch_that_waits_on_the_fader_and_reports_to_the_app(self):
+        self.adapter_roles = ALL_THREE
+        tools = interfaces.Tools(None, None, None)
+        app, built, started, cancelled = await self.run_and_stop(interface_tools=tools)
+        ((given, options),) = built
+        self.assertIs(given, tools)
+        self.assertEqual(options["on_result"], app.interfaces_checked)
+        self.assertFalse(options["busy"]())
+        self.assertTrue(started.is_set())
+        # Cancelled at stop, so no read outlives the box.
+        self.assertTrue(cancelled.is_set())
 
 
 class TestADeadReportWatchIsReported(unittest.IsolatedAsyncioTestCase):
@@ -952,6 +1032,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
         self.found = ANSWERED_CHECK
         self.pinged = mock.Mock(side_effect=lambda host, tools: self.found)
         self.script = mock.Mock(return_value=SCRIPT_CURRENT)
+        #: Never the real ifconfig (#234). What the startup read of the adapters finds.
+        self.adapters = mock.Mock(side_effect=lambda tools, **kwargs: interface_reading(LISTING))
 
     def start(self, argv, *, config=True):
         """(exit code, stdout, stderr) for `serve.main`, which never binds:
@@ -972,6 +1054,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
             mock.patch("tacet.serve.reach.probe", self.pinged),
             # Never the real REAPER folder or stdin (#223).
             mock.patch("tacet.serve.script_check.startup", self.script),
+            # Never the real adapter table (#234).
+            mock.patch("tacet.serve.interfaces.startup_reading", self.adapters),
         ):
             code: int | str | None
             try:
@@ -1606,3 +1690,253 @@ class TestFaultLine(unittest.TestCase):
     def test_a_clear_that_is_fixed_does_not(self):
         line = serve.fault_line(faults.Change.CLEARED, self.fault(), wall=self.WALL, still_present=False)
         self.assertEqual(line, "fault cleared from the page: take-stopped, at 19:36:14")
+
+
+def interface_banner(expected, reading, check=None):
+    args = serve.parser().parse_args(FULL)
+    for role, dest in serve.INTERFACE_DESTS.items():
+        setattr(args, dest, expected.get(role))
+    return serve.startup_lines(args, None, console_check=check, interface_reading=reading)
+
+
+LISTING_CABLE_OUT = tuple(
+    interfaces.Adapter("en8", DANTE_MAC, True, False, ()) if a.name == "en8" else a for a in LISTING
+)
+
+
+def rows(lines):
+    """The `interfaces` row and the notes that hang under it."""
+    start = next(i for i, line in enumerate(lines) if line.startswith("  interfaces"))
+    out = [lines[start]]
+    for line in lines[start + 1 :]:
+        if not line.startswith("  " + " " * serve.BANNER_LABEL_WIDTH):
+            break
+        out.append(line)
+    return out
+
+
+class TestStartupBannerSaysWhatTheAdaptersLookLike(unittest.TestCase):
+    """#234: what the laptop's own adapter table says, role by role."""
+
+    def test_not_configured_says_nothing_will_be_noticed(self):
+        lines = interface_banner({}, None)
+        self.assertIn(f"  interfaces  {serve.INTERFACES_NOT_CONFIGURED}", lines)
+        self.assertIn(f"              {serve.INTERFACES_NOT_CONFIGURED_NOTE}", lines)
+        self.assertNotIn("WARNING     " + serve.INTERFACE_WARNING, "\n".join(lines))
+
+    def test_the_row_comes_right_after_the_console_and_ping_rows(self):
+        lines = interface_banner(ALL_THREE, interface_reading(LISTING), check=console_check())
+        row = next(i for i, line in enumerate(lines) if line.startswith("  interfaces"))
+        # The ping row and its two notes, then this.
+        self.assertTrue(lines[row - 3].startswith("  ping"))
+        self.assertTrue(lines[row - 1].startswith("              "))
+        self.assertTrue(lines[row + 3].startswith("  fade"))
+
+    def test_all_present_shows_each_role_with_its_name_and_address(self):
+        got = rows(interface_banner(ALL_THREE, interface_reading(LISTING)))
+        pad = " " * serve.BANNER_LABEL_WIDTH
+        self.assertEqual(
+            got,
+            [
+                f"  interfaces  dante    {DANTE_MAC}  en8    169.254.33.7",
+                f"  {pad}control  {CONTROL_MAC}  en7    198.51.100.123",
+                f"  {pad}scoring  {CONTROL_MAC} vlan 20  vlan0  203.0.113.50",
+            ],
+        )
+
+    def test_all_present_is_not_a_warning(self):
+        self.assertNotIn(serve.INTERFACE_WARNING, "\n".join(interface_banner(ALL_THREE, interface_reading(LISTING))))
+
+    def test_a_missing_role_says_so_and_warns(self):
+        lines = interface_banner(ALL_THREE, interface_reading(listing_without("en8")))
+        text = "\n".join(lines)
+        self.assertIn(f"dante    {DANTE_MAC}  -      MISSING", text)
+        self.assertIn(f"  WARNING     {serve.INTERFACE_WARNING}", lines)
+        self.assertIn(f"dante: MISSING ({DANTE_MAC})", text)
+        self.assertIn(serve.INTERFACE_WARNING_NOTE, text)
+
+    def test_a_cable_out_says_no_link_and_warns(self):
+        text = "\n".join(interface_banner(ALL_THREE, interface_reading(LISTING_CABLE_OUT)))
+        self.assertIn(f"dante    {DANTE_MAC}  en8    no link", text)
+        self.assertIn(serve.INTERFACE_WARNING, text)
+
+    def test_a_missing_vlan_interface_says_which_adapter_has_none(self):
+        text = "\n".join(interface_banner(ALL_THREE, interface_reading(listing_without("vlan0"))))
+        self.assertIn(f"scoring  {CONTROL_MAC} vlan 20  -", text)
+        self.assertIn("no VLAN interface on en7", text)
+        self.assertIn(serve.INTERFACE_WARNING, text)
+
+    def test_dante_with_no_address_at_all_says_it_does_not_need_one(self):
+        bare = tuple(interfaces.Adapter("en8", DANTE_MAC, True, True, ()) if a.name == "en8" else a for a in LISTING)
+        text = "\n".join(interface_banner(ALL_THREE, interface_reading(bare)))
+        self.assertIn(interfaces.NO_IPV4_DANTE, text)
+        self.assertNotIn(serve.INTERFACE_WARNING, text)
+
+    def test_a_role_not_set_says_it_is_not_checked(self):
+        got = rows(
+            interface_banner({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)}, interface_reading(LISTING))
+        )
+        self.assertTrue(any(f"control  {serve.INTERFACE_ROLE_NOT_SET}" in line for line in got))
+        self.assertTrue(any(f"scoring  {serve.INTERFACE_ROLE_NOT_SET}" in line for line in got))
+
+    def test_could_not_check_says_why_and_is_not_a_warning(self):
+        lines = interface_banner(ALL_THREE, interface_reading(None, detail="ifconfig failed (exit 1): nope"))
+        text = "\n".join(lines)
+        self.assertIn("could not check: ifconfig failed (exit 1): nope", text)
+        self.assertNotIn(serve.INTERFACE_WARNING, text)
+
+    def test_every_line_is_ascii_and_fits(self):
+        for reading in (
+            interface_reading(LISTING),
+            interface_reading(listing_without("en8", "en7", "vlan0")),
+            interface_reading(None, detail="x"),
+        ):
+            for line in interface_banner(ALL_THREE, reading):
+                line.encode("ascii")
+
+
+class TestTheAdaptersAtStartup(TestCheckAnswersWithoutStarting):
+    """#234: one read of the laptop's adapters, only when the config names some."""
+
+    def configure(self, text):
+        self.config.write_text(text, encoding="utf-8")
+
+    def test_nothing_is_read_without_an_interfaces_section(self):
+        _, out, _ = self.start(self.good())
+        self.adapters.assert_not_called()
+        self.assertIn(serve.INTERFACES_NOT_CONFIGURED, out)
+
+    def test_an_empty_section_reads_nothing_either(self):
+        self.configure("[interfaces]\n")
+        self.start(self.good())
+        self.adapters.assert_not_called()
+
+    def test_a_configured_start_reads_once_and_prints_the_rows(self):
+        self.configure(CONFIG_ALL_THREE)
+        _, out, _ = self.start(self.good())
+        self.assertEqual(self.adapters.call_count, 1)
+        self.assertIn(f"  interfaces  dante    {DANTE_MAC}  en8", out)
+        self.assertNotIn(serve.INTERFACE_WARNING, out)
+
+    def test_the_read_is_never_made_on_the_event_loop(self):
+        seen = []
+
+        def read(tools, **kwargs):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                seen.append("no loop")
+            else:
+                seen.append("on the loop")
+            return interface_reading(LISTING)
+
+        self.adapters = mock.Mock(side_effect=read)
+        self.configure(CONFIG_ALL_THREE)
+        self.start(self.good())
+        self.assertEqual(seen, ["no loop"])
+
+    def test_a_refused_start_never_reads(self):
+        self.configure(CONFIG_ALL_THREE)
+        code, _, _ = self.start([*self.CONSOLE])  # no --log
+        self.assertEqual(code, 2)
+        self.adapters.assert_not_called()
+
+    def test_check_reads_prints_the_rows_and_warns_but_exits_zero(self):
+        self.configure(CONFIG_ALL_THREE)
+        self.adapters = mock.Mock(side_effect=lambda tools, **kwargs: interface_reading(listing_without("en8")))
+        _, started, _ = self.start(self.good())
+        code, checked, stderr = self.start([*self.good(), "--check"])
+        self.assertEqual(code, 0)
+        self.assertEqual(checked, started)
+        self.assertIn("MISSING", checked)
+        self.assertIn(serve.INTERFACE_WARNING, checked)
+        self.assertEqual(stderr, "")
+        self.assertFalse(self.ran)
+
+    def test_the_coroutine_is_given_the_reading_and_the_tools(self):
+        async def nothing():
+            pass
+
+        coroutine = nothing()
+        self.addCleanup(coroutine.close)
+        self.configure(CONFIG_ALL_THREE)
+        with mock.patch("tacet.serve._run", return_value=coroutine) as run:
+            self.start(self.good())
+        self.assertIsNotNone(run.call_args.kwargs["interface_reading"].adapters)
+        self.assertIsInstance(run.call_args.kwargs["interface_tools"], interfaces.Tools)
+
+    def test_a_bad_mac_in_the_config_stops_the_box_in_words(self):
+        self.configure('[interfaces]\ndante = "nope"\n')
+        code, _, stderr = self.start(self.good())
+        self.assertEqual(code, 2)
+        self.assertIn("interfaces.dante must be a MAC address", stderr)
+        self.adapters.assert_not_called()
+
+
+class TestBuildLatchesAMissingAdapterBeforeTheBoxIsServed(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.log = Path(self._tmp.name) / "game.jsonl"
+        self.args = serve.parser().parse_args(["--console-host", "192.0.2.1", "--dca", "3", "--log", str(self.log)])
+        for role, dest in serve.INTERFACE_DESTS.items():
+            setattr(self.args, dest, ALL_THREE.get(role))
+
+    def build(self, reading):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            app, log, _ = serve.build(self.args, CLEAN_CODE, interface_reading=reading)
+        self.addCleanup(log.close)
+        self.opened = log
+        return app, out.getvalue()
+
+    def test_a_missing_adapter_is_latched_logged_and_printed(self):
+        app, out = self.build(interface_reading(listing_without("en8")))
+        (fault,) = app.snapshot()["faults"]
+        self.assertEqual(fault["kind"], "interface-dante")
+        self.assertIn("FAULT at ", out)
+        self.assertIn("Network adapter missing", out)
+        self.assertEqual(app.snapshot()["interfaces"]["status"], "checked")
+
+    def test_the_entries_come_in_order(self):
+        self.build(interface_reading(listing_without("en8")))
+        self.opened.flush()
+        events = [e.event for e in annotations.read_entries(self.log)]
+        self.assertEqual(events, [annotations.BOX_STARTED, annotations.INTERFACES_CHECKED, annotations.FAULT_RAISED])
+
+    def test_all_present_prints_no_fault_and_logs_the_check(self):
+        app, out = self.build(interface_reading(LISTING))
+        self.assertEqual(app.snapshot()["faults"], [])
+        self.assertNotIn("FAULT", out)
+        self.assertEqual(app.snapshot()["interfaces"]["status"], "checked")
+
+    def test_no_reading_leaves_the_status_not_checked(self):
+        app, _ = self.build(None)
+        self.assertEqual(app.snapshot()["interfaces"]["status"], "not-checked")
+
+
+class TestADeadAdapterWatchIsSaidOutLoud(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        log_path = Path(self._tmp.name) / "game.jsonl"
+        args = serve.parser().parse_args(["--console-host", CONSOLE, "--dca", "3", "--log", str(log_path)])
+        for role, dest in serve.INTERFACE_DESTS.items():
+            setattr(args, dest, ALL_THREE.get(role))
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.app, self.log, _ = serve.build(args, CLEAN_CODE, interface_reading=interface_reading(LISTING))
+        self.addCleanup(self.log.close)
+
+    async def test_a_task_that_died_reports_could_not_check_with_the_reason(self):
+        died = asyncio.get_running_loop().create_future()
+        died.set_exception(RuntimeError("boom"))
+        serve._interface_watch_stopped(self.app, died)
+        block = self.app.snapshot()["interfaces"]
+        self.assertEqual(block["status"], "could-not-check")
+        self.assertEqual(block["detail"], interfaces.WATCH_STOPPED.format(error="RuntimeError: boom"))
+
+    async def test_a_cancelled_task_changes_nothing(self):
+        cancelled = asyncio.get_running_loop().create_future()
+        cancelled.cancel()
+        serve._interface_watch_stopped(self.app, cancelled)
+        self.assertEqual(self.app.snapshot()["interfaces"]["status"], "checked")

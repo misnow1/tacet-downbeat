@@ -22,7 +22,21 @@ import unittest
 from pathlib import Path
 from types import ModuleType
 
-from tacet import annotations, app, arming, config, disk, provenance, reach, reaper, script_check, serve, state, web
+from tacet import (
+    annotations,
+    app,
+    arming,
+    config,
+    disk,
+    interfaces,
+    provenance,
+    reach,
+    reaper,
+    script_check,
+    serve,
+    state,
+    web,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MIRROR_SCRIPT = REPO_ROOT / "reaper" / "tacet_mirror.lua"
@@ -109,10 +123,10 @@ JOINERS = " ,:("
 
 #: Every top-level string constant in the page's script.
 PAGE_STRING_CONSTANT = re.compile(r'^const ([A-Z][A-Z0-9_]*) = "', re.MULTILINE)
-#: Families with tests of their own that read every member (#204, #167).
-PAGE_FAMILIES = ("PROJECT_", "TRACKS_")
+#: Families with tests of their own that read every member (#204, #167, #234).
+PAGE_FAMILIES = ("PROJECT_", "TRACKS_", "INTERFACE")
 #: How many string constants the page names today; fewer means the scan broke.
-NAMES_FLOOR = 59
+NAMES_FLOOR = 69
 
 
 def fixed_words(message: str) -> str:
@@ -197,6 +211,18 @@ BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (serve, "FAULT_RAISED", (TROUBLESHOOTING,)),
     (serve, "FAULT_CLEARED", (TROUBLESHOOTING,)),
     (serve, "FAULT_STILL_PRESENT", (TROUBLESHOOTING,)),
+    # #234. The templates are quoted up to their first value, so the docs show
+    # each in full.
+    (interfaces, "FAULT_MISSING", (RUNBOOK, TROUBLESHOOTING)),
+    (interfaces, "FAULT_LINK_DOWN", (TROUBLESHOOTING,)),
+    (interfaces, "FAULT_NO_ADDRESS", (TROUBLESHOOTING,)),
+    (interfaces, "FAULT_NO_VLAN", (TROUBLESHOOTING,)),
+    (interfaces, "SHARED_CABLE", (RUNBOOK, TROUBLESHOOTING)),
+    (serve, "INTERFACES_NOT_CONFIGURED", (RUNBOOK, TROUBLESHOOTING, BOX)),
+    (serve, "INTERFACE_WARNING", (TROUBLESHOOTING, BOX)),
+    (serve, "INTERFACE_WARNING_NOTE", (TROUBLESHOOTING, BOX)),
+    (serve, "INTERFACES_NOT_CONFIGURED_NOTE", (BOX,)),
+    (serve, "INTERFACE_ROLE_NOT_SET", (TROUBLESHOOTING, BOX)),
 )
 
 #: String constants in app.js that the runbook does not quote, and why not.
@@ -274,6 +300,59 @@ class QuotedMessagesExist(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, names)
                 self.assertNotIn(name, quoted)
+
+    def test_every_interface_word_the_page_names_is_in_troubleshooting_and_gameday_quotes_the_chip(self) -> None:
+        # #234: every INTERFACE(S)_ constant in the page's script.
+        names = re.findall(r"^const (INTERFACES?_[A-Z_]+) = ", self.script, flags=re.MULTILINE)
+        self.assertEqual(len(names), 9)
+        for name in names:
+            with self.subTest(name):
+                self.assertIn(page_constant(self.script, name), self.docs[TROUBLESHOOTING])
+        for name in ("INTERFACES_OK", "INTERFACES_BAD", "INTERFACES_UNCHECKED"):
+            with self.subTest(name):
+                self.assertIn(page_constant(self.script, name), self.docs[RUNBOOK])
+        for name in ("INTERFACES_OK", "INTERFACES_BAD", "INTERFACES_UNCHECKED", "INTERFACES_COULD_NOT"):
+            with self.subTest(name):
+                self.assertIn(page_constant(self.script, name), self.docs[BOX])
+
+    def test_the_banner_row_and_the_page_use_the_same_unconfigured_words(self) -> None:
+        # The chip and the banner both say it is the section that is missing.
+        self.assertIn(page_constant(self.script, "INTERFACES_UNCONFIGURED"), serve.INTERFACES_NOT_CONFIGURED)
+
+    def test_the_runbook_quotes_every_adapter_advice_sentence(self) -> None:
+        for role, advice in interfaces.ADVICE.items():
+            with self.subTest(role=role):
+                self.assertIn(advice, self.docs[TROUBLESHOOTING])
+
+    def test_the_banner_words_for_a_bad_role_are_in_box_md_and_troubleshooting(self) -> None:
+        for status, word in interfaces.STATUS_WORDS.items():
+            words = word.split("{")[0].strip()
+            for doc in (BOX, TROUBLESHOOTING):
+                with self.subTest(status=status, doc=doc.name):
+                    self.assertIn(words, self.docs[doc])
+
+    def test_the_runbook_quotes_the_adapter_config_refusals(self) -> None:
+        for refusal in (
+            "interfaces.dante must be a MAC address like 00:1c:42:0a:0b:0c",
+            "interfaces.scoring vlan must be a whole number from 1 to 4094",
+            "Known keys: mac, vlan",
+            "Leave one out if one adapter serves both",
+        ):
+            with self.subTest(refusal=refusal):
+                self.assertIn(refusal, self.docs[TROUBLESHOOTING])
+        with self.assertRaises(config.ConfigError) as bad_mac:
+            config.values_from_mapping({"interfaces": {"dante": "nope"}})
+        self.assertIn("interfaces.dante must be a MAC address like 00:1c:42:0a:0b:0c", str(bad_mac.exception))
+        with self.assertRaises(config.ConfigError) as bad_tag:
+            config.values_from_mapping({"interfaces": {"scoring": {"mac": "00:00:5e:00:53:01", "vlan": 0}}})
+        self.assertIn("interfaces.scoring vlan must be a whole number from 1 to 4094", str(bad_tag.exception))
+        with self.assertRaises(config.ConfigError) as bad_key:
+            config.values_from_mapping({"interfaces": {"scoring": {"mac": "00:00:5e:00:53:01", "tag": 20}}})
+        self.assertIn("Known keys: mac, vlan", str(bad_key.exception))
+        both = {"mac": "00:00:5e:00:53:01", "vlan": 20}
+        with self.assertRaises(config.ConfigError) as duplicate:
+            config.values_from_mapping({"interfaces": {"control": both, "scoring": both}})
+        self.assertIn("Leave one out if one adapter serves both", str(duplicate.exception))
 
     def test_the_runbook_quotes_the_target_chip(self) -> None:
         word = page_constant(self.script, "TARGET_CHIP_WORD")

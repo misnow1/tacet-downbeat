@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, assert_never
 
 from . import annotations as ann
-from . import arming, dm7, faults, mirror_report, moves, prompts, reach, state, taps, targets
+from . import arming, dm7, faults, interfaces, mirror_report, moves, prompts, reach, state, taps, targets
 from . import provenance as prov
 from .net import TransportError
 from .reaper import (
@@ -334,6 +334,7 @@ class App:
         home: str | None = None,
         expected_script: str | None = None,
         channels: int | None = None,
+        interfaces_expected: Mapping[interfaces.Role, interfaces.Expected] | None = None,
     ) -> None:
         self._console = console
         #: The checksum of the checkout's copy of the mirror script (#223), read
@@ -360,6 +361,9 @@ class App:
         #: nothing more - `fader.confirmed` stays False whatever it says. None
         #: only in tests.
         self._console_check = console_check
+        #: What the laptop's network adapters look like against the roles the
+        #: config names (#234). Observed only; empty when none are configured.
+        self._interfaces = interfaces.Tracker(expected=dict(interfaces_expected or {}))
         #: What code this box is (#157). None only in tests that do not care;
         #: `serve.build` always passes one. Never probed here: git is asked once,
         #: by `serve.main`, before the loop exists.
@@ -438,7 +442,9 @@ class App:
         self._armed_listeners: list[Callable[[], None]] = []
         #: Faults the box has raised and the operator has not cleared (#233).
         #: Observation only: nothing in here sends a packet.
-        self._faults = faults.FaultLatch()
+        #: Seeded from the log, so an id is never reused across a restart onto
+        #: the same log: a page left open cannot clear a new fault with an old id.
+        self._faults = faults.FaultLatch(next_id=log.last_seq + 1)
         #: Told when a fault goes up or is cleared, with `still_present` on a
         #: clear: how the terminal hears of one without the latch knowing it.
         self._fault_listeners: list[Callable[[faults.Change, faults.Fault, bool | None], None]] = []
@@ -1432,6 +1438,13 @@ class App:
         match kind:
             case faults.FaultKind.TAKE_STOPPED:
                 return self._recorder is not None and take_stopped(self._recorder.state, self._monotonic())
+            case (
+                faults.FaultKind.INTERFACE_DANTE
+                | faults.FaultKind.INTERFACE_CONTROL
+                | faults.FaultKind.INTERFACE_SCORING
+            ):
+                role = interfaces.role_for(kind)
+                return role is not None and self._interfaces.bad(role)
             case _:
                 assert_never(kind)
 
@@ -1460,6 +1473,31 @@ class App:
             data = {**check.as_data(), "previous": None if before is None else str(before)}
             self._record(ann.CONSOLE_CHECKED, data=data)
         if changed:
+            self._notify()
+
+    def interfaces_checked(self, reading: interfaces.Reading) -> None:
+        """What a read of the laptop's network adapters found (#234). Never raises.
+
+        Logged at startup, and afterwards only when a role's adapter, address or
+        state changed, or the read stopped or started working: each entry
+        becomes a Reaper marker, and one every five seconds would be clutter.
+        A role that went from present (or never seen) to not present raises its
+        fault, once; the page is told only when what it shows changed. Observes
+        only: nothing is sent to the console or to Reaper.
+        """
+        if not self._interfaces.expected:
+            return
+        tracker, observed = self._interfaces.observe(reading)
+        self._interfaces = tracker
+        if reading.trigger is interfaces.Trigger.STARTUP or observed.changed:
+            self._record(ann.INTERFACES_CHECKED, data=tracker.as_data())
+        for found in observed.went_bad:
+            self._raise_fault(
+                interfaces.FAULT_KINDS[found.role],
+                interfaces.fault_message(found, shares_with=tracker.shares_with(found.role)),
+                data=found.as_data(),
+            )
+        if observed.changed or observed.went_bad:
             self._notify()
 
     def report_observed(self, observed: mirror_report.Observed) -> None:
@@ -1810,6 +1848,9 @@ class App:
             # at an IP, never the DM7, the port or a delivered packet:
             # `fader.confirmed` stays False regardless.
             "console": (self._console_check or reach.Check.not_checked("")).as_snapshot(),
+            # The laptop's own network adapters against the roles the config
+            # names (#234). What the box sees of itself; nothing about the far end.
+            "interfaces": self._interfaces.as_snapshot(),
             # Where Reaper's project lives, from the mirror's report (#204).
             # Assessed now, so a report that stopped ages out on the next tick.
             "reaper_project": self._project_check().as_snapshot(),

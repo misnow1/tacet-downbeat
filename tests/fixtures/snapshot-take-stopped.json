@@ -221,6 +221,12 @@
       "raised_at": 5123.666666666667
     }
   ],
+  "interfaces": {
+    "checked_at": null,
+    "detail": null,
+    "roles": [],
+    "status": "not-configured"
+  },
   "log": {
     "error": null,
     "failures": 0,

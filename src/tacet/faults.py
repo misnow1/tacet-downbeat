@@ -6,7 +6,14 @@ have looked away at the moment it happened. It is cleared only from the page,
 by id, so a page that has not seen a re-raise cannot clear the new one (the
 same idea as a prompt's `seq`, #19). Ids are never reused.
 
-Nothing here sends anything: a fault observes. #234 adds its own kinds.
+Ids are never reused within a run, and a run seeds them from the log's last
+sequence number (`FaultLatch(next_id=log.last_seq + 1)`), so they are not reused
+across a restart onto the same log either: every raise writes an entry, so a
+run's ids stay below the next run's seed. One gap remains: a page left open
+across a restart onto a *new* log could still hold an id that the new run has
+reissued.
+
+Nothing here sends anything: a fault observes.
 """
 
 from __future__ import annotations
@@ -20,6 +27,11 @@ class FaultKind(StrEnum):
     #: Reaper says it is recording but its playhead is frozen and its audio
     #: device is silent (#233).
     TAKE_STOPPED = "take-stopped"
+    #: One kind per network-adapter role (#234). The latch keys on kind, so each
+    #: role latches on its own.
+    INTERFACE_DANTE = "interface-dante"
+    INTERFACE_CONTROL = "interface-control"
+    INTERFACE_SCORING = "interface-scoring"
 
 
 class Change(StrEnum):

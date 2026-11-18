@@ -346,7 +346,7 @@ thumb meets, then the display, then the rows that Game 5 did not reach.
 | # | Issue | Why here |
 |---|---|---|
 | ~~1~~ | ~~[#233](https://github.com/misnow1/tacet-downbeat/issues/233) Tell a Reaper with no audio device from a lost link, and latch it on the page~~ | Done (#248), bench-checked on 2026-11-16. A Reaper that says it is recording, with its `/time` frozen and no meters, is TAKE STOPPED, latched on the page until the operator clears it. The line does not say ROLLING until the playhead is seen to move, and nothing is stamped with a frozen playhead. Reaper does not reopen a lost device by itself, so the banner gives the recovery step. The shared latch is `tacet/faults.py`, which #234 reuses |
-| 2 | [#234](https://github.com/misnow1/tacet-downbeat/issues/234) Name the box's network interfaces in `tacet.toml`, check them, and latch an error when one goes missing | The cause under #233. A dead adapter must show on the page, not only on the laptop's screen. Interfaces are named by role and MAC, because macOS renumbers USB adapters. It uses the same latch as #233 |
+| ~~2~~ | ~~[#234](https://github.com/misnow1/tacet-downbeat/issues/234) Name the box's network interfaces in `tacet.toml`, check them, and latch an error when one goes missing~~ | Done (#250), not yet bench-checked. The Dante, control and scoreboard adapters are named by (MAC, VLAN tag) in `[interfaces]`, read every 5 s, and a role that goes missing, loses its link or address, or loses its VLAN interface latches a red banner on the page, one fault kind per role. It reuses the latch of #233. The scoreboard is a VLAN on the control adapter, so a dead control cable raises two banners that name each other. The maintainer still owes a masked `ifconfig -a` from the game laptop as a fixture |
 | ~~3~~ | ~~[#242](https://github.com/misnow1/tacet-downbeat/issues/242) Nudge the band DCA down or up 1 dB from MAIN~~ | Done (PR number to be added), not yet tried on the console. **Up 1 dB** and **Down 1 dB** sit in the fader column above Faded out. A nudge goes no lower than 6 dB under the target and never to -inf, and **Up 1 dB** never goes above `fader.max_target_db`. It is relative, so #107 applies: it is refused while the level is unknown, and while another move is running. It does not change the target, so the next open returns to it. Run `python -m tacet.verify_dm7 --nudge` before the game |
 | 4 | [#235](https://github.com/misnow1/tacet-downbeat/issues/235) Show the game clock, period and running/stopped on the main page, from RTD | The first live RTD reader on the box, in a process of its own that tacet-serve manages. Display only. A frozen clock must not look live. #95 builds on it |
 | 5 | [#71](https://github.com/misnow1/tacet-downbeat/issues/71) Accept only IP addresses for the console and Reaper hosts | From Game 5 row 10, unchanged |
@@ -371,6 +371,9 @@ No milestone, from the Game 5 review:
 - [#249](https://github.com/misnow1/tacet-downbeat/issues/249), a
   `recording-found` written just after `recording-started` for one take. Found
   at the #233 bench check.
+- [#251](https://github.com/misnow1/tacet-downbeat/issues/251), the box's
+  console output through the standard `logging` library. Raised during #234,
+  not for Game 6.
 - [#236](https://github.com/misnow1/tacet-downbeat/issues/236), taps through
   touchscreen gloves. It is a maintainer decision (2026-11-15) to leave it off
   Game 6.

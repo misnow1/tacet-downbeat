@@ -442,6 +442,28 @@ class TestThePageCarriesTheTargetControl(WebTestCase):
         self.assertIn('id="target-level"', strip)
         self.assertLess(strip.index('id="duty"'), strip.index('id="target-level"'))
 
+    async def test_the_interfaces_chip_follows_the_console_chip_and_is_always_present(self):
+        # #234
+        body = await (await self.client.get("/")).text()
+        strip = body.split('<div id="strip">', 1)[1].split('<div id="prompt">', 1)[0]
+        self.assertLess(strip.index('id="console-reach"'), strip.index('id="interfaces"'))
+        self.assertLess(strip.index('id="interfaces"'), strip.index('id="reaper-project"'))
+        self.assertNotIn("#interfaces{display:none", body)
+        self.assertNotIn("#strip > #interfaces{display:none", body)
+
+    async def test_the_interfaces_chip_cannot_cause_a_wrap_by_itself(self):
+        body = await (await self.client.get("/")).text()
+        rule = body.split("#strip > #interfaces{", 1)[1].split("}", 1)[0]
+        self.assertIn("flex:1 1 0", rule)
+        self.assertIn("min-width:0", rule)
+        self.assertIn("max-width:240px", rule)
+        rules = {}
+        for suffix in (".ok", ".fault", ".note"):
+            self.assertIn("#strip > #interfaces" + suffix + "{", body)
+            rules[suffix] = body.split("#strip > #interfaces" + suffix + "{", 1)[1].split("}", 1)[0]
+        self.assertEqual(len(set(rules.values())), 3)
+        self.assertIn('#strip > #interfaces[data-expanded="1"]{', body)
+
     async def test_the_project_chip_follows_the_console_chip_and_is_always_present(self):
         # #204
         body = await (await self.client.get("/")).text()

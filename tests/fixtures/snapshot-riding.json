@@ -227,6 +227,12 @@
     "sent_at": 5000.0
   },
   "faults": [],
+  "interfaces": {
+    "checked_at": null,
+    "detail": null,
+    "roles": [],
+    "status": "not-configured"
+  },
   "log": {
     "error": null,
     "failures": 0,

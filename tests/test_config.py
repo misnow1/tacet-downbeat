@@ -16,7 +16,7 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
-from tacet import config, serve, targets, verify_dm7, verify_reaper
+from tacet import config, interfaces, serve, targets, verify_dm7, verify_reaper
 
 SAMPLE = """
 [console]
@@ -673,6 +673,145 @@ class TestTargetFlags(_TempConfig):
         # option if the parser had one spelled like a number.
         args = self.resolve(["--default-target", "-3.0"])
         self.assertEqual(args.default_target, -3.0)
+
+
+class TestInterfaces(_TempConfig):
+    """#234: the adapters the box checks, by role. A MAC string, or a table
+    with a VLAN tag for a role that rides one. No flag, ever."""
+
+    DANTE = "00:00:5e:00:53:02"
+    CONTROL = "00:00:5e:00:53:01"
+
+    def values(self, **roles):
+        return config.values_from_mapping({"interfaces": roles})
+
+    def refuses(self, **roles):
+        with self.assertRaises(config.ConfigError) as caught:
+            self.values(**roles)
+        return str(caught.exception)
+
+    def test_a_mac_string_is_canonicalised_into_an_untagged_expected(self):
+        got = self.values(dante="0:0:5E:0:53:2", control="00-00-5e-00-53-01")
+        self.assertEqual(got["interfaces.dante"], interfaces.Expected(self.DANTE, None))
+        self.assertEqual(got["interfaces.control"], interfaces.Expected(self.CONTROL, None))
+
+    def test_a_table_carries_the_tag(self):
+        got = self.values(scoring={"mac": self.CONTROL, "vlan": 20})
+        self.assertEqual(got["interfaces.scoring"], interfaces.Expected(self.CONTROL, 20))
+
+    def test_a_table_without_a_tag_is_untagged(self):
+        got = self.values(scoring={"mac": self.CONTROL})
+        self.assertEqual(got["interfaces.scoring"], interfaces.Expected(self.CONTROL, None))
+
+    def test_a_bad_mac_names_the_key_and_the_value(self):
+        for bad in ("xx:xx:xx:xx:xx:xx", "00:00:5e:00:53", "", "10.0.0.1"):
+            message = self.refuses(dante=bad)
+            self.assertIn("interfaces.dante must be a MAC address like 00:1c:42:0a:0b:0c", message)
+            self.assertIn(repr(bad), message)
+
+    def test_a_bool_or_a_number_where_a_mac_belongs_refuses_naming_the_key(self):
+        for bad in (True, 7):
+            self.assertIn("interfaces.dante", self.refuses(dante=bad))
+
+    def test_the_error_names_the_file(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"interfaces": {"dante": "no"}}, where="/etc/tacet.toml")
+        self.assertIn("/etc/tacet.toml", str(caught.exception))
+
+    def test_an_unknown_role_names_the_known_roles(self):
+        message = self.refuses(wifi=self.DANTE)
+        self.assertIn("wifi", message)
+        self.assertIn("dante, control, scoring", message)
+
+    def test_an_unknown_subkey_names_mac_and_vlan(self):
+        message = self.refuses(scoring={"mac": self.CONTROL, "tag": 20})
+        self.assertIn("interfaces.scoring", message)
+        self.assertIn("'tag'", message)
+        self.assertIn("mac, vlan", message)
+
+    def test_a_table_without_a_mac_refuses(self):
+        self.assertIn("mac", self.refuses(scoring={"vlan": 20}))
+
+    def test_a_tag_outside_the_802_1q_range_refuses(self):
+        for bad in (0, 4095, -1, True, "20", 20.5):
+            message = self.refuses(scoring={"mac": self.CONTROL, "vlan": bad})
+            self.assertIn("interfaces.scoring", message)
+            self.assertIn("1 to 4094", message)
+
+    def test_the_range_is_pinned(self):
+        self.assertEqual((interfaces.VLAN_MIN, interfaces.VLAN_MAX), (1, 4094))
+        for ok in (1, 4094):
+            self.assertEqual(self.values(scoring={"mac": self.CONTROL, "vlan": ok})["interfaces.scoring"].vlan, ok)
+
+    def test_the_same_mac_with_different_tags_loads(self):
+        got = self.values(control=self.CONTROL, scoring={"mac": self.CONTROL, "vlan": 20})
+        self.assertEqual(got["interfaces.control"].mac, got["interfaces.scoring"].mac)
+
+    def test_the_same_mac_and_tag_twice_refuses_naming_both_keys(self):
+        message = self.refuses(control={"mac": self.CONTROL, "vlan": 20}, scoring={"mac": self.CONTROL, "vlan": 20})
+        self.assertIn("interfaces.control", message)
+        self.assertIn("interfaces.scoring", message)
+        self.assertIn("Leave one out if one adapter serves both", message)
+
+    def test_two_untagged_roles_on_one_mac_refuse(self):
+        message = self.refuses(dante=self.CONTROL, control="0:0:5e:0:53:1")
+        self.assertIn("interfaces.dante", message)
+        self.assertIn("interfaces.control", message)
+
+    def test_the_schema_has_one_key_per_role_and_each_is_an_adapter(self):
+        options = [o for o in config.SCHEMA if o.section == "interfaces"]
+        self.assertEqual({o.key for o in options}, {role.value for role in interfaces.Role})
+        self.assertEqual({o.kind for o in options}, {"adapter"})
+
+    def test_serve_resolves_each_role_from_the_file(self):
+        path = self.write(
+            SAMPLE + f'\n[interfaces]\ndante = "{self.DANTE}"\nscoring = {{ mac = "{self.CONTROL}", vlan = 20 }}\n'
+        )
+        args, _ = config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[path])
+        self.assertEqual(args.interface_dante, interfaces.Expected(self.DANTE))
+        self.assertIsNone(args.interface_control)
+        self.assertEqual(args.interface_scoring, interfaces.Expected(self.CONTROL, 20))
+        self.assertEqual(
+            serve.interfaces_expected(args),
+            {
+                interfaces.Role.DANTE: interfaces.Expected(self.DANTE),
+                interfaces.Role.SCORING: interfaces.Expected(self.CONTROL, 20),
+            },
+        )
+
+    def test_without_a_config_nothing_is_expected(self):
+        args, _ = config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[])
+        self.assertEqual((args.interface_dante, args.interface_control, args.interface_scoring), (None, None, None))
+        self.assertEqual(serve.interfaces_expected(args), {})
+
+    def test_a_config_without_the_section_expects_nothing(self):
+        path = self.write(SAMPLE)
+        args, _ = config.resolve(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[path])
+        self.assertEqual(serve.interfaces_expected(args), {})
+
+    def test_there_is_no_flag_for_a_mac(self):
+        for flag in ("--interface-dante", "--dante", "--interface-control", "--interface-scoring"):
+            buffer = io.StringIO()
+            with redirect_stderr(buffer), self.assertRaises(SystemExit):
+                serve.parser().parse_args([flag, self.DANTE])
+            self.assertIn("unrecognized arguments", buffer.getvalue())
+        flags = {flag for action in serve.parser()._actions for flag in action.option_strings}
+        self.assertFalse({f for f in flags if "interface" in f})
+
+    def test_the_example_uses_documentation_macs_and_a_string_and_a_table(self):
+        values = config.load(TestTheExampleFile.EXAMPLE)
+        found = {}
+        for role in interfaces.Role:
+            expected = values[f"interfaces.{role.value}"]
+            assert isinstance(expected, interfaces.Expected)
+            self.assertTrue(expected.mac.startswith("00:00:5e:00:53:"), role)
+            found[role] = expected
+        self.assertIsNone(found[interfaces.Role.CONTROL].vlan)
+        self.assertIsNotNone(found[interfaces.Role.SCORING].vlan)
+        self.assertEqual(found[interfaces.Role.SCORING].mac, found[interfaces.Role.CONTROL].mac)
+        text = TestTheExampleFile.EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("scoring = {", text)
+        self.assertIn('control = "', text)
 
 
 class TestTheExampleFile(unittest.TestCase):

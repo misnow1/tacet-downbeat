@@ -30,7 +30,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tacet import annotations as ann
-from tacet import dm7, mirror_report, moves, osc, provenance, reach, reaper
+from tacet import dm7, interfaces, mirror_report, moves, osc, provenance, reach, reaper
 from tacet.app import App
 from tacet.net import TransportError
 from tacet.state import Machine
@@ -124,6 +124,7 @@ def _build(
     code: provenance.Provenance = CLEAN,
     console_check: reach.Check = ANSWERED,
     channels: int | None = None,
+    interfaces_expected: dict[interfaces.Role, interfaces.Expected] | None = None,
 ) -> Box:
     clock = [CLOCK_START]
 
@@ -150,6 +151,7 @@ def _build(
         console_check=console_check,
         home=HOME,
         channels=channels,
+        interfaces_expected=interfaces_expected,
     )
     return Box(app=app, log=log, clock=clock, disk=disk)
 
@@ -392,6 +394,24 @@ async def take_checking(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+async def interface_missing(root: Path) -> dict[str, Any]:
+    """The Dante adapter was not on the laptop at startup, and the control one
+    was (#234). The fault is latched before the page is served; the chip is red."""
+    box = _build(
+        root,
+        console=_Sender(),
+        machine=_known(),
+        interfaces_expected={
+            interfaces.Role.DANTE: interfaces.Expected("00:00:5e:00:53:02"),
+            interfaces.Role.CONTROL: interfaces.Expected("00:00:5e:00:53:01"),
+        },
+    )
+    listing = interfaces.parse_ifconfig((FIXTURES / "ifconfig-macos.txt").read_text(encoding="utf-8"))
+    present = tuple(a for a in listing if a.name != "en8")
+    box.app.interfaces_checked(interfaces.Reading(interfaces.Trigger.STARTUP, CLOCK_START, present))
+    return box.app.snapshot()
+
+
 STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
@@ -410,6 +430,7 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "faults": faults,
     "take-stopped": take_stopped,
     "take-checking": take_checking,
+    "interface-missing": interface_missing,
 }
 
 

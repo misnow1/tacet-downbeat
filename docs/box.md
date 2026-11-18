@@ -30,7 +30,9 @@ retyping them into every command. Copy `tacet.toml.example`, fill it in, and the
 startup command shrinks to the part that actually changes between games. The
 file is gitignored; the table in gameday.md stays the written record.
 
-Every value in it still has a flag, and the flag wins:
+Every value in it still has a flag, and the flag wins, except `[interfaces]`
+(below), which has no flags: a MAC address is a site fact, not something to
+retype on the day. For every other key:
 
 ```
 built-in default  <  tacet.toml  <  the flag you type
@@ -41,6 +43,54 @@ overridden mid-game. Each tool says which config it read on startup -- `tacet-se
 in the `config` row of its banner, the two `verify_` tools on a line of their
 own. If that reads `none (flags only)` and you expected a file, you are in the
 wrong directory.
+
+### The network adapters
+
+The box checks that its own network adapters are there, once at startup and then
+every 5 seconds (#234). It watches three roles, each named by the adapter's MAC
+address, never by its name: macOS renumbers a USB adapter when it is replugged
+(`en7` can come back as `en9`), and the MAC does not change. Get the MACs from
+
+```
+networksetup -listallhardwareports
+```
+
+the `Ethernet Address` under each adapter's `Hardware Port`, and write them in
+`tacet.toml`; gameday.md's site values table is where they are written down.
+
+```
+[interfaces]
+dante   = "00:00:5e:00:53:02"
+control = "00:00:5e:00:53:01"
+scoring = { mac = "00:00:5e:00:53:01", vlan = 20 }
+```
+
+A string is the untagged adapter with that MAC. `{ mac = "...", vlan = N }` is
+the VLAN interface with that tag on that adapter, whatever macOS names it
+(`vlan0`): the scoreboard's RTD arrives on the control adapter, on another
+VLAN, and a VLAN interface has the same MAC as its parent. Any role may be
+tagged. The same MAC may appear twice only with different tags; the same MAC
+and tag twice is refused, since one adapter would raise two faults. Leave a role
+out and it is not checked, and the banner says so. Leave the whole section out
+and nothing is checked: the banner row and the page chip both say so. The values
+in `tacet.toml.example` are documentation placeholders and read `MISSING` on
+the day, which is the point.
+
+`dante` needs the adapter present with a link. `control` and `scoring` need a
+link and a real IPv4 address: a `169.254` address is the OS giving up on DHCP,
+not an address anyone set, so it does not count. A VLAN interface counts as up
+only while its parent adapter's link is up too.
+
+The check only reads the laptop's own adapter table (`ifconfig -a`; `ip -d -j addr
+show` on Linux). It sends nothing and never moves a fader. What it cannot see
+is an adapter that is listed, says `status: active` and is dead anyway: the page's
+TAKE STOPPED banner and the console chip are the backstops for that.
+
+**Swapping in the spare adapter** has no automatic path. Put the spare's MAC in
+both `control` and the `scoring` table's `mac`, recreate the VLAN interface on
+the spare (System Settings > Network, Manage Virtual Interfaces), and restart
+the box on the same `--log`. Fault ids are numbered from the log, so a restart
+never reuses one.
 
 ### Room for the game
 
@@ -155,6 +205,9 @@ Reaper, and where the log and queue are going:
   ping        answered ping (0.4 ms)
               something is at this address; not proof it is the DM7
               and not proof the port is right
+  interfaces  dante    00:00:5e:00:53:02  en8    169.254.33.7
+              control  00:00:5e:00:53:01  en7    198.51.100.123
+              scoring  00:00:5e:00:53:01 vlan 20  vlan0  203.0.113.50
   fade        2.0s close, fast open, 1.5s ride-in
   target      0.0 dB   presets 0.0 / -3.0 / -6.0   cap 0.0 dB
   reaper      127.0.0.1   send 8000   feedback 9000
@@ -194,6 +247,27 @@ The ping is `ping -c 1` from the system, with no privilege and no OSC, and a
 read of the neighbour (ARP) table when it gets no reply. The box repeats it at
 every arm and every 4 minutes for as long as it runs (every 30 seconds while the last result was `nothing at this address` or `could not check`), which also keeps the
 laptop's ARP entry for the console warm; see design.md 5.7.
+
+The `interfaces` row (#234) says what the laptop's own adapter table holds for
+each role, read once before the box binds. One line a role: the role, its MAC (and
+`vlan N` when it is tagged), the interface it was found as, and its address:
+
+| `interfaces` row | What it means |
+|---|---|
+| `not checked - no [interfaces] in tacet.toml` | Nothing is configured, so a dead or missing adapter will not be noticed |
+| `dante    <MAC>  en8    169.254.33.7` | Found as `en8`, with a link and this address. Dante needs no address, so `no IPv4 address (not needed for Dante)` is fine too |
+| `<role>    <MAC>  -      MISSING` | No adapter with that MAC is on the laptop: unplugged, or the wrong MAC |
+| `<role>    <MAC>  en9    no link` | The adapter is there but its cable or switch port is dead |
+| `<role>    <MAC>  en7    no IPv4 address` | A link, but no real address for `control` or `scoring` (a `169.254` address does not count) |
+| `scoring  <MAC> vlan 20  -      no VLAN interface on en7` | The parent adapter is there, but no VLAN interface with that tag |
+| `<role>    not configured, not checked` | That role has no key in `[interfaces]` |
+| `could not check: <why>` | `ifconfig` is missing, failed, timed out or could not be read. Nothing is known: it never reads as all present |
+
+Any role that is not present also prints a `WARNING     a network adapter is not
+ready` row, with a line a role and `the page shows it until it is cleared; fix it
+before kickoff`. The box starts anyway: the operator has the fader, and the same
+fault is already latched on the page. See
+[troubleshooting.md](troubleshooting.md#the-terminal).
 
 The `code` row is the one thing the box *did* check: it asked git, once, before
 anything binds, read-only, with a 5 second limit (#157). It reads
@@ -333,6 +407,17 @@ means no reply but the address may still be the console, which may ignore ping;
 fader moves are still sent, unconfirmed. `Could not check the console` carries
 its reason. A tap reads the whole sentence, and the chip clears itself on the
 next answer, so a fixed cable clears it within 30 seconds.
+
+**The network adapters chip, in the strip** (#234), is present in every state.
+Dim `Network adapters: dante en8, control en7, scoring vlan0` means every
+configured role is there with a link, and names the interface each was found as.
+A red `Network adapter down: dante missing, control no link.` names each role
+that is not there and why: `missing`, `no link`, `no IPv4 address` or `no VLAN
+interface`. Amber `Network adapters not checked: no [interfaces] in
+tacet.toml.` means nothing is configured, and amber `Could not check the
+network adapters: <why>.` means the read failed and nothing is known. The chip
+follows the adapters live and clears itself when they come back; the red banner
+under it is the latched fault, which stays until someone taps **Clear**.
 
 **An amber `Unreviewed code running` chip in the strip** means the box is running
 uncommitted changes, so the log's commit does not describe what ran (#157). It

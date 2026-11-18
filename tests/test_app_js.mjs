@@ -1042,6 +1042,7 @@ check(
   Object.keys(SNAPSHOTS).sort(),
   [
     "faults",
+    "interface-missing",
     "nudge-refused",
     "nudged",
     "nudging",
@@ -3410,6 +3411,99 @@ for (const name of Object.keys(SNAPSHOTS)) {
   snap.console = { reach: "answered", detail: null, checked_at: 2, trigger: "keepalive" };
   context.render(snap);
   check("an answer afterwards clears it", [nodes.get("console-reach").className, nodes.get("console-reach").textContent], ["", ""]);
+}
+
+// -- the laptop's network adapters (#234) -------------------------------------------
+
+{
+  const chip = browser().context.interfacesChip;
+  const role = (name, status, adapter = null) => ({ role: name, mac: "00:00:5e:00:53:02", vlan: null, status, name: adapter, ipv4: null });
+  const checked = (...roles) => ({ status: "checked", detail: null, checked_at: 1, roles });
+  check("no block says nothing, for a box from before it", [chip(undefined), chip(null)], [null, null]);
+  const table = [
+    ["not configured", { status: "not-configured", detail: null, checked_at: null, roles: [] },
+      ["note", "Network adapters not checked: no [interfaces] in tacet.toml."]],
+    ["not checked yet", { status: "not-checked", detail: null, checked_at: null, roles: [] },
+      ["note", "Network adapters not checked yet."]],
+    ["could not check", { status: "could-not-check", detail: "ifconfig failed (exit 1): nope", checked_at: 1, roles: [] },
+      ["note", "Could not check the network adapters: ifconfig failed (exit 1): nope."]],
+    ["all present", checked(role("dante", "present", "en8"), role("control", "present", "en7"), role("scoring", "present", "vlan0")),
+      ["ok", "Network adapters: dante en8, control en7, scoring vlan0"]],
+    ["one missing", checked(role("dante", "missing"), role("control", "present", "en7")),
+      ["fault", "Network adapter down: dante missing."]],
+    ["one missing and one no link", checked(role("dante", "missing"), role("control", "link-down", "en7")),
+      ["fault", "Network adapter down: dante missing, control no link."]],
+    ["no address", checked(role("control", "no-address", "en7")),
+      ["fault", "Network adapter down: control no IPv4 address."]],
+    ["both roles of one cable down, one with no VLAN interface",
+      checked(role("control", "link-down", "en7"), role("scoring", "no-vlan", "en7")),
+      ["fault", "Network adapter down: control no link, scoring no VLAN interface."]],
+  ];
+  for (const [label, block, want] of table) check("interfaces chip: " + label, chip(block), want);
+  check("a status this page does not know is shown as sent, never undefined",
+    chip(checked(role("dante", "future-status"))),
+    ["fault", "Network adapter down: dante future-status."]);
+  check("not configured and all present read differently", [
+    chip(table[0][1])[0] !== chip(table[3][1])[0],
+  ], [true]);
+  check(
+    "the constants are the ones the runbook quotes",
+    [
+      "INTERFACES_OK", "INTERFACES_BAD", "INTERFACES_UNCHECKED", "INTERFACES_UNCONFIGURED", "INTERFACES_COULD_NOT",
+      "INTERFACE_MISSING", "INTERFACE_LINK_DOWN", "INTERFACE_NO_ADDRESS", "INTERFACE_NO_VLAN",
+    ].map((name) => runInContext(name, browser().context)),
+    [
+      "Network adapters:", "Network adapter down:", "Network adapters not checked", "no [interfaces] in tacet.toml",
+      "Could not check the network adapters", "missing", "no link", "no IPv4 address", "no VLAN interface",
+    ],
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  const snap = snapshot();
+  delete snap.interfaces;
+  let error = null;
+  try {
+    context.render(snap);
+  } catch (caught) {
+    error = String(caught);
+  }
+  check("a snapshot with no interfaces block does not throw", error, null);
+  check("and shows no chip", nodes.get("interfaces").className, "");
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["standing-down"]));
+  check("a box with nothing configured shows the amber note", nodes.get("interfaces").className, "note");
+  check(
+    "and says why",
+    nodes.get("interfaces").textContent,
+    "Network adapters not checked: no [interfaces] in tacet.toml.",
+  );
+}
+
+{
+  const { context, nodes } = browser();
+  context.render(structuredClone(SNAPSHOTS["interface-missing"]));
+  check("the box's own missing-adapter snapshot is the red chip", nodes.get("interfaces").className, "fault");
+  check("and names the role", nodes.get("interfaces").textContent, "Network adapter down: dante missing.");
+  nodes.get("interfaces").onclick();
+  check("a tap expands the chip", nodes.get("interfaces").dataset.expanded, "1");
+  const banner = nodes.get("faults");
+  check("and one latched banner is painted", banner.children.length, 1);
+  check(
+    "which says what to do",
+    banner.textContent.includes("Network adapter missing: the Dante adapter (00:00:5e:00:53:02) is not on this laptop."),
+    true,
+  );
+  const snap = structuredClone(SNAPSHOTS["interface-missing"]);
+  snap.interfaces.roles = snap.interfaces.roles.map((r) => ({ ...r, status: "present", name: r.role === "dante" ? "en8" : "en7" }));
+  context.render(snap);
+  check("the chip goes back to ok once every role is there", [nodes.get("interfaces").className, nodes.get("interfaces").textContent],
+    ["ok", "Network adapters: dante en8, control en7"]);
+  check("while the latched banner stays until it is cleared", nodes.get("faults").children.length, 1);
 }
 
 // -- where Reaper will record (#204) ----------------------------------------------
