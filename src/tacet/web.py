@@ -704,6 +704,22 @@ font-weight:700;font-size:14px;padding:8px 12px;border-radius:8px;margin-bottom:
 #prompt-question{font-size:13px;line-height:14px;max-height:28px;overflow:hidden}
 #prompt-answers{display:flex;gap:8px}
 #prompt-answers button{flex:1;padding:6px 10px;font-size:12px;line-height:14px}
+/* #235: the scoreboard's game clock. A fixed slot - the label line, then one
+   28px line holding the time and a tag that may take two short lines at 14px -
+   so no state, from "no RTD yet" to a reader that is down with a reason, moves
+   MAIN's tabs. It is inside .left, a flex sibling of the fader column, so it
+   can never move a fader button. Normal colours only while live; amber for every
+   state that withholds the time; dim for a page link gone quiet. */
+#game-clock{margin:0 16px 12px;min-height:72px}
+#gc-row{display:flex;align-items:center;gap:8px;height:28px;overflow:hidden}
+#gc-value{flex:none;line-height:28px}
+#gc-tag{flex:1 1 auto;min-width:0;max-height:28px;overflow:hidden;font-size:11px;line-height:14px;
+margin-left:0;border-radius:8px}
+#game-clock.never #gc-value{color:var(--dim)}
+#game-clock.warn #gc-value{color:#ffca7a}
+#game-clock.warn #gc-tag{border-color:var(--attention);color:#ffca7a}
+#game-clock.linkstale #gc-value{color:var(--dim)}
+#game-clock.linkstale #gc-tag{border-color:var(--attention);color:#ffca7a}
 /* Recording is a status check worth glancing at regardless of which tab is
    open, and it used to crowd MORE's last row of buttons when it lived there. */
 #recording-status{margin:0 16px 12px}
@@ -1033,6 +1049,9 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     </div>
   </div>
 </div>
+<div class="panel never" id="game-clock"><div class="label">Game clock</div>
+  <div class="value" id="gc-row"><span id="gc-value">--:--</span>
+    <span class="tag" id="gc-tag">no RTD yet</span></div></div>
 <div class="panel" id="recording-status"><div class="label">Recording</div>
   <div class="value"><span id="rec">&mdash;</span><span class="tag" id="rec-tag">unknown</span></div>
   <div id="rec-pos" style="color:var(--dim);font-size:13px;margin-top:4px"></div>

@@ -1,6 +1,7 @@
 {
   "left": null,
   "fader-column": null,
+  "game-clock": "left",
   "tab-main": "left",
   "tab-more": "left",
   "tab-more-vocabulary": "tab-more",
