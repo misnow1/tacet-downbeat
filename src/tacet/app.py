@@ -2038,7 +2038,7 @@ class App:
             # fixed while nothing arrives, so it does not churn the snapshot.
             # `fresh_for` is how old a running clock may be on the page before the
             # page stops showing it (M1): fixed, so it never churns the snapshot.
-            "game_clock": {**self._game_clock_view(now).as_snapshot(), "fresh_for": gclock.STALE_SECONDS},
+            "game_clock": {**self._game_clock_view(now).as_snapshot(), "fresh_for": gclock.PAGE_FRESH_SECONDS},
             # The laptop's own network adapters against the roles the config
             # names (#234). What the box sees of itself; nothing about the far end.
             "interfaces": self._interfaces.as_snapshot(),

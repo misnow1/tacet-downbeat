@@ -34,6 +34,13 @@ from .datagram import Datagram
 #: normal gap in 66,775 across Games 4 and 5 was 1.109 s, and every real
 #: silence was 18 s or more.
 STALE_SECONDS = 3.0
+#: How old a snapshot of a running clock may be on the page before the page
+#: blanks it (#235). A different question from `STALE_SECONDS`, with the same
+#: answer: while the board says it is running, its clock changed at least every
+#: 1.11 s in both captures, so the box pushes about once a second, and 3 s is
+#: slack for the wifi without letting a frozen running clock look live for
+#: longer than the box's own rule.
+PAGE_FRESH_SECONDS = STALE_SECONDS
 #: A full write is the largest datagram ever seen, 378 bytes on the wire: a
 #: frame's minimum plus the whole buffer. Twice that is room to spare.
 MAX_DATAGRAM_BYTES = 2 * (rtd.MIN_FRAME_LENGTH + rtd.BUFFER_SIZE)
