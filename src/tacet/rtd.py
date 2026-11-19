@@ -39,6 +39,10 @@ STX = 0x02
 EOT = 0x04
 ETB = 0x17
 
+#: The UDP port the scoreboard's All Sport Pro sends to, as a limited broadcast
+#: (design.md 8). Pinned in tests/test_rtd.py against the design.
+PORT = 21000
+
 HEADER_LENGTH = 8
 PREFIX_LENGTH = 6
 OFFSET_LENGTH = 4

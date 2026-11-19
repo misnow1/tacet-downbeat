@@ -214,6 +214,19 @@
     "sent_at": 5000.02
   },
   "faults": [],
+  "game_clock": {
+    "at_zero": null,
+    "clock": null,
+    "detail": null,
+    "fresh_for": 3.0,
+    "last_write_at": null,
+    "period": null,
+    "quarter": null,
+    "running": null,
+    "source": null,
+    "sources": [],
+    "status": "never"
+  },
   "interfaces": {
     "checked_at": null,
     "detail": null,

@@ -309,6 +309,45 @@ class TestRtdStaysImportableFromTheLiveReader(unittest.TestCase):
         self.assertNotIn("rtd", CONTROL_PATH)
 
 
+class TestTheGameClockIsDisplayOnly(unittest.TestCase):
+    """The live reader of the scoreboard's RTD is context for the operator and never a gate (#235).
+
+    `tacet.game_clock` is a pure core: bytes and a time in, a view out. It does
+    no I/O, keeps no clock and reaches nothing that sends, so a bug in it can
+    cost the page a clock and nothing else. No control-path module imports it,
+    or `rtd`, and the box still imports no post-game RTD tool.
+    """
+
+    NEVER_IMPORTED = frozenset({"osc", "net", "dm7", "state", "targets", "reaper", "app", "serve", "web"})
+
+    def test_it_imports_only_the_standard_library(self):
+        allowed = sys.stdlib_module_names | {"tacet"}
+        for module in _imported_top_level_modules(PACKAGE_ROOT / "game_clock.py"):
+            self.assertIn(module, allowed, f"tacet.game_clock imports {module!r}, which is not in the standard library")
+
+    def test_it_does_no_io_and_keeps_no_clock(self):
+        imported = _imported_top_level_modules(PACKAGE_ROOT / "game_clock.py")
+        self.assertEqual(imported & TestRtdStaysImportableFromTheLiveReader.RTD_FORBIDDEN, set())
+
+    def test_its_tacet_imports_are_the_decoder_and_the_datagram(self):
+        imported = _imported_tacet_modules(PACKAGE_ROOT / "game_clock.py")
+        self.assertLessEqual(imported, {"rtd", "datagram"})
+        self.assertEqual(imported & self.NEVER_IMPORTED, set())
+
+    def test_no_control_path_module_imports_it_or_the_decoder(self):
+        for name in CONTROL_PATH:
+            imported = _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py")
+            self.assertEqual(imported & {"game_clock", "rtd", "datagram"}, set(), name)
+
+    def test_the_box_imports_no_post_game_tool_for_it(self):
+        code = (
+            "import sys, tacet.serve, tacet.game_clock; "
+            "sys.exit('tacet.rtd_replay' in sys.modules or 'dpkt' in sys.modules)"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, "the live reader pulled in rtd_replay or dpkt")
+
+
 #: The modules allowed to import numpy: offline analysis, never the box (#191).
 NUMPY_MODULES = ("pilot",)
 

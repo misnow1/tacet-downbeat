@@ -65,6 +65,37 @@ class TestSnapshotFixtures(unittest.TestCase):
                 expected = "nothing-there" if path.name == "snapshot-faults.json" else "answered"
                 self.assertEqual(found["reach"], expected)
 
+    def test_every_fixture_carries_a_game_clock_block(self):
+        keys = {
+            "status",
+            "source",
+            "sources",
+            "last_write_at",
+            "detail",
+            "clock",
+            "running",
+            "at_zero",
+            "quarter",
+            "period",
+            "fresh_for",
+        }
+        for path, text in self.snapshots_only().items():
+            with self.subTest(fixture=path.name):
+                self.assertEqual(set(json.loads(text)["game_clock"]), keys)
+
+    def test_the_game_clock_fixtures_are_the_real_kickoff(self):
+        live = json.loads(self.generated[snapshots.fixture_path("game-clock-live")])["game_clock"]
+        self.assertEqual(
+            (live["status"], live["clock"], live["running"], live["quarter"], live["period"]),
+            ("live", "14:51", True, "1", "1ST"),
+        )
+        self.assertEqual(live["source"], "192.168.0.25")
+        self.assertIsNone(live["last_write_at"])
+        stale = json.loads(self.generated[snapshots.fixture_path("game-clock-stale")])["game_clock"]
+        self.assertEqual(stale["status"], "stale")
+        self.assertIsNone(stale["clock"])
+        self.assertIsNotNone(stale["last_write_at"])
+
     def test_no_fixture_fader_block_carries_a_target(self):
         for path, text in self.snapshots_only().items():
             with self.subTest(fixture=path.name):

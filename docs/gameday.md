@@ -293,7 +293,9 @@ the iPad on a charger too; Never plus a bright screen is a three-hour draw.
 
 ### 5. The RTD capture
 
-Start the capture before kickoff and leave it running through the end of the
+The box now reads RTD itself, for the game clock on the page (#235), and says
+what it hears. That is display only and keeps nothing: it does not replace the
+capture below. Start the capture before kickoff and leave it running through the end of the
 game. Since #216 a timeout has no tapped end, so a game with no capture has no
 timeout ends at all, and they cannot be recovered afterwards.
 
@@ -307,6 +309,12 @@ other broadcasts are what told the booth's outages from the laptop's own
 (game-4.md). Never filter on an address, because the RTD source address moved
 twice during Game 4. `-U` writes each packet out as it arrives, so a crash loses
 little.
+
+If the page's game clock reads `no RTD yet` while `tcpdump` sees the packets,
+the macOS firewall may be dropping them for the box's Python; see
+[troubleshooting.md](troubleshooting.md#the-page). `RTD silent since` means the
+scoreboard feed stopped for more than 3 seconds, and `RTD reader down` means the
+box could not listen on UDP 21000. Neither touches the fader.
 
 ---
 
@@ -324,6 +332,7 @@ little.
 | Project chip, in the strip | `Recording to ~/Reaper Media/<game folder>/Media`, dim, and the folder is this game's. `Reaper's project is not saved: recording will land in ~/Documents/REAPER Media.` in amber means save the project into its game folder now; it only warns, and Start recording still works. `Older Reaper script running: run it again from Reaper.` after the path means the file was replaced but the running script is still the old code: run it again from Reaper. Anything starting `Reaper project unknown` means the mirror is not reporting: run the script (step 2) and see [troubleshooting.md](troubleshooting.md#the-page) |
 | Tracks chip, in the strip | `Tracks armed to record: 34`, dim, and the number is Channels recorded. `Not armed to record: ...` in amber means arm those tracks now; it only warns. `but capture.channels says` means Reaper and `tacet.toml` disagree: see [troubleshooting.md](troubleshooting.md#the-page). Anything starting `Track arming unknown` means the mirror is not reporting tracks: run the script again from Reaper (step 2); if it says `does not report it`, the script is old: see step 3 and [troubleshooting.md](troubleshooting.md#the-page) |
 | Target chip, in the strip | `target 0 dB`, not amber. Amber means it is not the default; see **The target** below |
+| Game clock, in the panel above Recording | The board's period and time, `Q1 14:51`, tagged `running` or `stopped`; before the game `Pregame 70:07`, and at halftime `Halftime 20:00`. Dim `--:--` with `no RTD yet` means nothing has arrived: normal until the board is on. Amber `--:--` means `RTD silent since HH:MM`, or one of the other states in [troubleshooting.md](troubleshooting.md#the-page). It is display only: never wait on it |
 | Counter beside the state | A green dot and a figure in seconds, resetting to `0s` |
 | Bottom of the screen | The Auto-Lock advice, until the setting is changed |
 

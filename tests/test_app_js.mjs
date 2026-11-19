@@ -1042,6 +1042,8 @@ check(
   Object.keys(SNAPSHOTS).sort(),
   [
     "faults",
+    "game-clock-live",
+    "game-clock-stale",
     "interface-missing",
     "nudge-refused",
     "nudged",
@@ -4182,6 +4184,178 @@ function nudgeBox(name, changes = {}, faderChanges = {}) {
   const { nodes } = nudgeBox("open-recording");
   check("nudge note: not shown at the target", nodes.get("col-nudged").style.display, "none");
   check("nudge: the chip says nothing of the next open at the target", nodes.get("target-level").textContent, "target 0 dB");
+}
+
+// -- the game clock (#235) ----------------------------------------------------
+
+// The box withholds the clock unless the feed is live, so the page's job is only
+// to say each state in its own words and never to keep a time it was not given.
+// The real kickoff frames are in the live and stale fixtures.
+const GC_LIVE = SNAPSHOTS["game-clock-live"].game_clock;
+const GC_STALE = SNAPSHOTS["game-clock-stale"].game_clock;
+const GC_WITHHELD = { clock: null, running: null, at_zero: null, quarter: null, period: null };
+
+// A page with an open, healthy link, so a clock is not marked as stale by the page.
+function clockPage(gc, { healthy = true } = {}) {
+  const { context, nodes, sockets } = browser({ now: () => 1_700_000_000_000 });
+  sockets[0].onopen();
+  if (healthy) sockets[0].onmessage(keepaliveFrame);
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  snap.game_clock = gc;
+  context.render(snap);
+  return { context, nodes, sockets, snap };
+}
+function shown(gc, options) {
+  const { nodes } = clockPage(gc, options);
+  return [nodes.get("game-clock").className, nodes.get("gc-value").textContent, nodes.get("gc-tag").textContent];
+}
+const live = (changes) => ({ ...GC_LIVE, ...changes });
+
+{
+  const { periodWords } = browser().context;
+  check("period: the quarter's digit becomes Q1 to Q4",
+        ["1", "2", "3", "4"].map((q) => periodWords(q, "1ST")), ["Q1", "Q2", "Q3", "Q4"]);
+  check("period: pregame", periodWords("", "PRE"), "Pregame");
+  check("period: halftime", periodWords("", "HALF"), "Halftime");
+  check("period: anything else is verbatim", [periodWords("", "OT"), periodWords("5", "2OT"), periodWords("", "FINAL")],
+        ["OT", "2OT", "FINAL"]);
+  check("period: neither written yet, or both blank, is nothing", [periodWords(null, null), periodWords("", "")], [null, null]);
+}
+
+check("clock: live and running, from the real kickoff",
+      shown(GC_LIVE), ["panel live", "Q1 14:51", "running"]);
+check("clock: live and stopped", shown(live({ clock: "9:12", running: false, at_zero: false })),
+      ["panel live", "Q1 9:12", "stopped"]);
+check("clock: a stopped clock at zero is the end of a period",
+      shown(live({ clock: "0:00", running: false, at_zero: true })), ["panel live", "Q1 0:00", "end of period"]);
+check("clock: pregame", shown(live({ clock: "70:07", quarter: "", period: "PRE", running: true })),
+      ["panel live", "Pregame 70:07", "running"]);
+check("clock: halftime", shown(live({ clock: "20:00", quarter: "", period: "HALF", running: true })),
+      ["panel live", "Halftime 20:00", "running"]);
+check("clock: an overtime is shown as the board wrote it",
+      shown(live({ clock: "3:00", quarter: "", period: "OT", running: false, at_zero: false })),
+      ["panel live", "OT 3:00", "stopped"]);
+check("clock: live with the clock itself not yet written waits for the full refresh",
+      shown(live({ ...GC_WITHHELD })), ["panel live", "--:--", "waiting for the scoreboard's full refresh"]);
+check("clock: a clock known before its run flag waits for that, and shows the time",
+      shown(live({ running: null, at_zero: null })), ["panel live", "Q1 14:51", "waiting for the scoreboard's full refresh"]);
+check("clock: a clock written blank is a blank and not a wait",
+      shown(live({ clock: "", running: true })), ["panel live", "Q1 --:--", "running"]);
+
+{
+  const [cls, value, tag] = shown({ ...GC_STALE });
+  check("clock: stale withholds the time", [cls, value], ["panel warn", "--:--"]);
+  check("clock: stale says since when, in this page's own HH:MM", /^RTD silent since \d\d:\d\d$/.test(tag), true);
+  const offset = 1_700_000_000 - SNAPSHOTS["standing-down"].at;
+  const local = new Date((GC_STALE.last_write_at + offset) * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  check("clock: and that HH:MM is when the box last heard it",
+        tag, "RTD silent since " + pad(local.getHours()) + ":" + pad(local.getMinutes()));
+  // No game time survives in any state that is not live.
+  const { nodes } = clockPage({ ...GC_STALE, clock: "14:51", period: "1ST" });
+  check("clock: not even a stale box's leftover time is painted",
+        /14:51|1ST|Q1/.test(nodes.get("game-clock").textContent + nodes.get("gc-value").textContent), false);
+}
+check("clock: stale with nothing ever decoded does not invent a time",
+      shown({ ...GC_STALE, last_write_at: null }), ["panel warn", "--:--", "RTD silent"]);
+check("clock: never", shown({ ...GC_LIVE, ...GC_WITHHELD, status: "never", source: null, sources: [] }),
+      ["panel never", "--:--", "no RTD yet"]);
+check("clock: arriving but not decoding", shown({ ...GC_LIVE, ...GC_WITHHELD, status: "undecodable" }),
+      ["panel warn", "--:--", "RTD arriving but not decoding"]);
+check("clock: two sources withhold the clock", shown({ ...GC_LIVE, ...GC_WITHHELD, status: "two-sources", sources: ["a", "b"] }),
+      ["panel warn", "--:--", "two RTD sources"]);
+check("clock: a flood", shown({ ...GC_LIVE, ...GC_WITHHELD, status: "flood" }),
+      ["panel warn", "--:--", "RTD flood: decoding paused"]);
+check("clock: reader down carries its reason",
+      shown({ ...GC_LIVE, ...GC_WITHHELD, status: "down", detail: "[Errno 48] Address already in use" }),
+      ["panel warn", "--:--", "RTD reader down: [Errno 48] Address already in use"]);
+check("clock: a status this page does not know is amber and blank and says what it was",
+      shown({ ...GC_LIVE, ...GC_WITHHELD, status: "mystery" }), ["panel warn", "--:--", "mystery"]);
+
+check("clock: a link gone quiet blanks a live clock and says so",
+      shown(GC_LIVE, { healthy: false }), ["panel linkstale", "--:--", "page link stale"]);
+check("clock: the box says how long a running clock stays fresh", GC_LIVE.fresh_for, 3);
+{
+  // The same, found by the repaint tick rather than by a snapshot.
+  const { context, nodes, sockets } = browser({ now: () => 1_700_000_000_000 });
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  snap.game_clock = GC_LIVE;
+  context.render(snap);
+  check("clock: healthy link, normal", nodes.get("game-clock").className, "panel live");
+  sockets[0].onclose();
+  check("clock: the link dropping repaints it with no snapshot", nodes.get("game-clock").className, "panel linkstale");
+  check("clock: and it shows no time at all", nodes.get("gc-value").textContent, "--:--");
+}
+
+{
+  // M1: a half-open link looks healthy to the link banner for 37 s, and a running
+  // clock changes every second, so its snapshot ages out far sooner than that.
+  // Driven by the repaint interval the page already has.
+  let t = 1_700_000_000_000;
+  const { context, nodes, sockets, intervals } = browser({ now: () => t });
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  snap.game_clock = GC_LIVE;
+  context.render(snap);
+  check("clock: a running clock on a fresh snapshot shows", nodes.get("gc-value").textContent, "Q1 14:51");
+  t += (GC_LIVE.fresh_for - 0.1) * 1000;
+  intervals[0]();
+  check("clock: just inside fresh_for it still shows", nodes.get("game-clock").className, "panel live");
+  t += 0.2 * 1000;
+  intervals[0]();
+  check("clock: past fresh_for the tick blanks it and tags it, with the link banner still clear",
+        [nodes.get("link").className, nodes.get("game-clock").className, nodes.get("gc-value").textContent,
+         nodes.get("gc-tag").textContent], ["", "panel linkstale", "--:--", "page link stale"]);
+  // A new snapshot brings it back.
+  context.render({ ...snap, at: snap.at + 1 });
+  check("clock: a fresh snapshot shows it again", nodes.get("gc-value").textContent, "Q1 14:51");
+}
+
+{
+  // A stopped clock changes nothing, so the age of its snapshot proves nothing.
+  let t = 1_700_000_000_000;
+  const { context, nodes, sockets, intervals } = browser({ now: () => t });
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  snap.game_clock = { ...GC_LIVE, running: false, at_zero: false };
+  context.render(snap);
+  t += 10 * 1000;
+  sockets[0].onmessage(keepaliveFrame);
+  intervals[0]();
+  check("clock: a stopped clock on a ten second old snapshot, link healthy, stays shown",
+        [nodes.get("game-clock").className, nodes.get("gc-value").textContent, nodes.get("gc-tag").textContent],
+        ["panel live", "Q1 14:51", "stopped"]);
+}
+
+check("clock: text from the wire is shown as characters and never as markup",
+      shown(live({ clock: "<b>9</b>", quarter: "<i>", period: "<script>" }))[1], "<script> <b>9</b>");
+{
+  const { nodes } = clockPage(live({ clock: "<b>9</b>" }));
+  check("clock: nothing is ever set as HTML", [nodes.get("gc-value").innerHTML, nodes.get("gc-tag").innerHTML, nodes.get("game-clock").innerHTML], ["", "", ""]);
+}
+
+{
+  // A box from before #235 sends no game_clock: the panel is left as it is, and nothing throws.
+  const { context, nodes } = browser();
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  delete snap.game_clock;
+  let threw = false;
+  try { context.render(snap); } catch (error) { threw = true; }
+  check("clock: a box with no game_clock does not stop the render", [threw, nodes.get("state").textContent], [false, "STANDING DOWN"]);
+  check("clock: and leaves the panel alone", [nodes.has("gc-value"), nodes.has("gc-tag")], [false, false]);
+  check("clock: gameClockView says nothing for it", context.gameClockView(undefined, true, 0), null);
+}
+
+{
+  // Unchanged text is not rewritten: a repaint every tick must not churn the node.
+  const { context, nodes, snap } = clockPage(GC_LIVE);
+  const writes = nodes.get("gc-value").writes + nodes.get("gc-tag").writes;
+  context.render({ ...snap, at: snap.at + 1 });
+  check("clock: a repaint of the same state writes nothing", nodes.get("gc-value").writes + nodes.get("gc-tag").writes, writes);
 }
 
 // -- report -----------------------------------------------------------------

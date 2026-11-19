@@ -949,6 +949,117 @@ function consoleChip(c) {
   return null;
 }
 
+// #235: the scoreboard's game clock, from the box's RTD reader. Context for the
+// operator and never a gate: nothing here is sent anywhere. The box withholds the
+// clock and the period unless the feed is live, so there is never an old time to
+// show; this only decides how each state looks. Only textContent is ever set from
+// the wire - a field the board writes is shown as the characters it is.
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_RUNNING = "running";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_STOPPED = "stopped";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_AT_ZERO = "end of period";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_WAITING = "waiting for the scoreboard's full refresh";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_SILENT = "RTD silent since";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_NEVER = "no RTD yet";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_UNDECODABLE = "RTD arriving but not decoding";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_TWO_SOURCES = "two RTD sources";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_FLOOD = "RTD flood: decoding paused";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_DOWN = "RTD reader down: ";
+// #48: quoted in the runbook; PAGE_QUOTES in tests/test_runbook.py says where.
+const GAME_CLOCK_LINK_STALE = "page link stale";
+const GAME_CLOCK_BLANK = "--:--";
+const GAME_CLOCK_QUARTER_WORD = "Q";
+const GAME_CLOCK_QUARTERS = ["1", "2", "3", "4"];
+const GAME_CLOCK_PERIOD_WORDS = {PRE: "Pregame", HALF: "Halftime"};
+
+// Pure: the period in words. The quarter's digit as Q1 to Q4, the board's PRE
+// and HALF spelt out, and anything else - an overtime, a field this page has
+// not seen - as the board wrote it. Null while neither has been written or both
+// were written blank.
+function periodWords(quarter, period) {
+  if (GAME_CLOCK_QUARTERS.includes(quarter)) return GAME_CLOCK_QUARTER_WORD + quarter;
+  if (period) return GAME_CLOCK_PERIOD_WORDS[period] || period;
+  return quarter || null;
+}
+
+// Pure: what the tag says about a live clock. A stopped clock at zero is the
+// end of a period, and a flag the box has not been sent yet is not guessed.
+function liveClockTag(gc) {
+  if (gc.running === true) return GAME_CLOCK_RUNNING;
+  if (gc.running === false) return gc.at_zero === true ? GAME_CLOCK_AT_ZERO : GAME_CLOCK_STOPPED;
+  return GAME_CLOCK_WAITING;
+}
+
+// Pure: [class, value, tag] for the game clock panel, or null for a box that
+// predates #235 and sends no `game_clock`, which leaves the panel as it is.
+// `linkFresh` is whether the page's own link to the box is healthy: a clock on
+// a link that has gone quiet may be stale and says so. Every state but live
+// shows a blank and never a time; "silent since" is a wall time on this page's
+// clock, the time the feed was last heard and never a game time.
+function gameClockView(gc, linkFresh, offset, age) {
+  if (!gc) return null;
+  const blank = GAME_CLOCK_BLANK;
+  switch (gc.status) {
+    case "live": {
+      const period = periodWords(gc.quarter, gc.period);
+      const clock = gc.clock === null ? null : (gc.clock || blank);
+      const value = [period, clock === null ? blank : clock].filter(Boolean).join(" ");
+      // Only a fresh live state ever paints a time. A running clock changes every
+      // second, so a snapshot older than the box's `fresh_for` means the link has
+      // stopped delivering, and the page does not wait out the link banner's 37 s.
+      // A stopped clock changes nothing, so its age proves nothing.
+      const frozen = gc.running === true && typeof gc.fresh_for === "number"
+        && typeof age === "number" && age >= gc.fresh_for;
+      if (!linkFresh || frozen) return ["linkstale", blank, GAME_CLOCK_LINK_STALE];
+      return ["live", value, clock === null ? GAME_CLOCK_WAITING : liveClockTag(gc)];
+    }
+    case "never":
+      return ["never", blank, GAME_CLOCK_NEVER];
+    case "stale": {
+      const since = clockTime(gc.last_write_at, offset);
+      return ["warn", blank, since ? GAME_CLOCK_SILENT + " " + since : GAME_CLOCK_SILENT.split(" since")[0]];
+    }
+    case "undecodable":
+      return ["warn", blank, GAME_CLOCK_UNDECODABLE];
+    case "two-sources":
+      return ["warn", blank, GAME_CLOCK_TWO_SOURCES];
+    case "flood":
+      return ["warn", blank, GAME_CLOCK_FLOOD];
+    case "down":
+      return ["warn", blank, GAME_CLOCK_DOWN + (gc.detail || "")];
+    default:
+      return ["warn", blank, String(gc.status)];
+  }
+}
+
+function linkIsFresh() {
+  return linkBanner(link.open, secondsSince(link.seen, pageStamp()), link.staleAfter) === null;
+}
+
+// Paints the panel from the latest snapshot. Guarded: a box without the field,
+// or a page that has yet to hear from one, leaves it alone. Called from render
+// and from the link repaint, since a link going quiet changes how the clock looks
+// with no snapshot to say so.
+function paintGameClock() {
+  if (!snapshot || !snapshot.game_clock) return;
+  const view = gameClockView(snapshot.game_clock, linkIsFresh(), boxOffset(snapshot),
+    secondsSince(snapshotArrivedAt, pageStamp()));
+  if (view === null) return;
+  const node = $("game-clock");
+  if (node.className !== "panel " + view[0]) node.className = "panel " + view[0];
+  setText($("gc-value"), view[1]);
+  setText($("gc-tag"), view[2]);
+}
+
 // #234: the laptop's network adapters, by role. Plain constants: the runbook tests
 // read them out of this file and look for them in the docs.
 const INTERFACES_OK = "Network adapters:";
@@ -1261,6 +1372,7 @@ function render(received) {
     rec.confirmed && rec.position !== null && !waiting && !rec.fault ? "at " + timecode(rec.position) : "";
 
   paintFaults(next.faults);
+  paintGameClock();
   paintButtons(next);
 }
 
@@ -1683,6 +1795,7 @@ function paintLink() {
   const pulse = $("pulse");
   pulse.className = pulseClass;
   pulse.textContent = pulseText;
+  paintGameClock();
 }
 
 // Any frame proves the link, not just a keepalive: a box busy pushing snapshots

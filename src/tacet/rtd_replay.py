@@ -51,7 +51,7 @@ DPKT_MODULE = "dpkt"
 DPKT_HINT = "tacet-rtd needs dpkt: pip install -e '.[analysis]'"
 
 #: The UDP port Game 4's All Sport Pro sent to.
-DEFAULT_PORT = 21000
+DEFAULT_PORT = rtd.PORT
 #: The time of day is written every second; Game 4's normal spacing never passed 1.11 s.
 DEFAULT_GAP_SECONDS = 5.0
 

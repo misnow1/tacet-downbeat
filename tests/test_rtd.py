@@ -391,6 +391,14 @@ class TestFieldMap(unittest.TestCase):
         self.assertEqual(rtd.MIN_FRAME_LENGTH, 25)
 
 
+class TestThePort(unittest.TestCase):
+    def test_the_port_is_21000_and_the_replay_shares_it(self):
+        # design.md 8: the scoreboard broadcasts to 21000. One constant, so the
+        # box and the offline replay cannot disagree about it.
+        self.assertEqual(rtd.PORT, 21000)
+        self.assertEqual(rtd_replay.DEFAULT_PORT, rtd.PORT)
+
+
 class TestDesignSection8(unittest.TestCase):
     """design.md 8 quotes the field map, the port and the buffer length; the decoder is where they live (#206)."""
 

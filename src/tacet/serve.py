@@ -89,6 +89,7 @@ import time
 import traceback
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, Protocol
 
 from aiohttp import web as aiohttp_web
 
@@ -97,6 +98,7 @@ from . import (
     disk,
     dm7,
     faults,
+    game_clock,
     interfaces,
     mirror,
     mirror_report,
@@ -104,6 +106,7 @@ from . import (
     provenance,
     reach,
     reaper,
+    rtd,
     script_check,
     taps,
     targets,
@@ -213,6 +216,56 @@ def fault_line(
     return FAULT_CLEARED.format(kind=fault.kind.value, wall=when, still=still)
 
 
+#: What the terminal says about the scoreboard's RTD feed (#235). Quoted in
+#: docs/troubleshooting.md. Constants, so a logger can replace `print` (#251)
+#: without rewording them.
+RTD_LISTENING = "listening for RTD on {host}:{port}"
+RTD_BIND_FAILED = "RTD: could not listen on UDP {port}: {error}. The page says so; the fader is unaffected"
+RTD_LIVE = "RTD {wall}: live from {source}"
+RTD_SILENT = "RTD {wall}: silent since {since} (last from {source})"
+RTD_SILENT_NOTHING_DECODED = "RTD {wall}: silent, and nothing had decoded"
+RTD_SOURCE_CHANGED = "RTD {wall}: source changed {old} -> {new}"
+RTD_TWO_SOURCES = "RTD {wall}: two sources at once: {sources}"
+RTD_UNDECODABLE = "RTD {wall}: arriving but not decoding"
+RTD_FLOOD = "RTD {wall}: flood, decoding paused"
+RTD_DOWN = "RTD {wall}: reader down: {detail}"
+#: Where the box listens for RTD. The board broadcasts to 255.255.255.255, and a
+#: socket bound to one unicast address is not delivered a limited broadcast, so
+#: this is every address. A constant and not a key. No `reuse_port`: a second box
+#: on the port says `down` rather than quietly sharing it.
+RTD_BIND_HOST = "0.0.0.0"
+#: How often the box looks for the edges no datagram announces.
+RTD_TICK_SECONDS = web.TICK_INTERVAL
+
+
+def rtd_line(change: game_clock.Transition, *, wall: datetime.datetime) -> str:
+    """What the terminal says about a change in the RTD feed (#235). Pure: the
+    caller passes the wall time now, and the line works out the time of the last
+    write from how long ago it was."""
+    when = wall.strftime(FAULT_WALL_FORMAT)
+    if isinstance(change, game_clock.SourceChanged):
+        return RTD_SOURCE_CHANGED.format(wall=when, old=change.old, new=change.new)
+    view = change.view
+    match view.status:
+        case game_clock.Status.LIVE:
+            return RTD_LIVE.format(wall=when, source=view.source)
+        case game_clock.Status.STALE:
+            if view.last_write_at is None:
+                return RTD_SILENT_NOTHING_DECODED.format(wall=when)
+            since = wall - datetime.timedelta(seconds=change.at - view.last_write_at)
+            return RTD_SILENT.format(wall=when, since=since.strftime(FAULT_WALL_FORMAT), source=view.source)
+        case game_clock.Status.TWO_SOURCES:
+            return RTD_TWO_SOURCES.format(wall=when, sources=", ".join(view.sources))
+        case game_clock.Status.UNDECODABLE:
+            return RTD_UNDECODABLE.format(wall=when)
+        case game_clock.Status.FLOOD:
+            return RTD_FLOOD.format(wall=when)
+        case game_clock.Status.DOWN:
+            return RTD_DOWN.format(wall=when, detail=view.detail)
+        case game_clock.Status.NEVER:
+            return RTD_SILENT_NOTHING_DECODED.format(wall=when)
+
+
 def _db_text(level: int) -> str:
     """A console level for the terminal: -inf, or dB to one decimal."""
     if level == dm7.MINUS_INF:
@@ -256,6 +309,82 @@ class _Feedback(asyncio.DatagramProtocol):
         self._app.handle_recorder_packet(data)
 
 
+class RtdSink(Protocol):
+    """What the RTD receiver needs of the App, so a test can hand it a fake."""
+
+    def rtd_received(self, payload: bytes, source: str, source_port: int) -> None: ...
+
+    def rtd_tick(self) -> None: ...
+
+    def rtd_failed(self, detail: str) -> None: ...
+
+    def rtd_listening(self, port: int) -> None: ...
+
+
+class _Rtd(asyncio.DatagramProtocol):
+    """The scoreboard's RTD broadcast, handed to the App and nothing else (#235).
+
+    Runs on the loop that moves the fader, so nothing may escape it: the App
+    catches what the reader throws, and this catches what the App throws. A
+    datagram that cannot be handled costs the page its clock and no more.
+    """
+
+    def __init__(self, app: RtdSink) -> None:
+        self._app = app
+        #: Exceptions this protocol caught, and socket errors it was told of.
+        self.caught = 0
+        self.socket_errors = 0
+
+    def datagram_received(self, data: bytes, addr: Any) -> None:
+        try:
+            self._app.rtd_received(data, str(addr[0]), int(addr[1]))
+        except Exception:
+            self.caught += 1
+            if self.caught == 1:
+                with contextlib.suppress(Exception):
+                    traceback.print_exc()
+
+    def error_received(self, _exc: Exception) -> None:
+        # An ICMP error on a UDP socket: counted. A receive-only socket has no one to blame.
+        self.socket_errors += 1
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        # None is our own close at shutdown; anything else is the socket dying.
+        if exc is not None:
+            self._app.rtd_failed(f"{type(exc).__name__}: {exc}")
+
+
+async def _listen_for_rtd(app: RtdSink, loop: asyncio.AbstractEventLoop, port: int) -> asyncio.DatagramTransport | None:
+    """Bind the RTD socket. A port in use is `down` on the page and a line here,
+    and never a refusal to start: the operator has the fader without a clock."""
+    try:
+        transport, _ = await loop.create_datagram_endpoint(lambda: _Rtd(app), local_addr=(RTD_BIND_HOST, port))
+    except OSError as exc:
+        print(RTD_BIND_FAILED.format(port=port, error=exc), flush=True)
+        app.rtd_failed(str(exc))
+        return None
+    bound = int(transport.get_extra_info("sockname")[1])
+    app.rtd_listening(bound)
+    print(RTD_LISTENING.format(host=RTD_BIND_HOST, port=bound), flush=True)
+    return transport
+
+
+async def _rtd_tick(app: RtdSink) -> None:
+    while True:
+        await asyncio.sleep(RTD_TICK_SECONDS)
+        app.rtd_tick()
+
+
+def _rtd_tick_stopped(app: RtdSink, task: asyncio.Future[None]) -> None:
+    """A dead tick task is a fault in its own right (#41): say so."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        traceback.print_exception(error)
+        app.rtd_failed(f"{type(error).__name__}: {error}")
+
+
 def build(
     args: argparse.Namespace,
     code: provenance.Provenance,
@@ -295,7 +424,9 @@ def build(
         # --no-disk-check says: the chip is a check of its own.
         channels=args.channels,
         interfaces_expected=interfaces_expected(args),
+        rtd_port=args.rtd_port,
     )
+    app.on_rtd(lambda change: print(rtd_line(change, wall=datetime.datetime.now()), flush=True))
     # Before anything can raise a fault, so a missing adapter found at startup
     # prints its FAULT line too (#234).
     app.on_fault(
@@ -375,6 +506,13 @@ async def _run(
         )
         print(f"listening for Reaper feedback on {args.listen}:{args.reaper_feedback_port}")
 
+    # The scoreboard's RTD, for the game clock on the page (#235). Display only.
+    # Bound before the page goes up, so `down` is true from the first snapshot,
+    # and a port in use never stops the box.
+    rtd_transport = await _listen_for_rtd(app, loop, args.rtd_port)
+    rtd_task: asyncio.Future[None] = asyncio.ensure_future(_rtd_tick(app))
+    rtd_task.add_done_callback(lambda task: _rtd_tick_stopped(app, task))
+
     # The ping that keeps the console's ARP entry warm, and checks at every arm
     # (#73). Built, and told about arms, before the page goes up: an arm in the
     # first milliseconds still gets its check, which the watch holds until its
@@ -393,9 +531,19 @@ async def _run(
     app.on_armed(lambda: watch.request(reach.Trigger.ARM))
 
     runner = aiohttp_web.AppRunner(server)
-    await runner.setup()
-    site = aiohttp_web.TCPSite(runner, args.listen, args.http_port)
-    await site.start()
+    try:
+        await runner.setup()
+        site = aiohttp_web.TCPSite(runner, args.listen, args.http_port)
+        await site.start()
+    except BaseException:
+        # The page's port is in use, say: the sockets opened above would outlive a
+        # box that never started, and the tick task would run on with nothing to stop it.
+        rtd_task.cancel()
+        if rtd_transport is not None:
+            rtd_transport.close()
+        if transport is not None:
+            transport.close()
+        raise
     # The banner already said where the page will be and what the fader can and
     # cannot tell you. This line is the different fact that it actually bound.
     print(f"serving on {args.listen}:{args.http_port} - ready")
@@ -472,6 +620,12 @@ async def _run(
             report_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await report_task
+        # Before the page goes down, so no datagram lands on a closed App.
+        rtd_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await rtd_task
+        if rtd_transport is not None:
+            rtd_transport.close()
         # The box starts no move on the way out (#44). A ride was left where it
         # was when the stop was confirmed; a fade is let land, after the page
         # has hung up so no tap can start a move behind it. Nested, so a
@@ -900,6 +1054,9 @@ def startup_lines(
         lines.append(_row("reaper", "not configured"))
         lines.append(_note("no transport control; recording state stays unknown"))
 
+    lines.append(_row("rtd", f"UDP {args.rtd_port} from any source"))
+    lines.append(_note("scoreboard feed for the page: display only, never a gate"))
+
     lines.append(_row("log", str(args.log)))
     if args.queue:
         lines.append(_row("queue", str(args.queue)))
@@ -955,6 +1112,7 @@ CONFIG_MAPPING = {
     "presets": "fader.presets",
     "default_target": "fader.default_target_db",
     "max_target": "fader.max_target_db",
+    "rtd_port": "rtd.port",
     "listen": "ui.listen",
     "http_port": "ui.port",
 }
@@ -1017,6 +1175,12 @@ def parser() -> argparse.ArgumentParser:
     # No flag for these, so argparse has no default to set: the config's values
     # land here through `set_defaults`, and without a config they are None.
     p.set_defaults(**dict.fromkeys(INTERFACE_DESTS.values()))
+    p.add_argument(
+        "--rtd-port",
+        type=config.port,
+        default=rtd.PORT,
+        help="UDP port the scoreboard's RTD broadcast arrives on, read for the game clock (display only)",
+    )
     p.add_argument("--listen", default=web.DEFAULT_HOST)
     p.add_argument("--http-port", type=config.port, default=web.DEFAULT_PORT)
     p.add_argument("--fade", type=float, default=dm7.DEFAULT_FADE_SECONDS)

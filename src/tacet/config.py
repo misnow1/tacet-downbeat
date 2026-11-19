@@ -152,6 +152,7 @@ SCHEMA: tuple[Option, ...] = (
         "adapter",
         "the scoreboard's adapter: a MAC, or { mac = ..., vlan = N } for a VLAN interface on one",
     ),
+    Option("rtd", "port", "port", "UDP port the scoreboard's RTD broadcast arrives on, read for the game clock"),
     Option("ui", "listen", "str", "address the web UI binds to"),
     Option("ui", "port", "port", "port the web UI binds to"),
 )

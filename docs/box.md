@@ -44,6 +44,11 @@ in the `config` row of its banner, the two `verify_` tools on a line of their
 own. If that reads `none (flags only)` and you expected a file, you are in the
 wrong directory.
 
+The one RTD key, `[rtd] port` (default 21000, flag `--rtd-port`), is the UDP port
+the scoreboard's broadcast arrives on, read for the game clock (#235). There is
+no key for the bind address, which is every address, and none to turn it off: a
+box that hears nothing shows `no RTD yet` and that is harmless.
+
 ### The network adapters
 
 The box checks that its own network adapters are there, once at startup and then
@@ -211,6 +216,8 @@ Reaper, and where the log and queue are going:
   fade        2.0s close, fast open, 1.5s ride-in
   target      0.0 dB   presets 0.0 / -3.0 / -6.0   cap 0.0 dB
   reaper      127.0.0.1   send 8000   feedback 9000
+  rtd         UDP 21000 from any source
+              scoreboard feed for the page: display only, never a gate
   log         /Users/you/games/<YYYY-MM-DD>.jsonl
   queue       /Users/you/Library/Application Support/REAPER/tacet/queue.tsv
   script      current: matches this checkout
@@ -225,6 +232,15 @@ Reaper, and where the log and queue are going:
     4  arm when the band is in the stands
 ==========================================================================
 ```
+
+The `rtd` row (#235) says which UDP port the box listens on for the scoreboard's
+RTD broadcast, read for the game clock on the page. It is a port, not a check
+that anything is sending. The box listens on every address (`0.0.0.0`): the
+board broadcasts to `255.255.255.255`, and a socket bound to one address is not
+delivered a limited broadcast. It is display only: nothing that moves the fader
+reads it. `rtd.port` in `tacet.toml` (or `--rtd-port`) changes the port. If
+another program holds the port, the terminal says `RTD: could not listen on UDP
+21000` and the page's clock reads `RTD reader down`; the box still starts.
 
 **Read the `queue` line against what the mirror script said.** They have to be
 the same path, and the banner repeats it under step 2 of its own checklist so
@@ -888,8 +904,11 @@ Honest state of things, so nothing here reads as more settled than it is.
   have shown. No reason to think there is one.
 - **RTD.** The decoder exists and replays the Game 4 capture (`tacet-rtd`,
   above); timeout ends, quarters and halftime now come from it, offline
-  (`tacet-timeouts` and `tacet-quarters`, above). The live reader is #95; until
-  then RTD is read only after the game.
+  (`tacet-timeouts` and `tacet-quarters`, above). The box also reads it live, for
+  display only (#235): the game clock and period on MAIN, with the states in
+  troubleshooting.md. That reader has not been seen at a game yet, and the
+  wildcard bind that lets it hear a limited broadcast has not been checked on the
+  bench with `tcpdump` running. The play clock and the READY prompt are #95.
   Two things about the stream are known from Game 4 and will matter to it. The
   scoreboard console rewrites its whole buffer about every 10 s, so a reader
   started mid-game, or back after an outage, has every field within about 10 s;

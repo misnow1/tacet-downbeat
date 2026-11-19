@@ -406,6 +406,11 @@ RTD is used as **context, not interlock**:
 - **Logging** — every fader move timestamped against down, distance, game clock
   and play clock. This is the only way to answer "were we open during a play"
   after the fact.
+- **Display** (#235) — the period and the main clock, on the operator page, read
+  live from RTD. Nothing reads it back: no control-path module imports the
+  reader, and a test reads the imports to say so. A frozen clock must not look
+  live, so the page shows a time only while a valid write has arrived within 3 s,
+  and shows `--:--` with the reason otherwise (§8, "The live reader").
 
 ### 5.5 Operator interface
 
@@ -451,6 +456,17 @@ Minimum during-game requirements:
 - State colours (fault red, attention amber, healthy green, fading) are
   reserved and never mark a button category (#155)
 - Plain-language "why" line — what state the machine is in and what put it there
+- **The game clock and period** (#235), in a fixed-height panel in the left
+  column, so no state it takes moves MAIN's tabs or a fader button. Live: the
+  period (`Q1` to `Q4`, `Pregame`, `Halftime`, anything else as the board wrote
+  it) and `mm:ss`, tagged `running`, `stopped` or `end of period`. Every other
+  state shows `--:--`, never an old time: `no RTD yet`, `RTD silent since
+  HH:MM`, `RTD arriving but not decoding`, `two RTD sources`, `RTD flood:
+  decoding paused`, `RTD reader down: <why>`; a page link gone quiet, or a running clock whose snapshot is
+  older than 3 s (`fresh_for`, sent in the `game_clock` block; a running clock
+  changes every second), blanks it and says `page link stale`. A stopped clock
+  changes nothing, so a stopped one that starts running during a half-open link
+  reads `stopped` until the link banner trips. It is context for the operator, never a gate (§2)
 - Recording state, which unlike the fader **is** confirmed (§5.9). Commanded and
   confirmed values must be visually distinct; never render them alike
 - **The state of the link to the box itself.** Everything above is a claim the
@@ -1071,12 +1087,50 @@ the control network.
 | From 18:06:34 | `.26` | Back after 53 s of silence: the booth fault that broke the stadium clocks |
 | From 18:24:40 | `.31` | Back after 5 min of silence from 18:19:28 |
 
+It then went quiet a third time, for 82.8 s from 18:24:51, after `.31` had spoken
+for about 11 s: that is the operator unplugging the laptop to rule it out
+(game-4.md), so it is the laptop's silence and not the booth's.
+
 Nobody on this side changed anything. So **a reader accepts port 21000 from
 any source, never pins an address, and logs every change of source.**
 `tacet-rtd` reports each change as a `source` row, and `tacet.stoppages` will
 not vouch for a hold that spans one. Two sources at once was not seen; a frozen
 `.28` beside a live `.30` is the case to expect. Which machines these are is
 still to ask (below).
+
+### The live reader (#235)
+
+The box reads this stream itself, inside `tacet-serve`'s event loop, for the game
+clock on the page. It is display only (§5.4): no control-path module imports it.
+
+- **Any source, on UDP 21000, bound to every address.** A limited broadcast is
+  not delivered to a socket bound to one unicast address, so the bind is
+  `0.0.0.0`, and there is no `reuse_port`: a second box on the port says `down`
+  and does not quietly share it. A port that cannot be bound is `down` on the
+  page and never a refusal to start.
+- **Liveness is arrival, not the clock's value.** The time of day is written every
+  second whatever the game does, even with the main clock stopped, so the feed is
+  stale after **3 s** with no valid write. The longest normal gap in 66,775 across
+  Games 4 and 5 was 1.109 s, and every real silence was 18 s or longer. Unless the
+  feed is live the view carries no clock, no period and no flag.
+- **A field not yet written is `None`; a blank is `""`.** A box started mid-game
+  is live within a second from the time of day, and each field waits for a write
+  that covers it. The 26-byte running-clock write covers offsets 0 to 25, so the
+  clock can be known before whether it is running (offset 27).
+- **Two sources at once withhold the clock**: whose is it? A change in the one
+  source is logged (`rtd-source`), and each change of status (`rtd-status`),
+  both only on a change, both Reaper markers.
+- **It has to survive anything a UDP port is sent.** A datagram over 756 bytes
+  (twice a full write, 378) is counted and never decoded. Decoding stops above
+  50 a second, ten times the busiest second in either game. A frame that does
+  not decode applies nothing and does not refresh liveness. The App catches
+  anything else, resets the reader and latches `rtd-reader` as a red banner,
+  and a snapshot guard means a bad view cannot fail a fader POST.
+
+Known limit: the `rtd-status` markers have no hold-down. A sender whose period is
+longer than the 3 s staleness (a board in standby sending only its 10 s full
+rewrite) or a stray second sender would write two markers per period, about 2,000
+in a game. It has never been seen. Tracked in #254.
 
 ### The whole buffer, every ten seconds
 

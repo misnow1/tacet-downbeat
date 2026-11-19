@@ -190,6 +190,19 @@ PAGE_QUOTES: tuple[tuple[str, tuple[Path, ...]], ...] = (
     ("LINK_DOWN", (TROUBLESHOOTING,)),
     ("LINK_CONNECTING", (TROUBLESHOOTING,)),
     ("LINK_SILENT", (TROUBLESHOOTING,)),
+    # #235: the game clock panel. Every state is a row in troubleshooting.md; the
+    # live words and the silence are in the runbook too.
+    ("GAME_CLOCK_RUNNING", (RUNBOOK, TROUBLESHOOTING)),
+    ("GAME_CLOCK_STOPPED", (RUNBOOK, TROUBLESHOOTING)),
+    ("GAME_CLOCK_AT_ZERO", (TROUBLESHOOTING,)),
+    ("GAME_CLOCK_WAITING", (TROUBLESHOOTING,)),
+    ("GAME_CLOCK_SILENT", (RUNBOOK, TROUBLESHOOTING)),
+    ("GAME_CLOCK_NEVER", (RUNBOOK, TROUBLESHOOTING)),
+    ("GAME_CLOCK_UNDECODABLE", (TROUBLESHOOTING,)),
+    ("GAME_CLOCK_TWO_SOURCES", (TROUBLESHOOTING,)),
+    ("GAME_CLOCK_FLOOD", (TROUBLESHOOTING,)),
+    ("GAME_CLOCK_DOWN", (RUNBOOK, TROUBLESHOOTING)),
+    ("GAME_CLOCK_LINK_STALE", (TROUBLESHOOTING,)),
 )
 
 #: (module, constant in it, the docs that quote its fixed words).
@@ -224,6 +237,11 @@ BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (serve, "INTERFACE_WARNING_NOTE", (TROUBLESHOOTING, BOX)),
     (serve, "INTERFACES_NOT_CONFIGURED_NOTE", (BOX,)),
     (serve, "INTERFACE_ROLE_NOT_SET", (TROUBLESHOOTING, BOX)),
+    # #235. The terminal's RTD lines are quoted up to their first value; the
+    # words after the time are checked one by one in `test_every_rtd_line_...`.
+    (serve, "RTD_LISTENING", (TROUBLESHOOTING,)),
+    (serve, "RTD_BIND_FAILED", (TROUBLESHOOTING,)),
+    (app, "RTD_READER_ERROR", (TROUBLESHOOTING,)),
 )
 
 #: String constants in app.js that the runbook does not quote, and why not.
@@ -239,6 +257,8 @@ PAGE_NOT_QUOTED: dict[str, str] = {
     "TARGET_CHIP_WORD": "quoted with its level, in test_the_runbook_quotes_the_target_chip",
     "WAKE_HELD": "a reassurance, not a fault",
     "WAKE_ADVICE": "gameday.md Pre-flight names it as the Auto-Lock advice",
+    "GAME_CLOCK_BLANK": "the `--:--` the rows above show, which is markup and not words",
+    "GAME_CLOCK_QUARTER_WORD": "the `Q` in `Q1`, before a digit",
 }
 
 
@@ -315,6 +335,43 @@ class QuotedMessagesExist(unittest.TestCase):
         for name in ("INTERFACES_OK", "INTERFACES_BAD", "INTERFACES_UNCHECKED", "INTERFACES_COULD_NOT"):
             with self.subTest(name):
                 self.assertIn(page_constant(self.script, name), self.docs[BOX])
+
+    def test_the_period_words_the_page_spells_out_are_in_the_runbook(self) -> None:
+        # They sit inside an object, so the string-constant scan cannot see them.
+        found = re.search(r"^const GAME_CLOCK_PERIOD_WORDS = \{([^}]*)\}", self.script, re.MULTILINE)
+        assert found is not None
+        words = re.findall(r'"([^"]+)"', found[1])
+        self.assertEqual(sorted(words), ["Halftime", "Pregame"])
+        for word in words:
+            for doc in (RUNBOOK, TROUBLESHOOTING):
+                with self.subTest(word=word, doc=doc.name):
+                    self.assertIn(word, self.docs[doc])
+
+    def test_every_rtd_terminal_line_is_in_troubleshooting(self) -> None:
+        # #235: the words after the time. A line renamed here and not in the doc
+        # leaves someone looking for a message that is no longer printed.
+        lines = (
+            serve.RTD_LIVE,
+            serve.RTD_SILENT,
+            serve.RTD_SILENT_NOTHING_DECODED,
+            serve.RTD_SOURCE_CHANGED,
+            serve.RTD_TWO_SOURCES,
+            serve.RTD_UNDECODABLE,
+            serve.RTD_FLOOD,
+            serve.RTD_DOWN,
+        )
+        for line in lines:
+            words = fixed_words(line.split("{wall}: ", 1)[1])
+            with self.subTest(line=line):
+                self.assertIn(words, self.docs[TROUBLESHOOTING])
+
+    def test_the_page_states_and_the_terminal_lines_say_the_same_things(self) -> None:
+        # The page says `RTD silent since`, the terminal `silent since`: one phrase.
+        silent = page_constant(self.script, "GAME_CLOCK_SILENT")
+        self.assertIn(serve.RTD_SILENT.split("{wall}: ", 1)[1].split(" {")[0], silent)
+        self.assertIn(
+            serve.RTD_UNDECODABLE.split("{wall}: ", 1)[1], page_constant(self.script, "GAME_CLOCK_UNDECODABLE")
+        )
 
     def test_the_banner_row_and_the_page_use_the_same_unconfigured_words(self) -> None:
         # The chip and the banner both say it is the section that is missing.

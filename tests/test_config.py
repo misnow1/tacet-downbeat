@@ -16,7 +16,7 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
-from tacet import config, interfaces, serve, targets, verify_dm7, verify_reaper
+from tacet import config, interfaces, rtd, serve, targets, verify_dm7, verify_reaper
 
 SAMPLE = """
 [console]
@@ -35,6 +35,9 @@ queue = "~/queue.tsv"
 
 [fader]
 fade_seconds = 2.5
+
+[rtd]
+port = 21001
 
 [ui]
 listen = "0.0.0.0"
@@ -232,6 +235,15 @@ class TestPrecedence(_TempConfig):
         self.assertEqual(args.listen, "0.0.0.0")
         self.assertEqual(args.http_port, 8080)
         self.assertEqual(args.queue.name, "queue.tsv")
+        self.assertEqual(args.rtd_port, 21001)
+
+    def test_the_rtd_port_defaults_to_the_scoreboards_and_a_flag_beats_the_file(self):
+        # #235: built-in default < file < flag, for the one key the game clock takes.
+        silent = self.resolve(serve, [], text="[console]\nhost = '10.0.0.5'\ndca = 3\n")
+        self.assertEqual(silent.rtd_port, rtd.PORT)
+        self.assertEqual(self.resolve(serve, []).rtd_port, 21001)
+        self.assertEqual(self.resolve(serve, ["--rtd-port", "21005"]).rtd_port, 21005)
+        self.assertEqual(serve.CONFIG_MAPPING["rtd_port"], "rtd.port")
 
     def test_a_flag_beats_the_config(self):
         args = self.resolve(serve, ["--dca", "4", "--console-host", "10.0.0.9"])
@@ -399,7 +411,7 @@ class TestPortsAreInRange(_TempConfig):
 
     def test_every_key_named_port_is_checked_as_a_port(self):
         ports = [option for option in config.SCHEMA if option.key.endswith("port")]
-        self.assertEqual(len(ports), 4)
+        self.assertEqual(len(ports), 5)
         for option in ports:
             self.assertEqual(option.kind, "port", option.name)
 

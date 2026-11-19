@@ -2132,6 +2132,35 @@ class TestTheSwipeSurface(unittest.TestCase):
             with self.subTest(panel=panel):
                 self.assertIn(LEFT_PANEL_ID, ancestors[panel])
 
+    def test_game_clock_panel_is_outside_the_fader_column(self) -> None:
+        # #235: it lives in .left, a flex sibling of the fader column, so a state
+        # change can never move a fader button; and it sits between the prompt
+        # slot and the recording panel, above MAIN's tabs.
+        ancestors = _page_ancestors()
+        self.assertEqual(ancestors["game-clock"][0], LEFT_PANEL_ID)
+        for swept in (FADER_COLUMN_ID, "tab-main", "tab-more", "strip", "prompt"):
+            with self.subTest(swept=swept):
+                self.assertNotIn(swept, ancestors["game-clock"])
+        page = web.PAGE
+        self.assertLess(page.index('id="prompt"'), page.index('id="game-clock"'))
+        self.assertLess(page.index('id="game-clock"'), page.index('id="recording-status"'))
+        for inner in ("gc-value", "gc-tag"):
+            with self.subTest(inner=inner):
+                self.assertIn("game-clock", _page_ancestors()[inner])
+
+    def test_game_clock_reserves_its_height(self) -> None:
+        # Whatever it says, the panel is the same height, so MAIN's tabs stay put.
+        page = web.PAGE
+        panel_rule = page.split("#game-clock{", 1)[1].split("}", 1)[0]
+        self.assertIn("min-height:72px", panel_rule)
+        row_rule = page.split("#gc-row{", 1)[1].split("}", 1)[0]
+        self.assertIn("height:28px", row_rule)
+        self.assertIn("overflow:hidden", row_rule)
+        self.assertIn("line-height:28px", page.split("#gc-value{", 1)[1].split("}", 1)[0])
+        tag_rule = page.split("#gc-tag{", 1)[1].split("}", 1)[0]
+        self.assertIn("max-height:28px", tag_rule)
+        self.assertIn("line-height:14px", tag_rule)
+
     def test_the_js_stubs_page_parents_are_the_pages_own(self) -> None:
         ancestors = _page_ancestors()
         parents: dict[str, str | None] = json.loads(PAGE_PARENTS_FIXTURE.read_text(encoding="utf-8"))

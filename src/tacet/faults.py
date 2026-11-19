@@ -32,6 +32,9 @@ class FaultKind(StrEnum):
     INTERFACE_DANTE = "interface-dante"
     INTERFACE_CONTROL = "interface-control"
     INTERFACE_SCORING = "interface-scoring"
+    #: The game clock reader hit an exception it was not built for (#235). The
+    #: reader was reset and carries on; the fader is unaffected.
+    RTD_READER = "rtd-reader"
 
 
 class Change(StrEnum):

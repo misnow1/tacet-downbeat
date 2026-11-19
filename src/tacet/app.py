@@ -21,15 +21,19 @@ import contextlib
 import contextvars
 import enum
 import math
+import sys
 import time
+import traceback
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, assert_never
 
 from . import annotations as ann
-from . import arming, dm7, faults, interfaces, mirror_report, moves, prompts, reach, state, taps, targets
+from . import arming, dm7, faults, interfaces, mirror_report, moves, prompts, reach, rtd, state, taps, targets
+from . import game_clock as gclock
 from . import provenance as prov
+from .datagram import Datagram
 from .net import TransportError
 from .reaper import (
     TAKE_STOPPED,
@@ -102,6 +106,19 @@ STILL_MINE = "still-mine"
 #: took, never for a refused one, and it moves nothing: the entry is the only
 #: record of which level an open was meant to go to.
 TARGET_SET = "target-set"
+
+
+#: The game clock is pushed to the page at most this often (#235): the clock
+#: changes once a second, so four a second is slack, and under a flood this
+#: caps how many snapshots are built. The web tick carries anything held back.
+RTD_PUSH_MIN_SECONDS = 0.25
+#: The latched fault's words, and the view's when it cannot be built (#235).
+#: Quoted in docs/troubleshooting.md.
+RTD_READER_ERROR = (
+    "The game clock reader hit an error and was reset ({error}). "
+    "The clock may be missing for a moment; the fader is unaffected."
+)
+RTD_VIEW_ERROR = "view failed: {error}"
 
 
 @dataclass(frozen=True)
@@ -342,6 +359,8 @@ class App:
         expected_script: str | None = None,
         channels: int | None = None,
         interfaces_expected: Mapping[interfaces.Role, interfaces.Expected] | None = None,
+        game_clock: gclock.ClockReader | None = None,
+        rtd_port: int = rtd.PORT,
     ) -> None:
         self._console = console
         #: The checksum of the checkout's copy of the mirror script (#223), read
@@ -371,6 +390,21 @@ class App:
         #: What the laptop's network adapters look like against the roles the
         #: config names (#234). Observed only; empty when none are configured.
         self._interfaces = interfaces.Tracker(expected=dict(interfaces_expected or {}))
+        #: The scoreboard's game clock, read from RTD (#235). Display only: this
+        #: is read by `rtd_*` and by the snapshot, and by nothing that moves the
+        #: fader (tests/test_app.py asserts the list). Context, never a gate.
+        self._game_clock: gclock.ClockReader = game_clock if game_clock is not None else gclock.Reader()
+        self._rtd_port = rtd_port
+        self._rtd_listeners: list[Callable[[gclock.Transition], None]] = []
+        #: When the page was last told the clock moved, and whether a change is
+        #: being held back until the next tick.
+        self._rtd_pushed_at: float | None = None
+        self._rtd_held = False
+        #: True from a caught exception until the next datagram is read cleanly:
+        #: what "still present" means for the reader fault.
+        self._rtd_failing = False
+        #: Whether the failure to even report a failure has been printed this run.
+        self._rtd_inner_printed = False
         #: What code this box is (#157). None only in tests that do not care;
         #: `serve.build` always passes one. Never probed here: git is asked once,
         #: by `serve.main`, before the loop exists.
@@ -1452,6 +1486,8 @@ class App:
             ):
                 role = interfaces.role_for(kind)
                 return role is not None and self._interfaces.bad(role)
+            case faults.FaultKind.RTD_READER:
+                return self._rtd_failing
             case _:
                 assert_never(kind)
 
@@ -1506,6 +1542,147 @@ class App:
             )
         if observed.changed or observed.went_bad:
             self._notify()
+
+    # -- the scoreboard's game clock (#235) ---------------------------------
+    #
+    # Everything here is display only. Each entry point catches whatever the
+    # reader throws, because it runs on the event loop that moves the fader: a
+    # bug in decoding a datagram costs the page its clock and nothing else.
+
+    def on_rtd(self, listener: Callable[[gclock.Transition], None]) -> None:
+        """Told of each change in the feed's status or source: the terminal's line."""
+        self._rtd_listeners.append(listener)
+
+    def rtd_listening(self, port: int) -> None:
+        """The receiver is bound: `port` is what the entries say it listens on.
+
+        Writes one `rtd-status` saying so, with status `never`, so a log of
+        "listening, heard nothing" can be told from one of "never listened".
+        Never raises."""
+        self._rtd_port = port
+        try:
+            data: dict[str, Any] = {
+                "status": gclock.Status.NEVER.value,
+                "previous": None,
+                "source": None,
+                "sources": [],
+                "detail": None,
+                "port": port,
+                **self._game_clock.counts.as_data(),
+            }
+            self._record(ann.RTD_STATUS, data=data)
+        except Exception as exc:
+            self._rtd_error(exc)
+
+    def rtd_received(self, payload: bytes, source: str, source_port: int) -> None:
+        """One datagram from the scoreboard's port. Never raises."""
+        try:
+            now = self._monotonic()
+            fed = self._game_clock.feed(Datagram(now, source, source_port, self._rtd_port, payload))
+            self._rtd_failing = False
+            self._rtd_transitions(fed.transitions)
+            if fed.shown_changed or fed.transitions:
+                self._rtd_push(now)
+        except Exception as exc:
+            self._rtd_error(exc)
+
+    def rtd_tick(self) -> None:
+        """The once-a-second look: the edges no datagram announces (live to
+        stale), and a change held back by the rate limit. Never raises."""
+        try:
+            now = self._monotonic()
+            transitions = self._game_clock.poll(now=now)
+            self._rtd_transitions(transitions)
+            if transitions or self._rtd_held:
+                self._rtd_push(now, force=True)
+        except Exception as exc:
+            self._rtd_error(exc)
+
+    def rtd_failed(self, detail: str) -> None:
+        """The receiver could not bind, or lost its socket (#41): the clock is
+        down, and the page says so. Never raises."""
+        try:
+            now = self._monotonic()
+            self._rtd_transitions(self._game_clock.fail(detail, now=now))
+            self._rtd_push(now, force=True)
+        except Exception as exc:
+            self._rtd_error(exc)
+
+    def _rtd_push(self, now: float, *, force: bool = False) -> None:
+        last = self._rtd_pushed_at
+        if not force and last is not None and now - last < RTD_PUSH_MIN_SECONDS:
+            self._rtd_held = True
+            return
+        self._rtd_pushed_at = now
+        self._rtd_held = False
+        self._notify()
+
+    def _rtd_transitions(self, transitions: tuple[gclock.Transition, ...]) -> None:
+        for change in transitions:
+            if isinstance(change, gclock.StatusChanged):
+                data = {
+                    "status": change.view.status.value,
+                    "previous": change.previous.value,
+                    "source": change.view.source,
+                    "sources": list(change.view.sources),
+                    "detail": change.view.detail,
+                    "port": self._rtd_port,
+                    **change.counts.as_data(),
+                }
+                self._record(ann.RTD_STATUS, data=data)
+            else:
+                self._record(ann.RTD_SOURCE, data={"old": change.old, "new": change.new, "port": self._rtd_port})
+            for listener in self._rtd_listeners:
+                # A broken listener must not break the reader.
+                with contextlib.suppress(Exception):
+                    listener(change)
+
+    def _rtd_error(self, exc: Exception) -> None:
+        """The reader raised: count it, start it clean, latch the fault once.
+
+        Fresh display, because whatever half-applied is not to be believed. The
+        traceback goes to the terminal for the first error of a latch only: a
+        bug that fires on every datagram must not fill the screen.
+        """
+        self._rtd_failing = True
+        first = self._faults.latched(faults.FaultKind.RTD_READER) is None
+        if first:
+            with contextlib.suppress(Exception):
+                traceback.print_exception(exc, file=sys.stderr)
+        # Latch first, so a reset that itself fails still leaves the fault up and
+        # `first` true only once. Each step has its own guard: nothing is left to
+        # do but keep the loop, and the next datagram is read normally.
+        try:
+            self._raise_fault(
+                faults.FaultKind.RTD_READER,
+                RTD_READER_ERROR.format(error=f"{type(exc).__name__}: {exc}"),
+                data={"error": f"{type(exc).__name__}: {exc}", "port": self._rtd_port},
+            )
+            # Only for a new latch: a bug that fires on every datagram must not
+            # build a snapshot for each.
+            if first:
+                self._notify()
+        except Exception:
+            self._rtd_say_inner()
+        try:
+            self._game_clock.forget_display()
+        except Exception:
+            self._rtd_say_inner()
+
+    def _rtd_say_inner(self) -> None:
+        """The failure to even report a failure: printed once per run."""
+        if not self._rtd_inner_printed:
+            self._rtd_inner_printed = True
+            with contextlib.suppress(Exception):
+                traceback.print_exc(file=sys.stderr)
+
+    def _game_clock_view(self, now: float) -> gclock.ClockView:
+        """The view for the snapshot. A snapshot is returned by every fader POST,
+        so a view that raises must become a `down` one and not a failed move."""
+        try:
+            return self._game_clock.view(now=now)
+        except Exception as exc:
+            return gclock.ClockView.down(RTD_VIEW_ERROR.format(error=f"{type(exc).__name__}: {exc}"))
 
     def report_observed(self, observed: mirror_report.Observed) -> None:
         """What the mirror's report watch has seen (#204). Never raises. The
@@ -1855,6 +2032,13 @@ class App:
             # at an IP, never the DM7, the port or a delivered packet:
             # `fader.confirmed` stays False regardless.
             "console": (self._console_check or reach.Check.not_checked("")).as_snapshot(),
+            # The scoreboard's game clock and period, from RTD (#235). Context for
+            # the operator and never a gate: nothing reads it back. The values
+            # are None unless the feed is live, and the one time field in it is
+            # fixed while nothing arrives, so it does not churn the snapshot.
+            # `fresh_for` is how old a running clock may be on the page before the
+            # page stops showing it (M1): fixed, so it never churns the snapshot.
+            "game_clock": {**self._game_clock_view(now).as_snapshot(), "fresh_for": gclock.PAGE_FRESH_SECONDS},
             # The laptop's own network adapters against the roles the config
             # names (#234). What the box sees of itself; nothing about the far end.
             "interfaces": self._interfaces.as_snapshot(),

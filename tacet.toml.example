@@ -144,6 +144,13 @@ control = "00:00:5e:00:53:01"
 # The scoreboard's RTD stream arrives on the control adapter, on another VLAN.
 scoring = { mac = "00:00:5e:00:53:01", vlan = 20 }
 
+# The scoreboard's RTD feed, read for the game clock on the page (#235). Display
+# only: it is never a gate on the fader. The box listens on every address, since
+# the board broadcasts to 255.255.255.255 and a socket bound to one address is
+# not delivered a broadcast; there is no key for that, and none to turn it off.
+[rtd]
+port = 21000                # --rtd-port
+
 # The operator page.
 [ui]
 # 0.0.0.0 or the iPad cannot reach it. 127.0.0.1 serves this machine only,
