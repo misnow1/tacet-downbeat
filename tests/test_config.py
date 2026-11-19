@@ -466,7 +466,7 @@ HOST_DESTS = tuple(
     (module, dest)
     for module in (serve, verify_dm7, verify_reaper)
     for dest, name in module.CONFIG_MAPPING.items()
-    if name.endswith("host")
+    if any(option.name == name and option.kind == "ipv4" for option in config.SCHEMA)
 )
 
 #: Names, and an IPv6 literal. None is an IPv4 address.

@@ -77,6 +77,13 @@ PORT_MAX = (1 << PORT_BITS) - 1
 
 #: The one wording for a port refusal, shared by the file and the flags.
 PORT_RANGE = f"must be a port from {PORT_MIN} to {PORT_MAX}"
+#: What a host must be, in the operator's words (#71).
+IPV4_REQUIRED = "must be an IPv4 address like 10.0.0.5, never a name"
+#: Why, said after the refusal.
+IPV4_REASON = (
+    "a name would be looked up again for every packet sent, and a slow lookup stalls the fader. "
+    "Reaper on this laptop is 127.0.0.1"
+)
 
 
 class ConfigError(Exception):
@@ -86,12 +93,6 @@ class ConfigError(Exception):
     to someone standing at a laptop 20 minutes before kickoff.
     """
 
-
-IPV4_REQUIRED = "must be an IPv4 address like 10.0.0.5, never a name"
-IPV4_REASON = (
-    "a name would be looked up again for every packet sent, and a slow lookup stalls the fader. "
-    "Reaper on this laptop is 127.0.0.1"
-)
 
 #: The value kinds a config key may take. `path` is `str` in the file and a
 #: `Path` afterwards, with `~` expanded, because every path here is typed by a

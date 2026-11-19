@@ -1169,7 +1169,7 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="start even without room for a whole game, or with nowhere to check",
     )
-    p.add_argument("--reaper-host", type=config.ipv4, help="omit to run without transport control, an IPv4 address")
+    p.add_argument("--reaper-host", type=config.ipv4, help="an IPv4 address; omit to run without transport control")
     p.add_argument("--reaper-port", type=config.port, default=reaper.DEFAULT_SEND_PORT)
     p.add_argument("--reaper-feedback-port", type=config.port, default=reaper.DEFAULT_RECEIVE_PORT)
     # No flag for these, so argparse has no default to set: the config's values

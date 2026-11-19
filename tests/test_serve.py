@@ -16,6 +16,7 @@ from unittest import mock
 
 from tacet import (
     annotations,
+    config,
     disk,
     dm7,
     faults,
@@ -1442,6 +1443,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
                 self.assertEqual(checked[0], started[0])
                 self.assertEqual(checked[2], started[2])
                 self.assertTrue(checked[2])
+                if name.startswith("hostname"):
+                    self.assertIn(config.IPV4_REQUIRED, checked[2])
                 self.assertFalse(self.ran)
                 self.pinged.assert_not_called()
 

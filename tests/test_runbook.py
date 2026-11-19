@@ -221,7 +221,7 @@ BOX_QUOTES: tuple[tuple[ModuleType, str, tuple[Path, ...]], ...] = (
     (script_check, "QUESTION", (RUNBOOK, TROUBLESHOOTING, BOX, REAPER)),
     # #71.
     (config, "IPV4_REQUIRED", (RUNBOOK, TROUBLESHOOTING, BOX)),
-    (config, "IPV4_REASON", (RUNBOOK, TROUBLESHOOTING)),
+    (config, "IPV4_REASON", (RUNBOOK, TROUBLESHOOTING, BOX)),
     (reach, "ANSWERED", (RUNBOOK, TROUBLESHOOTING, BOX)),
     (reach, "NOTHING_THERE", (RUNBOOK, TROUBLESHOOTING, BOX)),
     (reaper, "TAKE_STOPPED", (RUNBOOK, TROUBLESHOOTING)),
