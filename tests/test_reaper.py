@@ -685,8 +685,12 @@ class TestCommands(unittest.TestCase):
     def test_the_command_surface_is_pinned(self):
         # Only `start_recording` and `refresh` have callers in src/. The other
         # three are kept on purpose for future transport control (maintainer
-        # decision on #42). A new public command fails here, so adding one is a
+        # decision on #42 and #257, the issue for spinning out the Reaper
+        # client). A new public command fails here, so adding one is a
         # decision. The route sweep in test_web.py guards what the box sends.
+        # `test_no_command_ever_emits_the_stop_address` still calls `pause()`
+        # itself and only forbids `/stop`. That residual was accepted when the
+        # deletion was declined; the route sweep is the real guard.
         c, _ = client()
         public = {name for name in dir(c) if not name.startswith("_") and callable(getattr(c, name))}
         self.assertEqual(

@@ -2282,9 +2282,12 @@ class TestEveryRouteAgainstBothSenders(WebTestCase):
         self.clock = [5000.0]
         return super().build_app(
             monotonic=lambda: self.clock[0],
-            slow_open_seconds=self.FADE_SECONDS,
-            ready_ride_seconds=self.FADE_SECONDS,
-            retarget_ride_seconds=self.FADE_SECONDS,
+            **{
+                "slow_open_seconds": self.FADE_SECONDS,
+                "ready_ride_seconds": self.FADE_SECONDS,
+                "retarget_ride_seconds": self.FADE_SECONDS,
+                **options,
+            },
         )
 
     async def asyncSetUp(self):
@@ -2340,7 +2343,7 @@ class TestEveryRouteAgainstBothSenders(WebTestCase):
             self.clock[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT + LISTEN_MARGIN
             self.tacet.handle_recorder_packet(meter_packet())
 
-        await self.step("FEEDBACK", FEEDBACK, act)
+        await self.step(FEEDBACK, FEEDBACK, act)
 
     async def run_sweep(self):
         listened_parked(self.tacet._recorder, self.clock[0])

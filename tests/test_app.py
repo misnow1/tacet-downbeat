@@ -6873,17 +6873,23 @@ class TestTheMoveGoesBeforeTheLog(AppTestCase):
         self.assertEqual(app.machine.state, state.State.OPEN)
         self.assert_every_send_precedes_the_first_log_write()
 
-    async def test_a_ride_or_fade_is_under_way_before_its_annotation_is_logged(self):
-        for key, opened_first in (("up-slow", False), ("out", True)):
-            with self.subTest(key=key):
-                app = self.build_ordered()
-                await app.close_now()
-                await app.arm()
-                if opened_first:
-                    await app.trigger()
-                    await app.wait_for_fade()
-                self.events.clear()
-                await app.annotate(key)
-                first_log = next(event for event in self.events if event != SENT)
-                self.assertEqual(first_log, (LOGGED, True))
-                await app.wait_for_fade()
+    async def assert_moving_at_first_log(self, app, key):
+        self.events.clear()
+        await app.annotate(key)
+        first_log = next(event for event in self.events if event != SENT)
+        self.assertEqual(first_log, (LOGGED, True))
+        await app.wait_for_fade()
+
+    async def test_a_ride_is_under_way_before_its_annotation_is_logged(self):
+        app = self.build_ordered()
+        await app.close_now()
+        await app.arm()
+        await self.assert_moving_at_first_log(app, "up-slow")
+
+    async def test_a_fade_is_under_way_before_its_annotation_is_logged(self):
+        app = self.build_ordered()
+        await app.close_now()
+        await app.arm()
+        await app.trigger()
+        await app.wait_for_fade()
+        await self.assert_moving_at_first_log(app, "out")

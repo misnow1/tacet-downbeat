@@ -75,7 +75,8 @@ PROBE = (
 
 def _loaded_by_importing(name: str) -> set[str]:
     result = subprocess.run([sys.executable, "-I", "-c", PROBE, name], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, f"importing {name} failed:\n{result.stderr}"
+    if result.returncode != 0:
+        raise AssertionError(f"importing {name} failed:\n{result.stderr}")
     return set(result.stdout.split())
 
 
@@ -85,7 +86,7 @@ class TestTheControlPathLoadsNothingOutsideItself(unittest.TestCase):
     control path in a fresh interpreter and looking at what actually loaded
     does not."""
 
-    ALLOWED_TACET = {"tacet"} | {f"tacet.{name}" for name in CONTROL_PATH}
+    ALLOWED_TACET = frozenset({"tacet"} | {f"tacet.{name}" for name in CONTROL_PATH})
 
     def test_control_path_transitive_imports_are_stdlib(self):
         for name in CONTROL_PATH:

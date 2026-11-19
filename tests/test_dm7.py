@@ -495,11 +495,13 @@ STALLED_SEND = 10
 
 #: A close that is not the default length, so the argument is shown to be used.
 CONFIGURED_FADE_SECONDS = 2 * dm7.DEFAULT_FADE_SECONDS
+FADE_SHAPE_TOLERANCE = dm7.UNITS_PER_DB  # one dB
 
 
 class TestTheCloseIsSlowAndTheOpenIsFast(unittest.IsolatedAsyncioTestCase):
-    """#42: the asymmetry is the design. A fade that lands in a tenth of the time
-    still ramps monotonically, so the length is what these assert."""
+    """#42: the asymmetry is the design. A close lasts its configured length, its
+    audible part runs to the end, and it is linear in dB, so it is half way down
+    at half time."""
 
     TICK = 1 / dm7.DEFAULT_TICK_HZ
 
@@ -520,6 +522,12 @@ class TestTheCloseIsSlowAndTheOpenIsFast(unittest.IsolatedAsyncioTestCase):
                 self.assertGreaterEqual(clock.sends[-2][0], seconds - 2 * self.TICK)
                 # And it starts at once, not after a wait.
                 self.assertLessEqual(clock.sends[0][0], self.TICK)
+                # Linear in dB, so half way through it is still half way down: a
+                # close that drops most of its level in the first ticks is a snap
+                # close however long its tail.
+                halfway = (dm7.UNITY + dm7.DEFAULT_FADE_FLOOR) / 2
+                at_half = [lvl for at, lvl in clock.sends if at <= seconds / 2 + self.TICK / 2][-1]
+                self.assertGreaterEqual(at_half, halfway - FADE_SHAPE_TOLERANCE)
 
     async def test_open_takes_the_open_seconds(self):
         clock = FakeLoopClock()
