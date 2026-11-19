@@ -306,6 +306,13 @@ class TestANudge(unittest.TestCase):
                 self.assertEqual(steps[-1][1], end, (start, end))
 
 
+class TestTheConsoleIsAnAddress(unittest.TestCase):
+    def test_a_name_is_refused_when_no_sender_is_injected(self):
+        # #71: the default sender is a UdpSender, which refuses a name.
+        with self.assertRaises(ValueError):
+            dm7.Dm7Client("dm7.local", dca=3)
+
+
 class TestSending(unittest.TestCase):
     def test_send_level_emits_one_int_argument_at_the_fader_address(self):
         c, sender = client()

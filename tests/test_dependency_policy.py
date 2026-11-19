@@ -62,6 +62,18 @@ class TestControlPathIsDependencyFree(unittest.TestCase):
         self.assertNotIn("detector", CONTROL_PATH)
 
 
+class TestTheControlPathNeverResolvesAName(unittest.TestCase):
+    """#71: a lookup has no timeout and would stall the fader. Only literals reach a socket."""
+
+    RESOLVERS = ("getaddrinfo", "gethostbyname", "create_connection")
+
+    def test_no_control_path_module_names_a_resolver(self):
+        for name in CONTROL_PATH:
+            source = (PACKAGE_ROOT / f"{name}.py").read_text(encoding="utf-8")
+            for resolver in self.RESOLVERS:
+                self.assertNotIn(resolver, source, f"tacet.{name} mentions {resolver}")
+
+
 class TestConfigStaysImportableFromTheControlPath(unittest.TestCase):
     """`tacet.config` is not control path, but it is deliberately free to become it.
 

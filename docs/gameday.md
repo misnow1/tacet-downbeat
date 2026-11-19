@@ -27,7 +27,7 @@ nobody wrote it down, not that nobody knows.
 
 | | Value | Where it comes from |
 |---|---|---|
-| Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control |
+| Console IP | `192.168.20.121` | DM7: Setup > Network > For Mixer Control. An IPv4 address, never a name: the box refuses one with `must be an IPv4 address like 10.0.0.5, never a name` - a name would be looked up again for every packet sent, and a slow lookup stalls the fader. Reaper on this laptop is 127.0.0.1. |
 | Band DCA number | `17` | The console's DCA layout |
 | Recording path | `~/Reaper Media` | Laptop's local disk, one project folder per game. Listed as `~/Reaper Audio` until game 3; the projects were always here. Recorded there, not to the NAS - copied over after the game, see "After the game" below |
 | Channels recorded | `34` | Armed tracks on [the patch list](reaper.md#tracks-to-record); `capture.channels`, and the box checks the recording path has room for them. The page's tracks chip says when this differs from what Reaper has armed (#167) |
@@ -72,7 +72,7 @@ restart the box on the **same** `--log`. A box that was never told the spare's
 MAC will call it missing: it checks the MAC it was given, not "an adapter".
 
 `reaper.host = "127.0.0.1"`, always: a Dante-side address works today and
-vanishes the moment that cable comes out.
+vanishes the moment that cable comes out. Never `localhost`, which the box refuses (#71).
 
 **If the iPad's link degrades, fall back to the page on the laptop, not to
 StageMix**, so annotation continues. Assume the page's wifi link in the bowl is

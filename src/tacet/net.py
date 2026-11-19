@@ -7,12 +7,30 @@ socket rather than as a response.
 
 The `Sender` seam exists so tests record packets instead of opening sockets, and
 so a future transport - a redundant path, a replay harness - drops in unchanged.
+
+The host is an IPv4 literal, never a name (#71). `sendto` looks a name up again
+for every packet, a lookup has no timeout, and a slow one would stall the
+fader. `UdpSender` refuses a name at construction; the config and the flags
+refuse one earlier, at load, with words for the operator.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import socket
 from typing import Protocol, runtime_checkable
+
+NOT_AN_IPV4_ADDRESS = "UdpSender takes an IPv4 address, got {host!r}: a name would be looked up on every packet (#71)"
+
+
+def is_ipv4_literal(host: str) -> bool:
+    """True for a dotted-quad IPv4 address. A name, an IPv6 literal and a
+    leading-zero octet are all False. Pure: nothing is resolved."""
+    try:
+        ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return True
 
 
 class TransportError(RuntimeError):
@@ -35,6 +53,8 @@ class UdpSender:
     """Fire and forget. Nothing is read back on this socket."""
 
     def __init__(self, host: str, port: int) -> None:
+        if not is_ipv4_literal(host):
+            raise ValueError(NOT_AN_IPV4_ADDRESS.format(host=host))
         self.host = host
         self.port = port
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
