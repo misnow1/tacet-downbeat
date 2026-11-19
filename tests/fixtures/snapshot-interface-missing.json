@@ -221,6 +221,18 @@
       "raised_at": 5000.0
     }
   ],
+  "game_clock": {
+    "at_zero": null,
+    "clock": null,
+    "detail": null,
+    "last_write_at": null,
+    "period": null,
+    "quarter": null,
+    "running": null,
+    "source": null,
+    "sources": [],
+    "status": "never"
+  },
   "interfaces": {
     "checked_at": 5000.0,
     "detail": null,

@@ -139,6 +139,12 @@ class TestStaleness(unittest.TestCase):
         self.assertEqual(reader.poll(now=START + gc.STALE_SECONDS + 1), ())
         self.assertEqual(reader.poll(now=START + 100), ())
 
+    def test_a_silence_nobody_polled_for_is_still_an_edge(self):
+        reader = self.live_reader()
+        fed = reader.feed(datagram(real.G5_14625, START + 60))
+        statuses = [t.view.status for t in fed.transitions if isinstance(t, gc.StatusChanged)]
+        self.assertEqual(statuses, [gc.Status.STALE, gc.Status.LIVE])
+
     def test_the_first_datagram_is_a_never_to_live_edge(self):
         reader = gc.Reader()
         fed = reader.feed(datagram(real.G5_14625, START))

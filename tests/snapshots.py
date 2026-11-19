@@ -36,6 +36,7 @@ from tacet.net import TransportError
 from tacet.state import Machine
 from tests.disk import Disk
 from tests.reaper_stream import METER, game_5_stream
+from tests.rtd_frames import GAME_5_KICKOFF, GAME_5_SOURCE
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PREFIX = "snapshot-"
@@ -63,6 +64,9 @@ RETARGET_SECONDS = dm7.DEFAULT_RETARGET_RIDE_SECONDS
 #: A playhead that renders as a recognisable timecode, 0:12:34.500, and that
 #: float32 - which OSC carries - holds exactly.
 POSITION = 754.5
+#: How long the scoreboard's feed has been silent in the stale fixture: past the
+#: reader's limit, and a round number.
+GAME_CLOCK_SILENCE = 12.0
 #: Long enough that no Reaper feedback counts as current any more.
 SILENCE = reaper.DEFAULT_FEEDBACK_TIMEOUT * 30
 
@@ -412,6 +416,33 @@ async def interface_missing(root: Path) -> dict[str, Any]:
     return box.app.snapshot()
 
 
+def _kickoff(box: Box) -> float:
+    """Game 5's kickoff through the live reader (#235), on the injected clock.
+    Returns when the last datagram arrived."""
+    at = CLOCK_START
+    for _number, offset, payload in GAME_5_KICKOFF:
+        at = CLOCK_START + offset
+        box.clock[0] = at
+        box.app.rtd_received(payload, GAME_5_SOURCE)
+    return at
+
+
+async def game_clock_live(root: Path) -> dict[str, Any]:
+    """The first quarter's clock at 14:51, running, from the real kickoff frames (#235)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    _kickoff(box)
+    return box.app.snapshot()
+
+
+async def game_clock_stale(root: Path) -> dict[str, Any]:
+    """The same feed, then nothing for a while: the clock is withheld, not frozen (#235)."""
+    box = _build(root, console=_Sender(), machine=_known())
+    last = _kickoff(box)
+    box.clock[0] = last + GAME_CLOCK_SILENCE
+    box.app.rtd_tick()
+    return box.app.snapshot()
+
+
 STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "standing-down": standing_down,
     "open-recording": open_recording,
@@ -431,6 +462,8 @@ STATES: dict[str, Callable[[Path], Awaitable[dict[str, Any]]]] = {
     "take-stopped": take_stopped,
     "take-checking": take_checking,
     "interface-missing": interface_missing,
+    "game-clock-live": game_clock_live,
+    "game-clock-stale": game_clock_stale,
 }
 
 

@@ -217,6 +217,14 @@ CONSOLE_CHECKED = "console-checked"
 #: nothing about what is plugged in at the far end.
 INTERFACES_CHECKED = "interfaces-checked"
 
+#: The box saying how the scoreboard's RTD feed is doing and where it comes from
+#: (#235). Written by `tacet.app` only on a change - the feed going live, going
+#: silent, becoming undecodable, being sent by two sources at once, flooding or
+#: the reader going down - and when the one live source changes. Display only:
+#: nothing here ever gated anything (design.md 2).
+RTD_STATUS = "rtd-status"
+RTD_SOURCE = "rtd-source"
+
 #: A latched fault going up and being cleared from the page (#233). Generic keys
 #: with the kind in `data`, as the prompt keys are, so a later fault (#234) adds
 #: a kind and never a key. Never renamed: logs and Reaper markers carry them.
@@ -251,6 +259,10 @@ VOCABULARY: tuple[EventType, ...] = (
     # Written by the box: startup, and whenever a role's adapter, address or
     # state changed. Never every poll: each entry becomes a Reaper marker (#234).
     _instant(INTERFACES_CHECKED, "Network adapters checked", Category.SESSION, button=False),
+    # Written by the box, only on a change, because each becomes a Reaper marker
+    # (#235). The feed's status, and the source it comes from.
+    _instant(RTD_STATUS, "Game clock feed changed", Category.SESSION, button=False),
+    _instant(RTD_SOURCE, "Scoreboard source changed", Category.SESSION, button=False),
     _instant(FAULT_RAISED, "Fault raised", Category.SESSION, button=False),
     _instant(FAULT_CLEARED, "Fault cleared", Category.SESSION, button=False),
     _instant(ANCHOR_EVENT, "Recording started", Category.SESSION, button=False),

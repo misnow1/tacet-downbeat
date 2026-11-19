@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from . import rtd
 from .datagram import Datagram
@@ -103,6 +103,11 @@ class ClockView:
     at_zero: bool | None
     quarter: str | None
     period: str | None
+
+    @classmethod
+    def down(cls, detail: str) -> ClockView:
+        """A view that says the reader is not working, with nothing to show."""
+        return cls(Status.DOWN, None, (), None, detail, None, None, None, None, None)
 
     def as_snapshot(self) -> dict[str, Any]:
         return {
@@ -193,6 +198,23 @@ def status_at(
     return Status.STALE
 
 
+class ClockReader(Protocol):
+    """What `tacet.app` needs of a reader, so a test can hand it one that fails."""
+
+    @property
+    def counts(self) -> Counts: ...
+
+    def feed(self, datagram: Datagram) -> Fed: ...
+
+    def poll(self, *, now: float) -> tuple[Transition, ...]: ...
+
+    def view(self, *, now: float) -> ClockView: ...
+
+    def fail(self, detail: str, *, now: float) -> tuple[Transition, ...]: ...
+
+    def forget_display(self) -> None: ...
+
+
 class Reader:
     def __init__(
         self,
@@ -224,6 +246,8 @@ class Reader:
     def feed(self, datagram: Datagram) -> Fed:
         """One datagram, stamped with the box's monotonic clock."""
         now = datagram.time
+        # A silence nobody polled for is still an edge: say so before the datagram ends it.
+        earlier = self._settle(now)
         before = self.view(now=now)
         self._count(datagrams=1)
         self._last_arrival_at = now
@@ -234,7 +258,7 @@ class Reader:
             self._last_drop_at = now
         else:
             self._decode(datagram, now)
-        transitions = self._settle(now)
+        transitions = (*earlier, *self._settle(now))
         return Fed(shown_changed=self.view(now=now) != before, transitions=transitions)
 
     def poll(self, *, now: float) -> tuple[Transition, ...]:
