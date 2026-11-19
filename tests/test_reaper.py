@@ -1,8 +1,11 @@
+import re
 import unittest
+from pathlib import Path
 
 from tacet import osc, reaper
 from tacet.net import TransportError
 from tests.reaper_stream import (
+    ALLOWED_TO_REAPER,
     DENSE_METERS_PER_SECOND,
     GAME_5_ANSWER_GAPS,
     GAME_5_ROLL_ENDS,
@@ -678,6 +681,28 @@ class TestCommands(unittest.TestCase):
         c.run_action(40157)
         c.refresh()
         self.assertNotIn(reaper.DEFAULT_ADDRESSES.stop, sender.addresses())
+
+    def test_the_command_surface_is_pinned(self):
+        # Only `start_recording` and `refresh` have callers in src/. The other
+        # three are kept on purpose for future transport control (maintainer
+        # decision on #42). A new public command fails here, so adding one is a
+        # decision. The route sweep in test_web.py guards what the box sends.
+        c, _ = client()
+        public = {name for name in dir(c) if not name.startswith("_") and callable(getattr(c, name))}
+        self.assertEqual(
+            public - {"handle_packet"},
+            {"start_recording", "refresh", "play", "pause", "run_action"},
+        )
+
+    def test_the_box_commands_send_only_allowed_messages(self):
+        c, sender = client()
+        c.start_recording()
+        c.refresh()
+        self.assertTrue(sender.packets)
+        for packet in sender.packets:
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            self.assertIn((decoded.address, tuple(decoded.args)), ALLOWED_TO_REAPER)
 
     def test_a_send_failure_is_raised_and_recorded(self):
         c, _ = client(sender=FailingSender())
@@ -1553,3 +1578,41 @@ class TestThePlayheadIsMoving(unittest.TestCase):
                 seen += 1
             self.assertEqual(after.playhead_moving(at), seen >= 2, at)
             self.assertFalse(reaper.take_stopped(after, at))
+
+
+#: The ReaScript functions `reaper/tacet_mirror.lua` calls (#42). None of them
+#: can start, stop, pause or seek the transport: it reads the play state and the
+#: playhead, and writes markers, regions and its own ExtState.
+MIRROR_SCRIPT_API = frozenset(
+    {
+        "AddProjectMarker2",
+        "atexit",
+        "CountTracks",
+        "defer",
+        "EnumProjects",
+        "get_action_context",
+        "GetCursorPosition",
+        "GetExtState",
+        "GetMediaTrackInfo_Value",
+        "GetPlayPosition",
+        "GetPlayState",
+        "GetProjectPath",
+        "GetResourcePath",
+        "GetSetMediaTrackInfo_String",
+        "GetTrack",
+        "GetUserInputs",
+        "SetExtState",
+        "ShowConsoleMsg",
+        "time_precise",
+    }
+)
+MIRROR_SCRIPT = Path(__file__).resolve().parent.parent / "reaper" / "tacet_mirror.lua"
+
+
+class TestTheMirrorScriptCannotStopTheTransport(unittest.TestCase):
+    def test_the_mirror_script_calls_only_these_reaper_functions(self):
+        # A new call, a transport one above all (`Main_OnCommand`, `OnStopButton`,
+        # `CSurf_OnPlay`), must be added to the list above on purpose.
+        used = set(re.findall(r"reaper\.(\w+)", MIRROR_SCRIPT.read_text(encoding="utf-8")))
+        self.assertLessEqual(used, MIRROR_SCRIPT_API)
+        self.assertTrue(used, "the script was not read")

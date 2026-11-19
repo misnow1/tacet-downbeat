@@ -257,3 +257,15 @@ def game_5_stream(
     events.sort()
     for at, _, packet in events:
         yield at, packet
+
+
+#: Every message the box may send Reaper, and nothing else (#42). `/record` only
+#: starts: the box sends it only when the record state says nothing is rolling,
+#: so it is never the second tap of a toggle. The refresh only asks. A stop, a
+#: pause, a play or any other action id is not on the list.
+ALLOWED_TO_REAPER = frozenset(
+    {
+        (reaper.DEFAULT_ADDRESSES.record, ()),
+        (reaper.DEFAULT_ADDRESSES.action, (reaper.REFRESH_ACTION,)),
+    }
+)

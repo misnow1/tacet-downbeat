@@ -192,6 +192,7 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         expected_script=None,
         channels=None,
         interfaces_expected=None,
+        loop_clock=None,
     ):
         """`level_known` defaults to True, unlike the production machine: a
         hundred-odd tests here are about something other than a cold boot, and
@@ -200,7 +201,8 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
 
         `steady` puts the console on a `LoopClock`, for any test that makes
         the console fail after a number of packets: on the real clock that
-        number depends on how fast the runner is (#92)."""
+        number depends on how fast the runner is (#92). A `loop_clock` given
+        is used the same way, so a test can read the clock the console runs on."""
         options = {} if opener is None else {"opener": opener}
         if sync is not None:
             options["sync"] = sync
@@ -208,8 +210,9 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         self.log.open()
         self.addCleanup(self.log.close)
         timing = {}
-        if steady:
+        if steady and loop_clock is None:
             loop_clock = LoopClock()
+        if loop_clock is not None:
             timing = {"monotonic": loop_clock.monotonic, "sleep": loop_clock.sleep}
         self.console = console_class(
             "192.0.2.1",
@@ -6773,3 +6776,114 @@ class TestInterfaces(AppTestCase):
         app = self.make({interfaces.Role.DANTE: interfaces.Expected(DANTE_MAC)})
         app.interfaces_checked(startup(listing_without("en8")))
         self.assertEqual(app.snapshot()["faults"][0]["id"], 1)
+
+
+#: A close that is not the default length, so a default slipping through shows.
+CONFIGURED_FADE_SECONDS = 2 * dm7.DEFAULT_FADE_SECONDS
+
+
+class ClockedSender(FakeSender):
+    """Notes the console's clock at each send."""
+
+    def __init__(self, clock: LoopClock) -> None:
+        super().__init__()
+        self.clock = clock
+        self.times: list[float] = []
+
+    def send(self, packet: bytes) -> None:
+        super().send(packet)
+        self.times.append(self.clock.now)
+
+
+class TestTheCloseTakesItsTime(AppTestCase):
+    """#42: the box hands the console the configured fade, not the console's default."""
+
+    async def test_a_release_fades_over_the_configured_fade_seconds(self):
+        clock = LoopClock()
+        sender = ClockedSender(clock)
+        app = self.build(
+            fade=CONFIGURED_FADE_SECONDS, loop_clock=clock, console_sender=sender, tick_hz=dm7.DEFAULT_TICK_HZ
+        )
+        await app.close_now()
+        await app.arm()
+        await app.trigger()
+        started = clock.now
+        await app.release()
+        await app.wait_for_fade()
+        tick = 1 / dm7.DEFAULT_TICK_HZ
+        self.assertEqual(sender.levels()[-1], dm7.MINUS_INF)
+        self.assertAlmostEqual(sender.times[-1] - started, CONFIGURED_FADE_SECONDS, delta=tick)
+
+
+#: What `OrderedSender` and the spied log put in the shared list.
+SENT = "sent"
+LOGGED = "logged"
+
+
+class OrderedSender(FakeSender):
+    def __init__(self, events: list[object]) -> None:
+        super().__init__()
+        self.events = events
+
+    def send(self, packet: bytes) -> None:
+        super().send(packet)
+        self.events.append(SENT)
+
+
+class TestTheMoveGoesBeforeTheLog(AppTestCase):
+    """#42: a missed downbeat is unrecoverable and must not wait behind a log
+    write, so a tap that moves the fader moves it before anything is logged."""
+
+    def build_ordered(self):
+        self.events: list[object] = []
+        app = self.build(console_sender=OrderedSender(self.events))
+        real = self.log.record
+
+        def spy(*args, **kwargs):
+            self.events.append((LOGGED, app.fader_moving))
+            return real(*args, **kwargs)
+
+        patcher = mock.patch.object(self.log, "record", side_effect=spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return app
+
+    def assert_every_send_precedes_the_first_log_write(self):
+        logged = [i for i, event in enumerate(self.events) if event != SENT]
+        self.assertGreaterEqual(len(logged), 2, "expected the commanded entry and the tap's own")
+        before = self.events[: logged[0]]
+        self.assertTrue(before, "nothing was sent before the first log write")
+        self.assertEqual(set(before), {SENT})
+        self.assertNotIn(SENT, self.events[logged[0] :])
+
+    async def test_annotate_moves_before_logging(self):
+        app = self.build_ordered()
+        await app.close_now()
+        await app.arm()
+        self.events.clear()
+        await app.annotate("up-drums")
+        self.assert_every_send_precedes_the_first_log_write()
+
+    async def test_an_open_from_standing_down_moves_before_it_logs_the_arming(self):
+        # #89: an open from STANDING DOWN arms the box and opens.
+        app = self.build_ordered()
+        await app.close_now()
+        self.events.clear()
+        await app.annotate("up-whistle")
+        self.assertEqual(app.machine.state, state.State.OPEN)
+        self.assert_every_send_precedes_the_first_log_write()
+
+    async def test_a_ride_or_fade_is_under_way_before_its_annotation_is_logged(self):
+        for key, opened_first in (("up-slow", False), ("out", True)):
+            with self.subTest(key=key):
+                app = self.build_ordered()
+                await app.close_now()
+                await app.arm()
+                if opened_first:
+                    await app.trigger()
+                    await app.wait_for_fade()
+                self.events.clear()
+                await app.annotate(key)
+                first_log = next(event for event in self.events if event != SENT)
+                self.assertEqual(first_log, (LOGGED, True))
+                await app.wait_for_fade()
