@@ -103,6 +103,13 @@ def moving(state, position, now):
     return state
 
 
+class TestReaperIsAnAddress(unittest.TestCase):
+    def test_a_name_is_refused_when_no_sender_is_injected(self):
+        # #71: the default sender is a UdpSender, which refuses a name.
+        with self.assertRaises(ValueError):
+            reaper.ReaperClient("localhost")
+
+
 class TestTransportState(unittest.TestCase):
     def test_everything_starts_unknown_not_stopped(self):
         # "Not recording" and "we have not heard" are different, and the UI must

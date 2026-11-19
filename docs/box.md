@@ -39,7 +39,15 @@ built-in default  <  tacet.toml  <  the flag you type
 ```
 
 so nothing stops working if the file is absent, wrong, or deliberately
-overridden mid-game. Each tool says which config it read on startup -- `tacet-serve`
+overridden mid-game.
+
+`console.host`, `reaper.host` and their four flags (`--console-host`,
+`--reaper-host`, and `--host` on each verify tool) take an IPv4 address and
+nothing else. A name is refused at load with `must be an IPv4 address like
+10.0.0.5, never a name`: a name would be looked up again for every packet sent,
+and a slow lookup stalls the fader. Reaper on this laptop is 127.0.0.1.
+
+Each tool says which config it read on startup -- `tacet-serve`
 in the `config` row of its banner, the two `verify_` tools on a line of their
 own. If that reads `none (flags only)` and you expected a file, you are in the
 wrong directory.

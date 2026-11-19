@@ -27,7 +27,7 @@
 # The DM7. Read by tacet-serve and by verify_dm7.
 [console]
 # Setup > Network > For Mixer Control on the console.
-host = "10.0.0.5"           # --console-host  (verify_dm7: --host)
+host = "10.0.0.5"           # --console-host  (verify_dm7: --host); IPv4 only, never a name (#71)
 port = 49900                # --console-port  (verify_dm7: --port)
 # The band DCA. Getting this wrong rides somebody else's fader.
 dca = 3                     # --dca
@@ -39,7 +39,7 @@ quantized = false
 # Reaper. Read by tacet-serve and by verify_reaper.
 [reaper]
 # Reaper and the box share a machine for now.
-host = "127.0.0.1"          # --reaper-host   (verify_reaper: --host)
+host = "127.0.0.1"          # --reaper-host   (verify_reaper: --host); IPv4 only, never a name (#71)
 send_port = 8000            # --reaper-port   -- Reaper's "local listen port"
 receive_port = 9000         # --reaper-feedback-port -- Reaper's "device port"
 

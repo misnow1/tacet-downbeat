@@ -16,6 +16,7 @@ from unittest import mock
 
 from tacet import (
     annotations,
+    config,
     disk,
     dm7,
     faults,
@@ -1426,6 +1427,8 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
             "bad value": ("[console]\ndca = 'three'\n", [*self.CONSOLE[:2], *log]),
             "bad port": ("", [*self.CONSOLE, *log, "--http-port", "70000"]),
             "no console host": ("", ["--dca", "3", *log]),
+            "hostname": ("[console]\nhost = 'dm7.local'\n", ["--dca", "3", *log]),
+            "hostname flag": ("", ["--console-host", "localhost", "--dca", "3", *log]),
             "no log": ("", [*self.CONSOLE]),
             "missing --config": (None, ["--config", str(self.root / "absent.toml"), *self.CONSOLE, *log]),
             "unreadable log": ("", [*self.CONSOLE, "--log", str(unreadable)]),
@@ -1440,7 +1443,10 @@ class TestCheckAnswersWithoutStarting(unittest.TestCase):
                 self.assertEqual(checked[0], started[0])
                 self.assertEqual(checked[2], started[2])
                 self.assertTrue(checked[2])
+                if name.startswith("hostname"):
+                    self.assertIn(config.IPV4_REQUIRED, checked[2])
                 self.assertFalse(self.ran)
+                self.pinged.assert_not_called()
 
     def test_a_warning_is_not_a_refusal(self):
         self.log.write_text('{"event": "recording-started"', encoding="utf-8")

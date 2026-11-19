@@ -51,6 +51,7 @@ from typing import Literal
 
 # interfaces pulls in reach and asyncio: all standard library.
 from . import interfaces, targets
+from .net import is_ipv4_literal
 
 #: Environment variable naming a config file, checked after `--config`.
 CONFIG_ENV_VAR = "TACET_CONFIG"
@@ -76,6 +77,13 @@ PORT_MAX = (1 << PORT_BITS) - 1
 
 #: The one wording for a port refusal, shared by the file and the flags.
 PORT_RANGE = f"must be a port from {PORT_MIN} to {PORT_MAX}"
+#: What a host must be, in the operator's words (#71).
+IPV4_REQUIRED = "must be an IPv4 address like 10.0.0.5, never a name"
+#: Why, said after the refusal.
+IPV4_REASON = (
+    "a name would be looked up again for every packet sent, and a slow lookup stalls the fader. "
+    "Reaper on this laptop is 127.0.0.1"
+)
 
 
 class ConfigError(Exception):
@@ -91,8 +99,9 @@ class ConfigError(Exception):
 #: human who will write `~/games`. `port` is an `int` in `PORT_MIN..PORT_MAX`.
 #: `floats` is a non-empty list of numbers, held as a tuple of `float`.
 #: `adapter` is a MAC string, or a table with a required `mac` and an optional
-#: `vlan`, and becomes an `interfaces.Expected` (#234).
-Kind = Literal["str", "int", "float", "floats", "bool", "path", "port", "adapter"]
+#: `vlan`, and becomes an `interfaces.Expected` (#234). `ipv4` is a string that
+#: must be an IPv4 literal, never a name (#71).
+Kind = Literal["str", "int", "float", "floats", "bool", "path", "port", "adapter", "ipv4"]
 
 
 @dataclass(frozen=True)
@@ -119,11 +128,11 @@ class Option:
 #: would make every run fire a fade or a nudge at a console, or sit listening,
 #: without being asked.
 SCHEMA: tuple[Option, ...] = (
-    Option("console", "host", "str", "the DM7's For Mixer Control IP"),
+    Option("console", "host", "ipv4", "the DM7's For Mixer Control IP"),
     Option("console", "port", "port", "OSC port on the console"),
     Option("console", "dca", "int", "the band DCA number"),
     Option("console", "quantized", "bool", "snap fader values to Table 1"),
-    Option("reaper", "host", "str", "host running Reaper"),
+    Option("reaper", "host", "ipv4", "IPv4 address of the machine running Reaper; 127.0.0.1 for this one"),
     Option("reaper", "send_port", "port", "Reaper's local listen port"),
     Option("reaper", "receive_port", "port", "the port Reaper sends feedback to"),
     Option("capture", "queue", "path", "mirror queue the ReaScript watches"),
@@ -216,6 +225,8 @@ def _coerce(option: Option, value: object, *, where: str) -> object:
         raise ConfigError(f"{where}: {option.name} must be a string, got {value!r}")
     if option.kind == "path":
         return Path(value).expanduser()
+    if option.kind == "ipv4" and not is_ipv4_literal(value):
+        raise ConfigError(f"{where}: {option.name} {_ipv4_refusal(value)}")
     return value
 
 
@@ -290,6 +301,18 @@ def _check_interfaces(values: Mapping[str, object], *, where: str) -> None:
 
 def _in_port_range(value: int) -> bool:
     return PORT_MIN <= value <= PORT_MAX
+
+
+def _ipv4_refusal(value: object) -> str:
+    return f"{IPV4_REQUIRED}, got {value!r}: {IPV4_REASON}"
+
+
+def ipv4(text: str) -> str:
+    """The argparse `type` for every host flag, so a flag is held to the same
+    rule as the key it overrides (#71). argparse names the flag in the error."""
+    if not is_ipv4_literal(text):
+        raise argparse.ArgumentTypeError(_ipv4_refusal(text))
+    return text
 
 
 def port(text: str) -> int:

@@ -129,7 +129,7 @@ def parser() -> argparse.ArgumentParser:
     # Raw, so the example commands survive --help intact. See tacet.serve.
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     config.add_config_argument(p)
-    p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument("--host", type=config.ipv4, default=DEFAULT_HOST, help="IPv4 address of the machine running Reaper")
     p.add_argument("--send-port", type=config.port, default=DEFAULT_SEND_PORT)
     p.add_argument("--recv-port", type=config.port, default=DEFAULT_RECEIVE_PORT)
     p.add_argument("--listen", type=float, default=20.0, metavar="SECONDS")

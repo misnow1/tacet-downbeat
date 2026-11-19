@@ -17,6 +17,7 @@ from contextlib import redirect_stderr
 from pathlib import Path
 
 from tacet import config, interfaces, rtd, serve, targets, verify_dm7, verify_reaper
+from tacet.net import is_ipv4_literal
 
 SAMPLE = """
 [console]
@@ -457,6 +458,92 @@ class TestPortsAreInRange(_TempConfig):
         for module, dest in PORT_DESTS:
             with self.subTest(module=module.__name__, dest=dest):
                 self.assertIn(module.parser().get_default(dest), range(config.PORT_MIN, config.PORT_MAX + 1))
+
+
+#: Every host the tools take, as (module, argparse dest), found the way the
+#: ports are.
+HOST_DESTS = tuple(
+    (module, dest)
+    for module in (serve, verify_dm7, verify_reaper)
+    for dest, name in module.CONFIG_MAPPING.items()
+    if any(option.name == name and option.kind == "ipv4" for option in config.SCHEMA)
+)
+
+#: Names, and an IPv6 literal. None is an IPv4 address.
+NOT_ADDRESSES = ("dm7.local", "localhost", "::1")
+
+
+class TestHostsAreIpv4Literals(_TempConfig):
+    """#71: a name would be looked up again for every packet sent.
+
+    `reach`'s ARP read matches an IP too, so a name would also stop the console
+    check ever reporting the console missing.
+    """
+
+    def test_every_key_named_host_is_ipv4(self):
+        hosts = [option for option in config.SCHEMA if option.key.endswith("host")]
+        self.assertEqual(len(hosts), 2)
+        for option in hosts:
+            self.assertEqual(option.kind, "ipv4", option.name)
+
+    def test_every_tool_reads_a_host(self):
+        self.assertEqual({module for module, _ in HOST_DESTS}, {serve, verify_dm7, verify_reaper})
+        self.assertEqual(len(HOST_DESTS), 4)
+
+    def test_a_literal_in_the_config_loads(self):
+        self.assertEqual(config.values_from_mapping({"console": {"host": "10.0.0.5"}}), {"console.host": "10.0.0.5"})
+
+    def test_a_name_in_the_config_refuses_naming_the_key(self):
+        for option in (o for o in config.SCHEMA if o.kind == "ipv4"):
+            for host in NOT_ADDRESSES:
+                with self.subTest(key=option.name, host=host), self.assertRaises(config.ConfigError) as caught:
+                    config.values_from_mapping({option.section: {option.key: host}})
+                self.assertIn(option.name, str(caught.exception))
+                self.assertIn(config.IPV4_REQUIRED, str(caught.exception))
+                self.assertIn(repr(host), str(caught.exception))
+
+    def test_a_host_is_still_a_string_first(self):
+        with self.assertRaises(config.ConfigError) as caught:
+            config.values_from_mapping({"console": {"host": 10}})
+        self.assertIn("must be a string", str(caught.exception))
+
+    def test_a_name_flag_refuses_naming_the_flag(self):
+        for module, dest in HOST_DESTS:
+            flag = "--" + dest.replace("_", "-")
+            for host in NOT_ADDRESSES:
+                stderr = io.StringIO()
+                with self.subTest(flag=flag, host=host), self.assertRaises(SystemExit), redirect_stderr(stderr):
+                    module.parser().parse_args([flag, host])
+                self.assertIn(flag, stderr.getvalue())
+                self.assertIn(config.IPV4_REQUIRED, stderr.getvalue())
+
+    def test_a_literal_flag_is_accepted(self):
+        for module, dest in HOST_DESTS:
+            flag = "--" + dest.replace("_", "-")
+            with self.subTest(flag=flag):
+                self.assertEqual(getattr(module.parser().parse_args([flag, "10.0.0.5"]), dest), "10.0.0.5")
+
+    def test_every_default_host_is_a_literal(self):
+        for module, dest in HOST_DESTS:
+            default = module.parser().get_default(dest)
+            with self.subTest(module=module.__name__, dest=dest):
+                self.assertTrue(default is None or is_ipv4_literal(default))
+
+    def test_every_flag_for_an_ipv4_key_uses_the_ipv4_type(self):
+        for module, dest in HOST_DESTS:
+            actions = [a for a in module.parser()._actions if a.dest == dest]
+            with self.subTest(module=module.__name__, dest=dest):
+                self.assertEqual(len(actions), 1)
+                self.assertIs(actions[0].type, config.ipv4)
+
+    def test_a_name_in_the_file_names_the_key_not_the_flag(self):
+        # argparse would re-apply `type` to a default; the file is judged first.
+        path = self.write("[console]\nhost = 'dm7.local'\n")
+        stderr = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stderr(stderr):
+            config.resolve_or_exit(serve.parser(), serve.CONFIG_MAPPING, [], environ={}, search=[path])
+        self.assertIn("console.host", stderr.getvalue())
+        self.assertNotIn("argument --console-host", stderr.getvalue())
 
 
 class TestTargetPresets(_TempConfig):

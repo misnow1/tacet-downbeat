@@ -114,7 +114,7 @@ def parser() -> argparse.ArgumentParser:
     # Raw, so the example commands survive --help intact. See tacet.serve.
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     config.add_config_argument(p)
-    p.add_argument("--host", help="the console's For Mixer Control IP")
+    p.add_argument("--host", type=config.ipv4, help="the console's For Mixer Control IP, an IPv4 address")
     p.add_argument("--port", type=config.port, default=DEFAULT_PORT)
     p.add_argument("--dca", type=int)
     p.add_argument("--granularity", action="store_true", help="the -1550 probe")
