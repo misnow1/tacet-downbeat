@@ -62,7 +62,7 @@ class TestGameClockInTheApp(AppTestCase):
 
     def feed(self, app, payload: bytes, *, at: float, source: str = SOURCE) -> None:
         self.at(at)
-        app.rtd_received(payload, source)
+        app.rtd_received(payload, source, PORT)
 
     def named(self, *keys):
         return [e for e in self.entries() if e.event in keys]
@@ -241,12 +241,61 @@ class TestGameClockInTheApp(AppTestCase):
         await app.arm()
         self.assertEqual(app.machine.state, state.State.IDLE)
 
+    async def test_listening_writes_one_status_never(self):
+        # S5: "listening, heard nothing" is told from "never listened".
+        app = self.make()
+        self.assertEqual(self.named(ann.RTD_STATUS), [])
+        app.rtd_listening(21000)
+        (entry,) = self.named(ann.RTD_STATUS)
+        self.assertEqual((entry.data["status"], entry.data["previous"], entry.data["port"]), ("never", None, 21000))
+        self.assertEqual(entry.data["datagrams"], 0)
+        self.assertEqual(app.snapshot()["game_clock"]["status"], "never")
+
+    async def test_the_real_source_port_reaches_the_reader(self):
+        seen = []
+
+        class Spy(gc.Reader):
+            def feed(self, datagram):
+                seen.append((datagram.source, datagram.source_port))
+                return super().feed(datagram)
+
+        app = self.make(Spy())
+        app.rtd_received(real.G5_14625, SOURCE, 21000)
+        app.rtd_received(real.G5_14625, SOURCE, 40001)
+        self.assertEqual(seen, [(SOURCE, 21000), (SOURCE, 40001)])
+
+    async def test_a_hundred_raising_datagrams_build_one_snapshot(self):
+        # S2: a bug on every datagram must not build a snapshot for each.
+        app = self.make(Raising())
+        pushes = []
+        app.on_change(lambda: pushes.append(1))
+        with contextlib.redirect_stderr(io.StringIO()):
+            for i in range(100):
+                self.feed(app, real.G5_14625, at=0.001 * i)
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(len(self.named(ann.FAULT_RAISED)), 1)
+
+    async def test_the_failure_to_report_a_failure_is_printed_once_per_run(self):
+        # S3, and the reset failing must not let the first traceback repeat either.
+        class Worst(Raising):
+            def forget_display(self) -> None:
+                raise RuntimeError("cannot even reset")
+
+        app = self.make(Worst())
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            for i in range(20):
+                self.feed(app, real.G5_14625, at=i)
+        # The reset's failure is said once however many datagrams hit it (the
+        # traceback chains the reader's own bug, so count the line that is its own).
+        self.assertEqual(errors.getvalue().count("RuntimeError: cannot even reset"), 1)
+        self.assertEqual(len(app.snapshot()["faults"]), 1)
+
     async def test_the_port_the_receiver_reports_is_the_one_logged(self):
         app = self.make()
         app.rtd_listening(40404)
         self.feed(app, real.G5_14625, at=1)
-        (entry,) = self.named(ann.RTD_STATUS)
-        self.assertEqual(entry.data["port"], 40404)
+        self.assertEqual([e.data["port"] for e in self.named(ann.RTD_STATUS)], [40404, 40404])
 
     # -- the page ---------------------------------------------------------
 
@@ -298,6 +347,7 @@ class TestGameClockInTheApp(AppTestCase):
             {
                 "__init__",
                 "rtd_received",
+                "rtd_listening",
                 "rtd_tick",
                 "rtd_failed",
                 "_rtd_error",

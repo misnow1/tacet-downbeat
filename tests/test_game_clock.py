@@ -284,6 +284,32 @@ class TestDefences(unittest.TestCase):
                 self.assertEqual(reader.counts.writes, 0)
                 self.assertIs(reader.view(now=START).status, gc.Status.UNDECODABLE)
 
+    def test_refusals_inside_a_flood_do_not_settle(self):
+        # S1: a drop or an oversize datagram costs a length and a budget check.
+        # The drop that starts the flood is reported; the rest wait for the tick.
+        reader = gc.Reader(decodes_per_second=1)
+        reader.feed(datagram(real.G5_14625, START))
+        first = reader.feed(datagram(real.G5_14625, START + 0.1))
+        self.assertEqual(
+            [t.view.status for t in first.transitions if isinstance(t, gc.StatusChanged)], [gc.Status.FLOOD]
+        )
+        calls: list[float] = []
+        original = reader._recent
+
+        def spy(now: float) -> tuple[str, ...]:
+            calls.append(now)
+            return original(now)
+
+        reader._recent = spy  # type: ignore[method-assign]
+        again = reader.feed(datagram(real.G5_14625, START + 0.2))
+        big = reader.feed(datagram(b"x" * (gc.MAX_DATAGRAM_BYTES + 1), START + 0.3))
+        self.assertEqual((again, big), (gc.Fed(False, ()), gc.Fed(False, ())))
+        self.assertEqual(calls, [])
+        self.assertEqual((reader.counts.dropped, reader.counts.oversize), (2, 1))
+        # The tick still reports the edges.
+        later = reader.poll(now=START + 0.3 + gc.STALE_SECONDS)
+        self.assertTrue(later)
+
     def test_the_cap_itself_is_decoded(self):
         reader = gc.Reader()
         payload = real.G5_14625 + b"x" * (gc.MAX_DATAGRAM_BYTES - len(real.G5_14625))

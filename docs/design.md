@@ -462,8 +462,11 @@ Minimum during-game requirements:
   it) and `mm:ss`, tagged `running`, `stopped` or `end of period`. Every other
   state shows `--:--`, never an old time: `no RTD yet`, `RTD silent since
   HH:MM`, `RTD arriving but not decoding`, `two RTD sources`, `RTD flood:
-  decoding paused`, `RTD reader down: <why>`; a page link gone quiet dims a live
-  clock and says so. It is context for the operator, never a gate (§2)
+  decoding paused`, `RTD reader down: <why>`; a page link gone quiet, or a running clock whose snapshot is
+  older than 3 s (`fresh_for`, sent in the `game_clock` block; a running clock
+  changes every second), blanks it and says `page link stale`. A stopped clock
+  changes nothing, so a stopped one that starts running during a half-open link
+  reads `stopped` until the link banner trips. It is context for the operator, never a gate (§2)
 - Recording state, which unlike the fader **is** confirmed (§5.9). Commanded and
   confirmed values must be visually distinct; never render them alike
 - **The state of the link to the box itself.** Everything above is a claim the
@@ -1123,6 +1126,11 @@ clock on the page. It is display only (§5.4): no control-path module imports it
   not decode applies nothing and does not refresh liveness. The App catches
   anything else, resets the reader and latches `rtd-reader` as a red banner,
   and a snapshot guard means a bad view cannot fail a fader POST.
+
+Known limit: the `rtd-status` markers have no hold-down. A sender whose period is
+longer than the 3 s staleness (a board in standby sending only its 10 s full
+rewrite) or a stray second sender would write two markers per period, about 2,000
+in a game. It has never been seen. Tracked in #254.
 
 ### The whole buffer, every ten seconds
 

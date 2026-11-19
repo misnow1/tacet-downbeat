@@ -246,18 +246,28 @@ class Reader:
     def feed(self, datagram: Datagram) -> Fed:
         """One datagram, stamped with the box's monotonic clock."""
         now = datagram.time
+        self._count(datagrams=1)
+        # The cheap refusals first: a flood costs a length check and a budget
+        # check, never a settle. The tick's `poll` reports the edges they cause,
+        # but for the drop that starts a FLOOD, which is reported at once.
+        if len(datagram.payload) > self._max_datagram_bytes:
+            self._last_arrival_at = now
+            self._count(oversize=1)
+            return Fed(shown_changed=False, transitions=())
+        if self._over_budget(now):
+            self._last_arrival_at = now
+            starts = self._last_drop_at is None or now - self._last_drop_at >= self._stale_seconds
+            self._count(dropped=1)
+            self._last_drop_at = now
+            if not starts:
+                return Fed(shown_changed=False, transitions=())
+            transitions = self._settle(now)
+            return Fed(shown_changed=bool(transitions), transitions=transitions)
         # A silence nobody polled for is still an edge: say so before the datagram ends it.
         earlier = self._settle(now)
         before = self.view(now=now)
-        self._count(datagrams=1)
         self._last_arrival_at = now
-        if len(datagram.payload) > self._max_datagram_bytes:
-            self._count(oversize=1)
-        elif self._over_budget(now):
-            self._count(dropped=1)
-            self._last_drop_at = now
-        else:
-            self._decode(datagram, now)
+        self._decode(datagram, now)
         transitions = (*earlier, *self._settle(now))
         return Fed(shown_changed=self.view(now=now) != before, transitions=transitions)
 

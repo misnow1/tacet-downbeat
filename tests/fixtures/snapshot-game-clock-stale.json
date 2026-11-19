@@ -218,6 +218,7 @@
     "at_zero": null,
     "clock": null,
     "detail": null,
+    "fresh_for": 3.0,
     "last_write_at": 5090.275805,
     "period": null,
     "quarter": null,

@@ -218,6 +218,7 @@
     "at_zero": false,
     "clock": "14:51",
     "detail": null,
+    "fresh_for": 3.0,
     "last_write_at": null,
     "period": "1ST",
     "quarter": "1",

@@ -38,6 +38,9 @@ from tests.disk import Disk
 from tests.reaper_stream import METER, game_5_stream
 from tests.rtd_frames import GAME_5_KICKOFF, GAME_5_SOURCE
 
+#: The scoreboard sends from port 21000 as well as to it (design.md 8).
+GAME_5_SOURCE_PORT = 21000
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PREFIX = "snapshot-"
 SUFFIX = ".json"
@@ -423,7 +426,7 @@ def _kickoff(box: Box) -> float:
     for _number, offset, payload in GAME_5_KICKOFF:
         at = CLOCK_START + offset
         box.clock[0] = at
-        box.app.rtd_received(payload, GAME_5_SOURCE)
+        box.app.rtd_received(payload, GAME_5_SOURCE, GAME_5_SOURCE_PORT)
     return at
 
 

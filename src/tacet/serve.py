@@ -312,7 +312,7 @@ class _Feedback(asyncio.DatagramProtocol):
 class RtdSink(Protocol):
     """What the RTD receiver needs of the App, so a test can hand it a fake."""
 
-    def rtd_received(self, payload: bytes, source: str) -> None: ...
+    def rtd_received(self, payload: bytes, source: str, source_port: int) -> None: ...
 
     def rtd_tick(self) -> None: ...
 
@@ -337,11 +337,12 @@ class _Rtd(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr: Any) -> None:
         try:
-            self._app.rtd_received(data, str(addr[0]))
+            self._app.rtd_received(data, str(addr[0]), int(addr[1]))
         except Exception:
             self.caught += 1
             if self.caught == 1:
-                traceback.print_exc()
+                with contextlib.suppress(Exception):
+                    traceback.print_exc()
 
     def error_received(self, _exc: Exception) -> None:
         # An ICMP error on a UDP socket: counted. A receive-only socket has no one to blame.
@@ -530,9 +531,19 @@ async def _run(
     app.on_armed(lambda: watch.request(reach.Trigger.ARM))
 
     runner = aiohttp_web.AppRunner(server)
-    await runner.setup()
-    site = aiohttp_web.TCPSite(runner, args.listen, args.http_port)
-    await site.start()
+    try:
+        await runner.setup()
+        site = aiohttp_web.TCPSite(runner, args.listen, args.http_port)
+        await site.start()
+    except BaseException:
+        # The page's port is in use, say: the sockets opened above would outlive a
+        # box that never started, and the tick task would run on with nothing to stop it.
+        rtd_task.cancel()
+        if rtd_transport is not None:
+            rtd_transport.close()
+        if transport is not None:
+            transport.close()
+        raise
     # The banner already said where the page will be and what the fader can and
     # cannot tell you. This line is the different fact that it actually bound.
     print(f"serving on {args.listen}:{args.http_port} - ready")

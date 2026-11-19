@@ -296,7 +296,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
             console_host=self.CONSOLE_HOST,
             reaper_host=None,
             listen="127.0.0.1",
-            http_port=0,
+            http_port=self.http_port,
             reaper_feedback_port=0,
             rtd_port=self.rtd_port,
             queue=self.queue,
@@ -306,6 +306,7 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
     queue = None
     #: The UDP port the RTD socket binds; 0 is an ephemeral one, never the real 21000.
     rtd_port = 0
+    http_port = 0
     #: The adapter roles the config names (#234); none unless a test says.
     adapter_roles: dict[Any, Any]
 
@@ -532,7 +533,44 @@ class TestRunStopsCleanly(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(seen["transport"].is_closing())
         self.assertTrue(seen["tick_cancelled"])
         # Our own close at shutdown is not the socket dying.
-        self.assertNotIn("rtd-status", self.events())
+        downs = [
+            e
+            for e in annotations.read_entries(self.root / "game.jsonl")
+            if e.event == "rtd-status" and e.data["status"] == "down"
+        ]
+        self.assertEqual(downs, [])
+
+    async def test_a_page_port_in_use_closes_the_rtd_socket_and_tick(self):
+        # N6: the box never started, so nothing it opened may outlive it.
+        seen: dict[str, Any] = {}
+        real_listen = serve._listen_for_rtd
+
+        async def listen(app, loop, port):
+            seen["transport"] = await real_listen(app, loop, port)
+            return seen["transport"]
+
+        async def tick(_app):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                seen["tick_cancelled"] = True
+                raise
+
+        app, log = self.build_app(fade=0.1)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen()
+            self.http_port = blocker.getsockname()[1]
+            with (
+                mock.patch.object(serve, "_listen_for_rtd", listen),
+                mock.patch.object(serve, "_rtd_tick", tick),
+                mock.patch("tacet.serve.build", return_value=(app, log, None)),
+                self.assertRaises(OSError),
+            ):
+                await asyncio.wait_for(serve._run(self.args(), CLEAN_CODE, tools=self.NO_TOOLS), 5)
+        await asyncio.sleep(0)
+        self.assertTrue(seen["transport"].is_closing())
+        self.assertTrue(seen["tick_cancelled"])
 
     async def test_the_tick_reaches_the_app_every_interval(self):
         app, log = self.build_app(fade=0.1)
@@ -552,10 +590,10 @@ class _FakeRtdApp:
         self.failed = []
         self.raises = raises
 
-    def rtd_received(self, payload, source):
+    def rtd_received(self, payload, source, source_port):
         if self.raises:
             raise RuntimeError("the app has a bug")
-        self.received.append((payload, source))
+        self.received.append((payload, source, source_port))
 
     def rtd_failed(self, detail):
         self.failed.append(detail)
@@ -573,7 +611,7 @@ class TestTheRtdProtocol(unittest.TestCase):
     def test_rtd_protocol_hands_datagrams_to_the_app(self):
         app = _FakeRtdApp()
         serve._Rtd(app).datagram_received(rtd_frames.G5_14625, ("192.168.0.25", 21000))
-        self.assertEqual(app.received, [(rtd_frames.G5_14625, "192.168.0.25")])
+        self.assertEqual(app.received, [(rtd_frames.G5_14625, "192.168.0.25", 21000)])
 
     def test_an_app_that_raises_does_not_escape_the_protocol(self):
         protocol = serve._Rtd(_FakeRtdApp(raises=True))

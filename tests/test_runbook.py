@@ -336,6 +336,17 @@ class QuotedMessagesExist(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(page_constant(self.script, name), self.docs[BOX])
 
+    def test_the_period_words_the_page_spells_out_are_in_the_runbook(self) -> None:
+        # They sit inside an object, so the string-constant scan cannot see them.
+        found = re.search(r"^const GAME_CLOCK_PERIOD_WORDS = \{([^}]*)\}", self.script, re.MULTILINE)
+        assert found is not None
+        words = re.findall(r'"([^"]+)"', found[1])
+        self.assertEqual(sorted(words), ["Halftime", "Pregame"])
+        for word in words:
+            for doc in (RUNBOOK, TROUBLESHOOTING):
+                with self.subTest(word=word, doc=doc.name):
+                    self.assertIn(word, self.docs[doc])
+
     def test_every_rtd_terminal_line_is_in_troubleshooting(self) -> None:
         # #235: the words after the time. A line renamed here and not in the doc
         # leaves someone looking for a message that is no longer printed.

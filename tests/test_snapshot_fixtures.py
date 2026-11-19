@@ -77,6 +77,7 @@ class TestSnapshotFixtures(unittest.TestCase):
             "at_zero",
             "quarter",
             "period",
+            "fresh_for",
         }
         for path, text in self.snapshots_only().items():
             with self.subTest(fixture=path.name):

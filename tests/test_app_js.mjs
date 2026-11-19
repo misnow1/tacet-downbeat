@@ -4272,8 +4272,9 @@ check("clock: reader down carries its reason",
 check("clock: a status this page does not know is amber and blank and says what it was",
       shown({ ...GC_LIVE, ...GC_WITHHELD, status: "mystery" }), ["panel warn", "--:--", "mystery"]);
 
-check("clock: a link gone quiet dims a live clock and says so",
-      shown(GC_LIVE, { healthy: false }), ["panel linkstale", "Q1 14:51", "page link stale"]);
+check("clock: a link gone quiet blanks a live clock and says so",
+      shown(GC_LIVE, { healthy: false }), ["panel linkstale", "--:--", "page link stale"]);
+check("clock: the box says how long a running clock stays fresh", GC_LIVE.fresh_for, 3);
 {
   // The same, found by the repaint tick rather than by a snapshot.
   const { context, nodes, sockets } = browser({ now: () => 1_700_000_000_000 });
@@ -4285,7 +4286,49 @@ check("clock: a link gone quiet dims a live clock and says so",
   check("clock: healthy link, normal", nodes.get("game-clock").className, "panel live");
   sockets[0].onclose();
   check("clock: the link dropping repaints it with no snapshot", nodes.get("game-clock").className, "panel linkstale");
-  check("clock: and the value is the one it was", nodes.get("gc-value").textContent, "Q1 14:51");
+  check("clock: and it shows no time at all", nodes.get("gc-value").textContent, "--:--");
+}
+
+{
+  // M1: a half-open link looks healthy to the link banner for 37 s, and a running
+  // clock changes every second, so its snapshot ages out far sooner than that.
+  // Driven by the repaint interval the page already has.
+  let t = 1_700_000_000_000;
+  const { context, nodes, sockets, intervals } = browser({ now: () => t });
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  snap.game_clock = GC_LIVE;
+  context.render(snap);
+  check("clock: a running clock on a fresh snapshot shows", nodes.get("gc-value").textContent, "Q1 14:51");
+  t += (GC_LIVE.fresh_for - 0.1) * 1000;
+  intervals[0]();
+  check("clock: just inside fresh_for it still shows", nodes.get("game-clock").className, "panel live");
+  t += 0.2 * 1000;
+  intervals[0]();
+  check("clock: past fresh_for the tick blanks it and tags it, with the link banner still clear",
+        [nodes.get("link").className, nodes.get("game-clock").className, nodes.get("gc-value").textContent,
+         nodes.get("gc-tag").textContent], ["", "panel linkstale", "--:--", "page link stale"]);
+  // A new snapshot brings it back.
+  context.render({ ...snap, at: snap.at + 1 });
+  check("clock: a fresh snapshot shows it again", nodes.get("gc-value").textContent, "Q1 14:51");
+}
+
+{
+  // A stopped clock changes nothing, so the age of its snapshot proves nothing.
+  let t = 1_700_000_000_000;
+  const { context, nodes, sockets, intervals } = browser({ now: () => t });
+  sockets[0].onopen();
+  sockets[0].onmessage(keepaliveFrame);
+  const snap = structuredClone(SNAPSHOTS["standing-down"]);
+  snap.game_clock = { ...GC_LIVE, running: false, at_zero: false };
+  context.render(snap);
+  t += 10 * 1000;
+  sockets[0].onmessage(keepaliveFrame);
+  intervals[0]();
+  check("clock: a stopped clock on a ten second old snapshot, link healthy, stays shown",
+        [nodes.get("game-clock").className, nodes.get("gc-value").textContent, nodes.get("gc-tag").textContent],
+        ["panel live", "Q1 14:51", "stopped"]);
 }
 
 check("clock: text from the wire is shown as characters and never as markup",

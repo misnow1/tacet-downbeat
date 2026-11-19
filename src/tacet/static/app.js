@@ -1005,7 +1005,7 @@ function liveClockTag(gc) {
 // a link that has gone quiet may be stale and says so. Every state but live
 // shows a blank and never a time; "silent since" is a wall time on this page's
 // clock, the time the feed was last heard and never a game time.
-function gameClockView(gc, linkFresh, offset) {
+function gameClockView(gc, linkFresh, offset, age) {
   if (!gc) return null;
   const blank = GAME_CLOCK_BLANK;
   switch (gc.status) {
@@ -1013,7 +1013,13 @@ function gameClockView(gc, linkFresh, offset) {
       const period = periodWords(gc.quarter, gc.period);
       const clock = gc.clock === null ? null : (gc.clock || blank);
       const value = [period, clock === null ? blank : clock].filter(Boolean).join(" ");
-      if (!linkFresh) return ["linkstale", value, GAME_CLOCK_LINK_STALE];
+      // Only a fresh live state ever paints a time. A running clock changes every
+      // second, so a snapshot older than the box's `fresh_for` means the link has
+      // stopped delivering, and the page does not wait out the link banner's 37 s.
+      // A stopped clock changes nothing, so its age proves nothing.
+      const frozen = gc.running === true && typeof gc.fresh_for === "number"
+        && typeof age === "number" && age >= gc.fresh_for;
+      if (!linkFresh || frozen) return ["linkstale", blank, GAME_CLOCK_LINK_STALE];
       return ["live", value, clock === null ? GAME_CLOCK_WAITING : liveClockTag(gc)];
     }
     case "never":
@@ -1045,7 +1051,8 @@ function linkIsFresh() {
 // with no snapshot to say so.
 function paintGameClock() {
   if (!snapshot || !snapshot.game_clock) return;
-  const view = gameClockView(snapshot.game_clock, linkIsFresh(), boxOffset(snapshot));
+  const view = gameClockView(snapshot.game_clock, linkIsFresh(), boxOffset(snapshot),
+    secondsSince(snapshotArrivedAt, pageStamp()));
   if (view === null) return;
   const node = $("game-clock");
   if (node.className !== "panel " + view[0]) node.className = "panel " + view[0];

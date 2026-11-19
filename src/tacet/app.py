@@ -112,8 +112,6 @@ TARGET_SET = "target-set"
 #: changes once a second, so four a second is slack, and under a flood this
 #: caps how many snapshots are built. The web tick carries anything held back.
 RTD_PUSH_MIN_SECONDS = 0.25
-#: A datagram from the box's own receiver has no source port to report.
-NO_SOURCE_PORT = 0
 #: The latched fault's words, and the view's when it cannot be built (#235).
 #: Quoted in docs/troubleshooting.md.
 RTD_READER_ERROR = (
@@ -405,6 +403,8 @@ class App:
         #: True from a caught exception until the next datagram is read cleanly:
         #: what "still present" means for the reader fault.
         self._rtd_failing = False
+        #: Whether the failure to even report a failure has been printed this run.
+        self._rtd_inner_printed = False
         #: What code this box is (#157). None only in tests that do not care;
         #: `serve.build` always passes one. Never probed here: git is asked once,
         #: by `serve.main`, before the loop exists.
@@ -1554,14 +1554,31 @@ class App:
         self._rtd_listeners.append(listener)
 
     def rtd_listening(self, port: int) -> None:
-        """The receiver is bound: `port` is what the entries say it listens on."""
-        self._rtd_port = port
+        """The receiver is bound: `port` is what the entries say it listens on.
 
-    def rtd_received(self, payload: bytes, source: str) -> None:
+        Writes one `rtd-status` saying so, with status `never`, so a log of
+        "listening, heard nothing" can be told from one of "never listened".
+        Never raises."""
+        self._rtd_port = port
+        try:
+            data: dict[str, Any] = {
+                "status": gclock.Status.NEVER.value,
+                "previous": None,
+                "source": None,
+                "sources": [],
+                "detail": None,
+                "port": port,
+                **self._game_clock.counts.as_data(),
+            }
+            self._record(ann.RTD_STATUS, data=data)
+        except Exception as exc:
+            self._rtd_error(exc)
+
+    def rtd_received(self, payload: bytes, source: str, source_port: int) -> None:
         """One datagram from the scoreboard's port. Never raises."""
         try:
             now = self._monotonic()
-            fed = self._game_clock.feed(Datagram(now, source, NO_SOURCE_PORT, self._rtd_port, payload))
+            fed = self._game_clock.feed(Datagram(now, source, source_port, self._rtd_port, payload))
             self._rtd_failing = False
             self._rtd_transitions(fed.transitions)
             if fed.shown_changed or fed.transitions:
@@ -1630,18 +1647,34 @@ class App:
         self._rtd_failing = True
         first = self._faults.latched(faults.FaultKind.RTD_READER) is None
         if first:
-            traceback.print_exception(exc, file=sys.stderr)
+            with contextlib.suppress(Exception):
+                traceback.print_exception(exc, file=sys.stderr)
+        # Latch first, so a reset that itself fails still leaves the fault up and
+        # `first` true only once. Each step has its own guard: nothing is left to
+        # do but keep the loop, and the next datagram is read normally.
         try:
-            self._game_clock.forget_display()
             self._raise_fault(
                 faults.FaultKind.RTD_READER,
                 RTD_READER_ERROR.format(error=f"{type(exc).__name__}: {exc}"),
                 data={"error": f"{type(exc).__name__}: {exc}", "port": self._rtd_port},
             )
-            self._notify()
+            # Only for a new latch: a bug that fires on every datagram must not
+            # build a snapshot for each.
+            if first:
+                self._notify()
         except Exception:
-            # Nothing left to do but keep the loop: the next datagram is read normally.
-            traceback.print_exc(file=sys.stderr)
+            self._rtd_say_inner()
+        try:
+            self._game_clock.forget_display()
+        except Exception:
+            self._rtd_say_inner()
+
+    def _rtd_say_inner(self) -> None:
+        """The failure to even report a failure: printed once per run."""
+        if not self._rtd_inner_printed:
+            self._rtd_inner_printed = True
+            with contextlib.suppress(Exception):
+                traceback.print_exc(file=sys.stderr)
 
     def _game_clock_view(self, now: float) -> gclock.ClockView:
         """The view for the snapshot. A snapshot is returned by every fader POST,
@@ -2003,7 +2036,9 @@ class App:
             # the operator and never a gate: nothing reads it back. The values
             # are None unless the feed is live, and the one time field in it is
             # fixed while nothing arrives, so it does not churn the snapshot.
-            "game_clock": self._game_clock_view(now).as_snapshot(),
+            # `fresh_for` is how old a running clock may be on the page before the
+            # page stops showing it (M1): fixed, so it never churns the snapshot.
+            "game_clock": {**self._game_clock_view(now).as_snapshot(), "fresh_for": gclock.STALE_SECONDS},
             # The laptop's own network adapters against the roles the config
             # names (#234). What the box sees of itself; nothing about the far end.
             "interfaces": self._interfaces.as_snapshot(),
