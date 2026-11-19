@@ -4,6 +4,7 @@ import json
 import re
 import time
 import unittest
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,9 +17,9 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from tacet import annotations as ann
 from tacet import app as tacet_app
-from tacet import dm7, faults, osc, prompts, reaper, state, web
+from tacet import dm7, faults, osc, prompts, reaper, state, targets, web
 from tests.disk import Disk
-from tests.reaper_stream import listened_parked, meter_packet
+from tests.reaper_stream import ALLOWED_TO_REAPER, LISTEN_MARGIN, listened_parked, meter_packet
 from tests.snapshots import _build, _known, _Sender
 from tests.test_app import RETIRED_SPAN_KEYS, SPAN_EVENTS, SPAN_KEY, SPAN_LABEL
 
@@ -46,20 +47,22 @@ class WebTestCase(AioHTTPTestCase):
     async def get_application(self):
         return web.create_app(self.build_app())
 
-    def build_app(self, monotonic=time.monotonic):
+    def build_app(self, monotonic=time.monotonic, **options):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.console_sender = FakeSender()
+        self.reaper_sender = FakeSender()
         self.log = ann.AnnotationLog(self.root / "game.jsonl")
         self.log.open()
         self.addCleanup(self.log.close)
         self.tacet = tacet_app.App(
             console=dm7.Dm7Client("192.0.2.1", dca=3, sender=self.console_sender, tick_hz=self.TICK_HZ),
             log=self.log,
-            recorder=reaper.ReaperClient(sender=FakeSender(), monotonic=monotonic),
+            recorder=reaper.ReaperClient(sender=self.reaper_sender, monotonic=monotonic),
             fade_seconds=self.FADE_SECONDS,
             monotonic=monotonic,
+            **options,
         )
         return self.tacet
 
@@ -731,9 +734,9 @@ class TestTheTargetRoute(WebTestCase):
     there while it is up (#128); closed, it moves nothing, so what it is held to
     is the shape of the request and the presets."""
 
-    def build_app(self, monotonic=time.monotonic):
+    def build_app(self, monotonic=time.monotonic, **options):
         self.clock = [5000.0]
-        return super().build_app(monotonic=lambda: self.clock[0])
+        return super().build_app(monotonic=lambda: self.clock[0], **options)
 
     async def post(self, body):
         return await self.client.post("/api/target", json=body)
@@ -1042,9 +1045,9 @@ class TestTheNudgeButtons(WebTestCase):
     Faded out. Whether a tap does anything is `tests/test_app.py`'s job; this is
     the page they are on and the routes they reach."""
 
-    def build_app(self, monotonic=time.monotonic):
+    def build_app(self, monotonic=time.monotonic, **options):
         self.clock = [5000.0]
-        return super().build_app(monotonic=lambda: self.clock[0])
+        return super().build_app(monotonic=lambda: self.clock[0], **options)
 
     async def body(self):
         return await (await self.client.get("/")).text()
@@ -1143,9 +1146,18 @@ class TestTheNudgeButtons(WebTestCase):
         self.assertEqual(self.console_sender.packets, [])
 
     async def test_a_nudge_while_the_level_is_unknown_is_refused_for_that(self):
-        self.tacet.machine = state.Machine(state=state.State.OPEN, level_known=False)
-        payload = await (await self.client.post("/api/nudge-down")).json()
-        self.assertEqual(payload["refusal"], state.UNKNOWN_LEVEL_MOVE)
+        # Reached through the routes: a hand-off to StageMix from an open fader
+        # leaves the machine OPEN with the level unknown.
+        await self.open_it()
+        await self.client.post("/api/handoff")
+        await self.tacet.wait_for_fade()
+        sent = len(self.console_sender.packets)
+        for route in ("/api/nudge-down", "/api/nudge-up"):
+            with self.subTest(route=route):
+                payload = await (await self.client.post(route)).json()
+                self.assertEqual(payload["state"], "open")
+                self.assertEqual(payload["refusal"], state.UNKNOWN_LEVEL_MOVE)
+        self.assertEqual(len(self.console_sender.packets), sent)
 
     async def test_a_late_nudge_is_refused_like_any_fader_tap(self):
         await self.open_it()
@@ -1848,9 +1860,9 @@ class TestTapsAreStampedOnTheWayIn(WebTestCase):
     """#11: every route the page taps carries the page's stamp, and the box
     logs when it was tapped as well as when it arrived."""
 
-    def build_app(self, monotonic=time.monotonic):
+    def build_app(self, monotonic=time.monotonic, **options):
         self.clock = [5000.0]
-        return super().build_app(monotonic=lambda: self.clock[0])
+        return super().build_app(monotonic=lambda: self.clock[0], **options)
 
     def stamp(self, *, at, offset=None, uncertainty=None):
         return {"tap": {"at": at, "offset": offset, "uncertainty": uncertainty}}
@@ -1914,8 +1926,8 @@ class TestTheClockCanBeAskedOverTheSocket(WebTestCase):
     """#11: the page estimates its offset from the box by a round trip on the
     socket it already has open, triggered by each keepalive."""
 
-    def build_app(self, monotonic=time.monotonic):
-        return super().build_app(monotonic=lambda: 777.25)
+    def build_app(self, monotonic=time.monotonic, **options):
+        return super().build_app(monotonic=lambda: 777.25, **options)
 
     async def test_a_ping_is_answered_with_the_box_clock(self):
         async with self.client.ws_connect("/ws") as socket:
@@ -2234,3 +2246,192 @@ class TestFaultClearRoute(WebTestCase):
         body = await (await self.client.get("/")).text()
         strip = body[body.index('id="strip"') : body.index('id="prompt"')]
         self.assertLess(strip.index('id="link"'), strip.index('id="faults"'))
+
+
+@dataclass(frozen=True)
+class Step:
+    """What one request, or the feedback gap, put on each wire (#42)."""
+
+    method: str
+    path: str
+    console: tuple[bytes, ...]
+    reaper: tuple[bytes, ...]
+
+
+#: The step that is not a route: Reaper's feedback coming back after a gap.
+FEEDBACK = "FEEDBACK"
+#: The dB the sweep sets the target to: a preset that is not the default one.
+SWEEP_TARGET_DB = next(
+    db for db in targets.DEFAULT_TARGETS.db_values() if targets.level_for(db) != targets.DEFAULT_TARGETS.default
+)
+#: Steps whose nudges must have moved the fader.
+NUDGE_ROUTES = ("/api/nudge-down", "/api/nudge-up")
+
+
+class TestEveryRouteAgainstBothSenders(WebTestCase):
+    """#42: the faders-only and no-stop rules, asserted on the wire for every route.
+
+    Every route is driven through the real app against recording senders for
+    both the console and Reaper. The console may be sent level writes to the
+    one DCA fader and nothing else; Reaper may be sent `/record` and the
+    refresh and nothing else. A test that reads the router for names would pass
+    on a route that sent a stop under an innocent name.
+    """
+
+    def build_app(self, monotonic=time.monotonic, **options):
+        self.clock = [5000.0]
+        return super().build_app(
+            monotonic=lambda: self.clock[0],
+            **{
+                "slow_open_seconds": self.FADE_SECONDS,
+                "ready_ride_seconds": self.FADE_SECONDS,
+                "retarget_ride_seconds": self.FADE_SECONDS,
+                **options,
+            },
+        )
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.with_span_button()
+        self.steps: list[Step] = []
+        self.annotated: list[str] = []
+        await self.run_sweep()
+
+    async def step(self, method, path, act):
+        console, reaper_sent = len(self.console_sender.packets), len(self.reaper_sender.packets)
+        result = await act()
+        await self.tacet.wait_for_fade()
+        self.steps.append(
+            Step(
+                method,
+                path,
+                tuple(self.console_sender.packets[console:]),
+                tuple(self.reaper_sender.packets[reaper_sent:]),
+            )
+        )
+        return result
+
+    async def post(self, path, body=None):
+        if path == "/api/annotate":
+            self.annotated.append(body["key"])
+
+        async def act():
+            response = await self.client.post(path, json=body)
+            self.assertEqual(response.status, 200, path)
+            return await response.json()
+
+        return await self.step("POST", path, act)
+
+    async def get(self, path):
+        async def act():
+            response = await self.client.get(path)
+            self.assertEqual(response.status, 200, path)
+            await response.read()
+
+        await self.step("GET", path, act)
+
+    async def socket(self):
+        async def act():
+            async with self.client.ws_connect("/ws") as socket:
+                await socket.receive()  # the opening keepalive
+                await socket.receive()  # the snapshot
+
+        await self.step("GET", "/ws", act)
+
+    async def feedback_gap(self):
+        async def act():
+            self.clock[0] += reaper.DEFAULT_FEEDBACK_TIMEOUT + LISTEN_MARGIN
+            self.tacet.handle_recorder_packet(meter_packet())
+
+        await self.step(FEEDBACK, FEEDBACK, act)
+
+    async def run_sweep(self):
+        listened_parked(self.tacet._recorder, self.clock[0])
+        self.tacet.handle_recorder_packet(meter_packet())
+        # Twice: /record is a toggle in Reaper, so a second one would be a stop.
+        await self.post("/api/record")
+        await self.post("/api/record")
+        await self.feedback_gap()
+        for path in ("/api/close-now", "/api/arm"):
+            await self.post(path)
+        for key in ("up-ready", "up-whistle"):
+            await self.post("/api/annotate", {"key": key})
+        for path in NUDGE_ROUTES:
+            await self.post(path)
+        await self.post("/api/target", {"db": SWEEP_TARGET_DB})
+        for key in ("up-drums", "out", "up-slow"):
+            await self.post("/api/annotate", {"key": key})
+        await self.post("/api/trigger")
+        await self.post("/api/release")
+        await self.prompts()
+        started = await self.post("/api/span/start", {"key": SPAN_KEY})
+        await self.post("/api/span/end", {"span_id": started["span_id"]})
+        self.tacet._raise_fault(faults.FaultKind.TAKE_STOPPED, reaper.TAKE_STOPPED, data={})
+        (fault,) = self.tacet.snapshot()["faults"]
+        await self.post("/api/fault/clear", {"id": fault["id"]})
+        for path in ("/api/handoff", "/api/report-ready", "/api/still-mine", "/api/stand-down"):
+            await self.post(path)
+        await self.get("/")
+        await self.get("/api/state")
+        await self.socket()
+
+    async def prompts(self):
+        for answer in ("dismiss", "accept"):
+            asked = await self.post("/api/annotate", {"key": ann.BAND_EXITS_STANDS})
+            prompt = asked["state"]["prompt"]
+            self.assertIsNotNone(prompt, "the question was not asked")
+            await self.post(f"/api/prompt/{answer}", {"seq": prompt["seq"]})
+
+    def reaper_messages(self, step):
+        out = []
+        for packet in step.reaper:
+            decoded = osc.decode_packet(packet)
+            assert isinstance(decoded, osc.Message)
+            out.append((decoded.address, tuple(decoded.args)))
+        return out
+
+    async def test_no_route_can_send_anything_but_record_to_reaper(self):
+        record = (reaper.DEFAULT_ADDRESSES.record, ())
+        refresh = (reaper.DEFAULT_ADDRESSES.action, (reaper.REFRESH_ACTION,))
+        seen = []
+        for step in self.steps:
+            messages = self.reaper_messages(step)
+            seen.extend(messages)
+            # A route may send /record; the refresh belongs to the feedback gap.
+            allowed = [refresh] if step.path == FEEDBACK else [record]
+            for message in messages:
+                with self.subTest(step=step.path, message=message):
+                    self.assertIn(message, ALLOWED_TO_REAPER)
+                    self.assertIn(message, allowed)
+        self.assertIn(record, seen)
+        self.assertIn(refresh, seen)
+        # Posted twice, sent once: a second /record would have been a stop.
+        self.assertEqual(seen.count(record), 1)
+
+    async def test_every_console_packet_from_every_route_is_a_fader_level_write(self):
+        address = dm7.fader_address(self.tacet._console.dca)
+        for step in self.steps:
+            for packet in step.console:
+                with self.subTest(step=step.path):
+                    decoded = osc.decode_packet(packet)
+                    assert isinstance(decoded, osc.Message)
+                    self.assertEqual(decoded.address, address)
+                    (level,) = decoded.args
+                    self.assertIs(type(level), int)
+                    self.assertGreaterEqual(level, dm7.LEVEL_MIN)
+                    self.assertLessEqual(level, dm7.LEVEL_MAX)
+        for path in NUDGE_ROUTES:
+            (step,) = [s for s in self.steps if s.path == path]
+            self.assertTrue(step.console, f"{path} moved nothing, so it proved nothing")
+
+    async def test_the_sweep_reaches_every_route(self):
+        routes = {
+            (route.method, getattr(route.resource, "canonical", ""))
+            for route in self.server.app.router.routes()
+            if route.method != "HEAD"
+        }
+        visited = {(s.method, s.path) for s in self.steps if s.path != FEEDBACK}
+        self.assertEqual(visited, routes)
+        for key, event in ann.EVENTS.items():
+            if event.button and event.action is not None:
+                self.assertIn(key, self.annotated, f"the sweep never tapped {key}")

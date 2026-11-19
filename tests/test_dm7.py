@@ -50,6 +50,12 @@ DCA_3_LEVEL_ADDRESS = "/yosc:req/set/MIXER:Current/DCA/Fader/Level/3"
 UNREACHABLE_HOST = "192.0.2.1"  # TEST-NET-1, guaranteed not to route
 
 
+#: design.md 4, "Close slow": roughly a 2 second fade.
+DESIGNED_FADE_SECONDS = 2.0
+#: design.md 6.1: 10-20 ms is available for the opening ramp, in seconds.
+DESIGNED_OPEN_RAMP = (0.010, 0.020)
+
+
 class TestLevelHelpers(unittest.TestCase):
     def test_clamp_holds_the_documented_range(self):
         self.assertEqual(dm7.clamp(-99999), dm7.LEVEL_MIN)
@@ -71,6 +77,15 @@ class TestLevelHelpers(unittest.TestCase):
         self.assertEqual(dm7.DEFAULT_FADE_FLOOR, -6000)
         self.assertEqual(dm7.MINUS_INF, -32768)
         self.assertEqual(dm7.UNITY, 0)
+
+    def test_the_fade_and_open_lengths_are_the_designed_ones(self):
+        # design.md 4: "Close slow - roughly a 2 second fade." design.md 6.1:
+        # 10-20 ms is the room there is for the opening ramp. Pinned here, so a
+        # slip of a decimal point is a failing test and not a faster close.
+        self.assertEqual(dm7.DEFAULT_FADE_SECONDS, DESIGNED_FADE_SECONDS)
+        low, high = DESIGNED_OPEN_RAMP
+        self.assertGreaterEqual(dm7.DEFAULT_OPEN_SECONDS, low)
+        self.assertLessEqual(dm7.DEFAULT_OPEN_SECONDS, high)
 
     def test_table_1_is_the_43_values_from_the_spec(self):
         self.assertEqual(len(dm7.TABLE_1), 43)
@@ -476,6 +491,52 @@ STALL_EVERY = 0.03
 #: One long stall, as a slow fsync would cause, and the send it follows.
 LONG_STALL = 0.105
 STALLED_SEND = 10
+
+
+#: A close that is not the default length, so the argument is shown to be used.
+CONFIGURED_FADE_SECONDS = 2 * dm7.DEFAULT_FADE_SECONDS
+FADE_SHAPE_TOLERANCE = dm7.UNITS_PER_DB  # one dB
+
+
+class TestTheCloseIsSlowAndTheOpenIsFast(unittest.IsolatedAsyncioTestCase):
+    """#42: the asymmetry is the design. A close lasts its configured length, its
+    audible part runs to the end, and it is linear in dB, so it is half way down
+    at half time."""
+
+    TICK = 1 / dm7.DEFAULT_TICK_HZ
+
+    async def test_close_takes_the_configured_duration(self):
+        for seconds, call in (
+            (dm7.DEFAULT_FADE_SECONDS, lambda c: c.fade_out()),
+            (CONFIGURED_FADE_SECONDS, lambda c: c.fade_out(CONFIGURED_FADE_SECONDS)),
+        ):
+            with self.subTest(seconds=seconds):
+                clock = FakeLoopClock()
+                c = stalled_client(clock, initial_level=dm7.UNITY)
+                await call(c)
+                sent_at, level = clock.sends[-1]
+                self.assertEqual(level, dm7.MINUS_INF)
+                self.assertAlmostEqual(sent_at, seconds, delta=self.TICK)
+                # The audible part of the fade runs to the end too: a close that
+                # went quiet early and sat at -inf would pass the check above.
+                self.assertGreaterEqual(clock.sends[-2][0], seconds - 2 * self.TICK)
+                # And it starts at once, not after a wait.
+                self.assertLessEqual(clock.sends[0][0], self.TICK)
+                # Linear in dB, so half way through it is still half way down: a
+                # close that drops most of its level in the first ticks is a snap
+                # close however long its tail.
+                halfway = (dm7.UNITY + dm7.DEFAULT_FADE_FLOOR) / 2
+                at_half = [lvl for at, lvl in clock.sends if at <= seconds / 2 + self.TICK / 2][-1]
+                self.assertGreaterEqual(at_half, halfway - FADE_SHAPE_TOLERANCE)
+
+    async def test_open_takes_the_open_seconds(self):
+        clock = FakeLoopClock()
+        c = stalled_client(clock, initial_level=dm7.MINUS_INF)
+        await c.open()
+        sent_at, level = clock.sends[-1]
+        self.assertEqual(level, dm7.UNITY)
+        self.assertLessEqual(sent_at, dm7.DEFAULT_OPEN_SECONDS)
+        self.assertAlmostEqual(sent_at, dm7.DEFAULT_OPEN_SECONDS, delta=self.TICK / 2)
 
 
 class TestAStalledDrive(unittest.IsolatedAsyncioTestCase):

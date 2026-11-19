@@ -62,6 +62,66 @@ class TestControlPathIsDependencyFree(unittest.TestCase):
         self.assertNotIn("detector", CONTROL_PATH)
 
 
+#: Run in a fresh, isolated interpreter: what importing a module loads that a bare
+#: interpreter had not. Isolated (`-I`) so the user's site and PYTHONPATH cannot
+#: add or hide anything.
+PROBE = (
+    "import importlib, sys\n"
+    "before = set(sys.modules)\n"
+    "importlib.import_module(sys.argv[1])\n"
+    "print('\\n'.join(sorted(set(sys.modules) - before)))\n"
+)
+
+
+def _loaded_by_importing(name: str) -> set[str]:
+    result = subprocess.run([sys.executable, "-I", "-c", PROBE, name], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise AssertionError(f"importing {name} failed:\n{result.stderr}")
+    return set(result.stdout.split())
+
+
+class TestTheControlPathLoadsNothingOutsideItself(unittest.TestCase):
+    """#42: the import check above reads source, and a relative import or a lazy
+    one inside a function slips past a reader of top-level names. Importing the
+    control path in a fresh interpreter and looking at what actually loaded
+    does not."""
+
+    ALLOWED_TACET = frozenset({"tacet"} | {f"tacet.{name}" for name in CONTROL_PATH})
+
+    def test_control_path_transitive_imports_are_stdlib(self):
+        for name in CONTROL_PATH:
+            with self.subTest(module=name):
+                loaded = _loaded_by_importing(f"tacet.{name}")
+                outside = {m for m in loaded if m.split(".")[0] not in sys.stdlib_module_names | {"tacet"}}
+                self.assertEqual(outside, set(), f"importing tacet.{name} loaded a third party")
+
+    def test_control_path_loads_no_tacet_module_outside_it(self):
+        for name in CONTROL_PATH:
+            with self.subTest(module=name):
+                loaded = {m for m in _loaded_by_importing(f"tacet.{name}") if m.split(".")[0] == "tacet"}
+                self.assertLessEqual(loaded, self.ALLOWED_TACET)
+
+    def test_control_path_imports_no_tacet_module_outside_it(self):
+        # By reading the source, to catch what a run does not reach: an import
+        # inside a function body, or behind a condition.
+        for name in CONTROL_PATH:
+            with self.subTest(module=name):
+                imported = _imported_tacet_modules(PACKAGE_ROOT / f"{name}.py")
+                self.assertLessEqual(imported, set(CONTROL_PATH))
+
+    def test_the_import_probe_sees_a_third_party_dependency(self):
+        # Proves the checks above could fail: the web layer takes aiohttp.
+        loaded = _loaded_by_importing("tacet.web")
+        self.assertIn("tacet.app", loaded)
+        self.assertTrue([m for m in loaded if m.split(".")[0] == "aiohttp"])
+
+    def test_claude_md_names_exactly_the_control_path(self):
+        text = " ".join((REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8").split())
+        start = text.index("The control path takes no dependencies")
+        bullet = text[start : text.index("Ask before adding anything here.", start)]
+        self.assertEqual(set(re.findall(r"`tacet\.(\w+)`", bullet)), set(CONTROL_PATH))
+
+
 class TestTheControlPathNeverResolvesAName(unittest.TestCase):
     """#71: a lookup has no timeout and would stall the fader. Only literals reach a socket."""
 
