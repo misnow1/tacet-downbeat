@@ -399,7 +399,7 @@ done by hand in Reaper is recoverable; a stop of the game's take is not.
 stock `Default.ReaperOSC` has. Prove it once per machine:
 
 ```
-python -m tacet.verify_reaper --listen 20
+tacet-verify-reaper --listen 20
 ```
 
 It should print a `FOUND` line for `position`, at `/time`. If `/time` is

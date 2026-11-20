@@ -422,7 +422,7 @@ is testable without a server. Run it with `tacet-serve`.
 
 The site values it needs — console IP, DCA number, Reaper host, queue path —
 are flags, and optionally an `tacet.toml` read by `tacet.config` and shared with
-`verify_dm7` and `verify_reaper`. The file is a convenience, never a
+`tacet-verify-dm7` and `tacet-verify-reaper`. The file is a convenience, never a
 requirement: a flag always beats it, so nothing about the operating path depends
 on a file being present or correct. Deliberately, no flag that *initiates*
 anything is a config key; the file supplies addresses, not actions. Keys are
@@ -1004,7 +1004,7 @@ confirms the band is in the stands.
   arbitrary hundredths of a dB, while the parameter notes point at Table 1 — a
   43-entry list whose steps are 1 dB near unity, 2 dB from −10 to −30, 5 dB
   below that. Had only Table 1 values been accepted, a 2 s close from 0 dB to −∞
-  would have been 32 steps, ~62 ms apart. `verify_dm7 --granularity` sent
+  would have been 32 steps, ~62 ms apart. `tacet-verify-dm7 --granularity` sent
   `-1550`; the console displayed −15.50 rather than snapping to −16.00. So the
   spec governs and Table 1 is a display convention. `quantize()` and
   `Dm7Client(quantized=True)` stay in the code as a contingency for a different

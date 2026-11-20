@@ -138,7 +138,7 @@ disk underneath. Check the share is mounted before trusting the number.
 
 ## The console
 
-**The console has been driven by this software** (2026-09-12). `verify_dm7
+**The console has been driven by this software** (2026-09-12). `tacet-verify-dm7
 --granularity` sent `-1550` and the DM7 displayed **−15.50**, not −16.00: it
 takes arbitrary hundredths of a dB and does not snap to Table 1. So the 2 s
 close is a smooth 50 Hz ramp rather than a 32-step staircase, and **`--quantized`
@@ -158,17 +158,17 @@ Re-run the check after any console firmware update, and at a new venue - this is
 a fact about *this* DM7, not about DM7s:
 
 ```
-python -m tacet.verify_dm7 --host <console IP> --dca <n> --granularity
+tacet-verify-dm7 --host <console IP> --dca <n> --granularity
 ```
 
 or, once `tacet.toml` has the console in it, just:
 
 ```
-python -m tacet.verify_dm7 --granularity
+tacet-verify-dm7 --granularity
 ```
 
 ```
-python -m tacet.verify_dm7 --nudge
+tacet-verify-dm7 --nudge
 ```
 
 `--nudge` (#242) opens the DCA at unity and then nudges it to -1, -2, -1 and
@@ -592,10 +592,7 @@ snap open to calibrate from, numpy missing, bad arguments.
 
 **Install.** It needs numpy, an optional extra kept off the box's control path:
 `make install` includes it; with a plain `pip install -e .` run
-`pip install -e '.[analysis]'`. A box installed before this change has no
-`tacet-pilot-check` command until `make install` is run once more after pulling
-([gameday.md](gameday.md#the-box-update-before-the-game));
-`python -m tacet.pilot_check` is the same tool run as a module.
+`pip install -e '.[analysis]'`.
 
 **Known gaps.** The Game 3 pilot is not a clean sine (a peak of -9.15 dBFS
 against a -12 dBFS sine-equivalent level, with 1-2 dB spikes about every 1.3 s
@@ -617,8 +614,7 @@ tacet-rtd GAME.pcap --summary
 tacet-rtd GAME.pcap > game-rtd.jsonl
 ```
 
-`python -m tacet.rtd_replay` is the same tool run as a module. By default it
-prints one JSON line per event, each with a `kind`:
+By default `tacet-rtd` prints one JSON line per event, each with a `kind`:
 
 - `field`: a field changed (`time`, `source`, `field`, `old`, `new`). `old` is
   `null` the first time, and a field reads `null` until every one of its cells
@@ -680,8 +676,8 @@ tacet-timeouts GAME.jsonl GAME.pcap            # read the report
 tacet-timeouts GAME.jsonl GAME.pcap --write    # append the proposals to the sidecar
 ```
 
-`python -m tacet.timeouts` is the same tool run as a module; `--port` is as for
-`tacet-rtd`. The log is never edited. Without `--write` nothing is written.
+`--port` is as for `tacet-rtd`. The log is never edited. Without `--write`
+nothing is written.
 
 **A hold** is the time the play clock is not counting down, at any value, for at
 least 20 s. Game 4 showed that it is not only 25: an injury timeout is the clock
@@ -786,8 +782,8 @@ tacet-quarters GAME.jsonl GAME.pcap            # read the report
 tacet-quarters GAME.jsonl GAME.pcap --write    # append the proposals to the sidecar
 ```
 
-`python -m tacet.quarters` is the same tool run as a module; `--port` is as for
-`tacet-rtd`. The log is never edited. Without `--write` nothing is written.
+`--port` is as for `tacet-rtd`. The log is never edited. Without `--write`
+nothing is written.
 
 **The rule.** A period ends when the board's clock-at-zero flag (`z`) rises. At
 Game 4 the flag rose at 15:35:00, 16:07:58, 16:53:33, 17:13:45, 17:54:44 and

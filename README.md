@@ -53,7 +53,7 @@ audio/              multitrack sources for offline analysis (gitignored)
 
 ## Configuration
 
-`tacet-serve`, `verify_dm7` and `verify_reaper` all want the same site values —
+`tacet-serve`, `tacet-verify-dm7` and `tacet-verify-reaper` all want the same site values —
 which console, which DCA, which Reaper — so they share one **optional** TOML
 file:
 

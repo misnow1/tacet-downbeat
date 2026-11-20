@@ -43,8 +43,8 @@ config file at all. Where a flag can come from the file, the key is named
 alongside it. Unknown keys are errors, not silent no-ops.
 
 Two flags are deliberately **not** config keys, because they select what a tool
-*does* rather than where it points: `verify_dm7 --fade` / `--granularity` /
-`--level`, and `verify_reaper --listen` (a duration here, unlike `ui.listen`).
+*does* rather than where it points: `tacet-verify-dm7 --fade` / `--granularity` /
+`--level`, and `tacet-verify-reaper --listen` (a duration here, unlike `ui.listen`).
 
 ## What is built
 
@@ -104,7 +104,7 @@ In Reaper: Preferences → Control/OSC/web → add or open the OSC device. Note 
 there, default 9000). Then:
 
 ```
-python -m tacet.verify_reaper --listen 30
+tacet-verify-reaper --listen 30
 ```
 
 Drive the transport while it listens — play, stop, record-arm. It prints every
@@ -114,7 +114,7 @@ Paste that output back.
 To check the sending direction too:
 
 ```
-python -m tacet.verify_reaper --send /play --listen 10
+tacet-verify-reaper --send /play --listen 10
 ```
 
 Both assume Reaper on `127.0.0.1:8000/9000`, which are the built-in defaults. If
@@ -241,7 +241,7 @@ the Reaper feedback socket together. `--listen 127.0.0.1` reaches the UI from th
 machine itself and **from nowhere else**, so the iPad cannot see it; that looks
 like a firewall problem and is not one. Use `0.0.0.0` for anything off-box.
 
-Note that `verify_reaper --listen` is a different thing entirely -- a duration in
+Note that `tacet-verify-reaper --listen` is a different thing entirely -- a duration in
 seconds -- which is why `ui.listen` is not shared with it.
 
 Worth checking:
@@ -284,7 +284,7 @@ Worth checking:
   just above and **Faded out** just below without looking, and never hit one
   for the other? Tap each with the band open: the readout sweeps and tags
   `nudging`, then settles on `commanded`, with the `from target` note under it.
-  Run `python -m tacet.verify_dm7 --nudge` on the console first. Report any
+  Run `tacet-verify-dm7 --nudge` on the console first. Report any
   mis-tap.
 - **Swiping between MAIN and MORE (#156).** On the iPad: a swipe in the left
   panel changes tab both ways; a slid stab on Up on drums never changes tab; a
@@ -344,11 +344,11 @@ Worth checking:
 ## Session B — press box with the DM7
 
 ```
-python -m tacet.verify_dm7 --host <console IP> --dca <n> --granularity
+tacet-verify-dm7 --host <console IP> --dca <n> --granularity
 ```
 
 With the console in a `tacet.toml` (`console.host`, `console.dca`), that is just
-`python -m tacet.verify_dm7 --granularity`. The probe flags are never config
+`tacet-verify-dm7 --granularity`. The probe flags are never config
 keys, so the tool still does nothing to a fader unless you ask on the command
 line.
 
@@ -408,7 +408,7 @@ false indefinitely.
 
 Two things to do, in this order:
 
-1. **Name the chatter.** `python -m tacet.verify_reaper --listen 20` with the
+1. **Name the chatter.** `tacet-verify-reaper --listen 20` with the
    transport parked prints every address Reaper sends. One run answers it. The
    standing suspicion is an **armed track** metering its input - Reaper's OSC
    feedback carries meter data, and arming is the one thing about that rig's

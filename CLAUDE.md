@@ -90,14 +90,14 @@ Full detail in design.md §5.
   Open/fade buttons, last commanded DCA level, plain-language "why" line, and
   annotation buttons. Commanded and confirmed values must render differently.
 - **Config** — an *optional* `tacet.toml`, read by `tacet.config` and shared by
-  `tacet-serve`, `verify_dm7` and `verify_reaper`, so the site values are not
-  retyped as flags every game. Standard library only (`tomllib`), so it adds no
+  `tacet-serve`, `tacet-verify-dm7` and `tacet-verify-reaper`, so the site
+  values are not retyped as flags every game. Standard library only (`tomllib`), so it adds no
   dependency and stays importable from the control path. Precedence is
   `built-in default < config file < explicit flag`, asserted per tool. Unknown
   sections and keys are errors, never silent no-ops. **No flag that initiates
   something is ever a config key** — the file supplies addresses, not actions,
-  which is why `verify_dm7 --fade/--granularity/--level/--nudge` and `verify_reaper
-  --listen` are excluded. Keys live in `tacet.toml.example`; the real
+  which is why `tacet-verify-dm7 --fade/--granularity/--level/--nudge` and
+  `tacet-verify-reaper --listen` are excluded. Keys live in `tacet.toml.example`; the real
   `tacet.toml` is gitignored and its values belong in `docs/gameday.md`.
 - **AES67 is not available** on this Dante domain and is out of scope.
 
@@ -302,7 +302,7 @@ This is a process convention, not a hard constraint from `docs/design.md`.
   as the Lua: the logic is tested, the browser is not. Needs node. Mind the
   escaping - the file is inlined into a Python string, and a doubled backslash
   there reaches the screen as a literal.
-- `python -m tacet.verify_reaper` and `verify_dm7` are the harnesses for the two
+- `tacet-verify-reaper` and `tacet-verify-dm7` are the harnesses for the two
   things that genuinely need hardware in front of them.
 - Prefer offline replay over live testing. There are a limited number of home
   games per season and each one is a single irreplaceable sample.
