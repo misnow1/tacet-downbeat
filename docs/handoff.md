@@ -43,8 +43,9 @@ config file at all. Where a flag can come from the file, the key is named
 alongside it. Unknown keys are errors, not silent no-ops.
 
 Two flags are deliberately **not** config keys, because they select what a tool
-*does* rather than where it points: `tacet-verify-dm7 --fade` / `--granularity` /
-`--level`, and `tacet-verify-reaper --listen` (a duration here, unlike `ui.listen`).
+*does* rather than where it points: `tacet-verify-dm7 --fade` /
+`--granularity` / `--level`, and `tacet-verify-reaper --listen` (a duration
+here, unlike `ui.listen`).
 
 ## What is built
 
@@ -241,8 +242,8 @@ the Reaper feedback socket together. `--listen 127.0.0.1` reaches the UI from th
 machine itself and **from nowhere else**, so the iPad cannot see it; that looks
 like a firewall problem and is not one. Use `0.0.0.0` for anything off-box.
 
-Note that `tacet-verify-reaper --listen` is a different thing entirely -- a duration in
-seconds -- which is why `ui.listen` is not shared with it.
+Note that `tacet-verify-reaper --listen` is a different thing entirely -- a
+duration in seconds -- which is why `ui.listen` is not shared with it.
 
 Worth checking:
 

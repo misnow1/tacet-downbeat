@@ -109,14 +109,15 @@ Full detail in design.md §5.
   annotation buttons. Commanded and confirmed values must render differently.
 - **Config** — an *optional* `tacet.toml`, read by `tacet.config` and shared by
   `tacet-serve`, `tacet-verify-dm7` and `tacet-verify-reaper`, so the site
-  values are not retyped as flags every game. Standard library only (`tomllib`), so it adds no
-  dependency and stays importable from the control path. Precedence is
-  `built-in default < config file < explicit flag`, asserted per tool. Unknown
-  sections and keys are errors, never silent no-ops. **No flag that initiates
-  something is ever a config key** — the file supplies addresses, not actions,
-  which is why `tacet-verify-dm7 --fade/--granularity/--level/--nudge` and
-  `tacet-verify-reaper --listen` are excluded. Keys live in `tacet.toml.example`; the real
-  `tacet.toml` is gitignored and its values belong in `docs/gameday.md`.
+  values are not retyped as flags every game. Standard library only
+  (`tomllib`), so it adds no dependency and stays importable from the control
+  path. Precedence is `built-in default < config file < explicit flag`,
+  asserted per tool. Unknown sections and keys are errors, never silent no-ops.
+  **No flag that initiates something is ever a config key** — the file supplies
+  addresses, not actions, which is why `tacet-verify-dm7
+  --fade/--granularity/--level/--nudge` and `tacet-verify-reaper --listen` are
+  excluded. Keys live in `tacet.toml.example`; the real `tacet.toml` is
+  gitignored and its values belong in `docs/gameday.md`.
 - **AES67 is not available** on this Dante domain and is out of scope.
 
 ## State machine

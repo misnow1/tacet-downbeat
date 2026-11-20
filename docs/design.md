@@ -330,14 +330,15 @@ weak sense that the console accepts the last write from any controller; nothing
 arbitrates, and neither side can see the other.
 
 Two readback routes exist outside OSC, and neither is in the control path.
-Yamaha's own Crestron module for the DM7 speaks a TCP text protocol on port
-49280 and reads the DCA back (`DcaLevel_fb`). That is evidence from a vendor
-module, not a documented DM7 protocol: Yamaha publishes that protocol for other
-products, not for the DM7 (`docs/research/dm7-fader-readback.md`, #18). The
-console's level metering, an undocumented multicast on the control VLAN, reads
-the DCA back to 0.2 dB through the pilot tone's direct-out meter
-(`docs/research/dm7-metering-multicast.md`). Whether it may ever remove the
-box's trust in its own level is #160, and that needs an amendment here first.
+Yamaha's own Crestron module for the DM7 connects on TCP port 49280 and exposes
+a DCA level feedback (`DcaLevel_fb`). That is evidence from a vendor module, not
+a documented DM7 protocol: Yamaha publishes that protocol for other products,
+not for the DM7 (`docs/research/dm7-fader-readback.md`, #18). The console's
+level metering, an undocumented multicast on the control VLAN, was seen at the
+Game 3 soundcheck to read the DCA back to 0.2 dB through the pilot tone's
+direct-out meter (`docs/research/dm7-metering-multicast.md`). Whether it may
+ever remove the box's trust in its own level is #160, and that needs an
+amendment here first.
 
 The DM7 also speaks MIDI. Its MIDI data format document is not published, and
 the Reference Manual documents only Program Change and Control Change, so
@@ -514,8 +515,8 @@ Minimum during-game requirements:
   inventing one - the same fail-visible discipline as the fader belief in
   §5.3.
 - **The arm / stand-down question.** Principle 5 (§10) - announce, don't
-  surprise - applied to duty state as well as to the hand-off in §5.3: the box does not
-  decide to arm or stand down for the operator, it asks, from the same
+  surprise - applied to duty state as well as to the hand-off in §5.3: the box
+  does not decide to arm or stand down for the operator, it asks, from the same
   annotations that already record band movement (§5.6). See §6.4 for the
   mechanism.
 
@@ -576,8 +577,8 @@ attention mid-game will not get logged.
 and `band-enters-stands` are ordinary annotations first -
 they record what the operator saw - and additionally raise the arm /
 stand-down question described in §6.4. Raising the question never itself
-changes duty state: a mis-tapped `band-exits-stands` mid-drive must not
-disable anything on its own (§10, principle 5 again), and the only path from the
+changes duty state: a mis-tapped `band-exits-stands` mid-drive must not disable
+anything on its own (§10, principle 5 again), and the only path from the
 question to a state change is the operator's own tap on its accept button,
 which runs the ordinary Arm or Stand down command with its own stale check and
 its own refusals. `halftime-exodus-tap` is a single tap: the band does not
