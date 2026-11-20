@@ -1,9 +1,10 @@
 """Yamaha DM7 console control over OSC.
 
-The protocol is write-only (design.md section 5.3): there is no get, no subscribe and
-no notify, so nothing here reads console state. Every level this module reports
-is what it last *commanded*, never what the console confirmed. Callers must
-present it that way.
+The protocol is write-only (design.md section 5.3): there is no get for a
+parameter value, no subscribe and no notify, so nothing here reads console
+state. The spec's one get, `sscurrentt_ex`, asks for the scene number and is
+never sent. Every level this module reports is what it last *commanded*, never
+what the console confirmed. Callers must present it that way.
 
 Only `MIXER:Current/DCA/Fader/Level` is ever sent. Never `Fader/On`, on the DCA
 or on a channel: the band mics feed other mixes pre-fader and post-mute, so a

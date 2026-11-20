@@ -309,10 +309,13 @@ level unknown, so the box does not act on the old belief.
 
 #### OSC is write-only
 
-**This corrects an earlier assumption in this document.** V1.1.0 defines only
-`set`, plus `event` and `ssrecallt_ex` for scene recall. There is no `get`, no
-subscribe, no notify, and nothing describing the console transmitting anything.
-All 169 parameter rows in §2.1 of the spec are `set`.
+**This corrects an earlier assumption in this document.** V1.1.0 defines `set`
+for parameters, plus `event` and `ssrecallt_ex` for scene recall. All 169
+parameter rows in §2.1 of the spec are `set`. It defines one `get`:
+`sscurrentt_ex`, "Get Current Scene_A Number" (and Scene_B, in split mode only),
+on page 16. The spec does not say what the console sends back, or where. It
+reads a scene number, not a fader, so the conclusion for the fader stands: there
+is no `get` for a parameter value, no subscribe and no notify.
 
 The box therefore cannot:
 
@@ -326,10 +329,19 @@ channel rather than from OSC. There is no contention over authority only in the
 weak sense that the console accepts the last write from any controller; nothing
 arbitrates, and neither side can see the other.
 
-The DM7 also speaks MIDI, and Yamaha consoles have historically emitted
-parameter changes as SysEx. Whether the DM7 does, and whether it would give
-readback, is unverified — it needs the MIDI data format document, which is not
-the OSC spec. See §7.
+Two readback routes exist outside OSC, and neither is in the control path.
+Yamaha's own Crestron module for the DM7 speaks a TCP text protocol on port
+49280 and reads the DCA back (`DcaLevel_fb`). That is evidence from a vendor
+module, not a documented DM7 protocol: Yamaha publishes that protocol for other
+products, not for the DM7 (`docs/research/dm7-fader-readback.md`, #18). The
+console's level metering, an undocumented multicast on the control VLAN, reads
+the DCA back to 0.2 dB through the pilot tone's direct-out meter
+(`docs/research/dm7-metering-multicast.md`). Whether it may ever remove the
+box's trust in its own level is #160, and that needs an amendment here first.
+
+The DM7 also speaks MIDI. Its MIDI data format document is not published, and
+the Reference Manual documents only Program Change and Control Change, so
+whether MIDI gives readback is unverified. See §7.
 
 #### What the box believes about the fader
 
@@ -501,8 +513,8 @@ Minimum during-game requirements:
   reach the screen. It carries no time at all after a restart rather than
   inventing one - the same fail-visible discipline as the fader belief in
   §5.3.
-- **The arm / stand-down question.** Principle 4 - announce, don't surprise -
-  applied to duty state as well as to the hand-off in §5.3: the box does not
+- **The arm / stand-down question.** Principle 5 (§10) - announce, don't
+  surprise - applied to duty state as well as to the hand-off in §5.3: the box does not
   decide to arm or stand down for the operator, it asks, from the same
   annotations that already record band movement (§5.6). See §6.4 for the
   mechanism.
@@ -565,7 +577,7 @@ and `band-enters-stands` are ordinary annotations first -
 they record what the operator saw - and additionally raise the arm /
 stand-down question described in §6.4. Raising the question never itself
 changes duty state: a mis-tapped `band-exits-stands` mid-drive must not
-disable anything on its own (principle 4 again), and the only path from the
+disable anything on its own (§10, principle 5 again), and the only path from the
 question to a state change is the operator's own tap on its accept button,
 which runs the ordinary Arm or Stand down command with its own stale check and
 its own refusals. `halftime-exodus-tap` is a single tap: the band does not
@@ -603,8 +615,8 @@ answered ARP: wrong address, adapter or VLAN, cable out, console off. A
 resolved entry after no reply is *not* "something is there" - an expired macOS
 entry keeps its MAC - so that is only "did not answer ping". Result words never
 claim more. It is a warning and a page chip, never an interlock: arm is never
-delayed or refused by it (principle 5, #89), and it is never a precondition for
-a fader move.
+delayed or refused by it (CLAUDE.md principle 5, #89), and it is never a
+precondition for a fader move.
 
 The same ping is a keepalive. macOS drops an idle ARP entry after 20 minutes
 (`net.link.ether.inet.max_age`) and then holds the next packet for a fresh ARP
@@ -1009,8 +1021,12 @@ confirms the band is in the stands.
   spec governs and Table 1 is a display convention. `quantize()` and
   `Dm7Client(quantized=True)` stay in the code as a contingency for a different
   console or a firmware change, and are unused here.
-- **Whether MIDI offers state readback**, which OSC does not (§5.3). Needs the
-  DM7 MIDI data format document.
+- **Whether MIDI offers state readback**, which OSC does not (§5.3). The DM7
+  MIDI data format document is not published, and the Reference Manual
+  documents only Program Change and Control Change. On that, the best case is a
+  coarse 0-127 Control Change, if a DCA fader can be assigned to one at all,
+  with no network path (`docs/research/dm7-fader-readback.md`). It does not
+  look like a better route than the TCP protocol on 49280 (§5.3).
 - Obtain ACC-specific amplification guidance if it exists.
 
 ---
