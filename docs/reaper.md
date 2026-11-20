@@ -98,8 +98,10 @@ Talk-check all four before kickoff.
 
 ### The DCA reference: a pilot tone
 
-Track 26 is the ground truth for every fader move (design.md 9); OSC cannot
-supply it, because it is write-only. Game 2 had no reference at all.
+Track 26 is the source of the fader-state labels (design.md 9): every fader
+move as applied, whoever made it. It is not the detector's training target;
+that is band-present. OSC cannot supply it, because it has no read for a
+fader. Game 2 had no reference at all.
 
 It is **not** the band PA (track 29, now context only): every band channel but
 the DJ carries an expander or a 5045 in its first dynamics slot, so the PA
