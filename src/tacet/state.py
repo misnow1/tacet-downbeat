@@ -66,7 +66,7 @@ duty by a detector. Phase 0's buttons are operator-initiated and are not the
 same thing; see CLAUDE.md. The gate is here rather than in a comment because a
 comment does not fail a test.
 
-**The operator drives in every state** (#89, principle 5). STANDING DOWN says
+**The operator drives in every state** (#89, CLAUDE.md principle 5). STANDING DOWN says
 the band is not in the stands, which is what Phase 1's duty labels are made of
 and what gates the detector. It is not a lock on the operator: refusing their
 open there made a forgotten Arm into a missed downbeat, and a missed downbeat

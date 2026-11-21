@@ -146,11 +146,11 @@ needs raising, re-ring the room; do not reason from what the console accepts.
 **Hold the console firmware.** DM7 V2.00 shipped 2026-09-10 and cannot be
 rolled back below V1.76; whether its OSC behavior matches what this box was
 built and tested against is not established. **Do not update the console
-before game day.** If it has been updated anyway, re-run `verify_dm7`
+before game day.** If it has been updated anyway, re-run `tacet-verify-dm7`
 ([box.md](box.md#the-console)) before kickoff.
 
 **Try the nudge on the console** (#242), once, before the first game it is
-used: `python -m tacet.verify_dm7 --nudge` opens the DCA at unity and nudges it
+used: `tacet-verify-dm7 --nudge` opens the DCA at unity and nudges it
 to -1, -2, -1 and 0 dB. Read each of those on the console, and listen for
 zipper noise on a signal through the band mics. It is a flag, never a config
 key, so it cannot run by itself. If it zippers, the ramp's step count goes up

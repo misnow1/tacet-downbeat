@@ -6,7 +6,7 @@ silently, because UDP is fire-and-forget and Reaper ignores paths it does not
 recognise. This prints what Reaper really sends, so the guess can be replaced
 with a fact.
 
-    python -m tacet.verify_reaper --listen 20
+    tacet-verify-reaper --listen 20
 
 Then, in Reaper: press play, stop, and record-arm. Paste the output back.
 

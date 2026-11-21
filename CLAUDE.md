@@ -50,12 +50,26 @@ rather than working around it.
 - **Never classify why the music stopped.** End of song, breath mark, missed
   cue, injured player — same fade for all. The system only decides whether sound
   is present.
+- **Nothing but a person puts the fader up before the band plays.** That is
+  READY: the ride to a hold level short of target when the band is likely and
+  has not started. Only the operator enters it, in every phase. `tacet.state`
+  refuses a detector-sourced READY, and "It's at ready level" with it,
+  unconditionally and before the phase gate, whatever `allow_detector` says.
+  This does not relax in Phase 2: a detector may confirm that sound is present,
+  and from Phase 2 that opens the fader, but it never predicts that sound is
+  about to start. RTD may at most raise a prompt that a person answers (#95).
+  See design.md 6.4.
 - **Correlate envelopes, never raw waveforms.** Mics are metres apart and not
   phase-coherent above a few hundred Hz.
 - **Fail safe and fail visible.** On any fault, leave the operator in control
   and say so in the UI. Silent degradation is worse than an obvious stop.
 
 ## Design principles
+
+These numbers are the ones the code and docs cite ("CLAUDE.md principle 4").
+design.md section 10 is a longer list with its own numbers: announce, don't
+surprise is principle 5 there, its 4, 6 and 7 are hard constraints here, and it
+has no counterpart to 5. Cite that list as "design.md 10, principle 5".
 
 1. The band director decides legality; this system only tracks whether they are
    playing. It is not a compliance interlock.
@@ -64,6 +78,8 @@ rather than working around it.
    conductor's arms come down. Every close is reactive. The fade is what makes
    that acceptable.
 4. Announce, don't surprise. Mode changes prompt; they never happen silently.
+   Some things only ever prompt: nothing but a person puts the fader up before
+   the band plays (Hard constraints).
 5. The operator is a supervisor, not a fallback. They keep override authority
    permanently.
 
@@ -72,9 +88,11 @@ rather than working around it.
 Full detail in design.md §5.
 
 - **Console** — Yamaha DM7C, press box. Control via **OSC**, UDP 49900. The
-  protocol is **write-only** — no get, no subscribe, no notify — so the box
-  cannot read DCA state or see iPad moves. The UI shows commanded, not
-  confirmed. Spec and extracted text in `docs/vendors/yamaha/`.
+  protocol is **write-only** for parameters: no get for a parameter value, no
+  subscribe, no notify. Its one get, `sscurrentt_ex`, asks for the current
+  scene number (design.md 5.3). So the box cannot read DCA state or see iPad
+  moves. The UI shows commanded, not confirmed. Spec and extracted text in
+  `docs/vendors/yamaha/`.
 - **Audio** — 14 band mics via Dante. **Tap pre-delay**; console alignment
   delays serve the mix, but detection wants earliest arrival. Re-apply known
   offsets in software where time-coherence is needed.
@@ -90,15 +108,16 @@ Full detail in design.md §5.
   Open/fade buttons, last commanded DCA level, plain-language "why" line, and
   annotation buttons. Commanded and confirmed values must render differently.
 - **Config** — an *optional* `tacet.toml`, read by `tacet.config` and shared by
-  `tacet-serve`, `verify_dm7` and `verify_reaper`, so the site values are not
-  retyped as flags every game. Standard library only (`tomllib`), so it adds no
-  dependency and stays importable from the control path. Precedence is
-  `built-in default < config file < explicit flag`, asserted per tool. Unknown
-  sections and keys are errors, never silent no-ops. **No flag that initiates
-  something is ever a config key** — the file supplies addresses, not actions,
-  which is why `verify_dm7 --fade/--granularity/--level/--nudge` and `verify_reaper
-  --listen` are excluded. Keys live in `tacet.toml.example`; the real
-  `tacet.toml` is gitignored and its values belong in `docs/gameday.md`.
+  `tacet-serve`, `tacet-verify-dm7` and `tacet-verify-reaper`, so the site
+  values are not retyped as flags every game. Standard library only
+  (`tomllib`), so it adds no dependency and stays importable from the control
+  path. Precedence is `built-in default < config file < explicit flag`,
+  asserted per tool. Unknown sections and keys are errors, never silent no-ops.
+  **No flag that initiates something is ever a config key** — the file supplies
+  addresses, not actions, which is why `tacet-verify-dm7
+  --fade/--granularity/--level/--nudge` and `tacet-verify-reaper --listen` are
+  excluded. Keys live in `tacet.toml.example`; the real `tacet.toml` is
+  gitignored and its values belong in `docs/gameday.md`.
 - **AES67 is not available** on this Dante domain and is out of scope.
 
 ## State machine
@@ -116,11 +135,30 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
                                             any trigger snaps back to OPEN
 ```
 
+READY sits beside IDLE, entered only by the operator:
+
+```
+IDLE ──(operator: band likely)──> READY ──(any trigger)──> OPEN
+                                    |
+                         Faded out or stand down
+                                    v
+                              RELEASING (2 s fade)
+```
+
 - **STANDING DOWN** is the boot state. Pregame, halftime, band not in stands.
 - **It never blocks the operator** (#89). An operator open there arms the box
   and opens, and says so; a fade there just fades. What it gates is the
   detector, which is refused in this state whatever `allow_detector` says. A
   forgotten arm must not cost a downbeat.
+- **READY** is the fader ridden to a hold level short of target with no band
+  playing yet: something good just happened for the home team and the band is
+  likely (#6). Operator-only, and never entered by the detector, in any phase
+  (Hard constraints). The operator enters it from IDLE, or from STANDING DOWN,
+  which it arms on the way, or reports it with "It's at ready level" when the
+  box does not know where the fader is. Any trigger commits it to OPEN from
+  wherever the ride had got to. Faded out and a stand-down take the ordinary
+  2 s fade rather than a snap, because the band may have quietly started. See
+  design.md 6.3.
 - **The box does not know where the fader is** until an absolute command says
   so - at boot and after a StageMix hand-off alike. A snap open and the instant
   close are correct from any belief and make it known; anything that ramps from
@@ -155,9 +193,15 @@ STANDING DOWN ──(operator arms)──> IDLE ──(trigger)──> OPEN
 Phase 1 captures four aligned streams, all on a common clock:
 
 1. DVS multitrack, 14 channels, recorded in Reaper
-2. Post-DCA reference channel — one Dante channel of the band PA feed. Compared
-   against the pre-fader mics it recovers actual operator fader moves (**the
-   ground truth labels**). OSC cannot supply these; it is write-only.
+2. Post-DCA reference channel - a pilot tone on a console channel assigned only
+   to the band DCA, recorded from its Post Fader direct out. Not the band PA
+   feed: the band channels' expanders and 5045s mean the PA level does not track
+   the DCA alone. Against the tone's known level it recovers the fader moves as
+   applied, whoever made them. These are the **fader-state labels** (design.md
+   9), and they are not the training target. The detector trains on
+   **band-present**, from the annotations and an offline review of the mics.
+   Trained on where the fader was, it would learn that crowd cheering means
+   open. OSC cannot supply fader state; it has no read for a parameter.
 3. RTD stream
 4. Live operator annotations — the portion that **cannot be reconstructed
    afterward**
@@ -302,7 +346,7 @@ This is a process convention, not a hard constraint from `docs/design.md`.
   as the Lua: the logic is tested, the browser is not. Needs node. Mind the
   escaping - the file is inlined into a Python string, and a doubled backslash
   there reaches the screen as a literal.
-- `python -m tacet.verify_reaper` and `verify_dm7` are the harnesses for the two
+- `tacet-verify-reaper` and `tacet-verify-dm7` are the harnesses for the two
   things that genuinely need hardware in front of them.
 - Prefer offline replay over live testing. There are a limited number of home
   games per season and each one is a single irreplaceable sample.

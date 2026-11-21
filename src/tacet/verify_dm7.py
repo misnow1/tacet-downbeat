@@ -8,7 +8,7 @@ ramp (design.md section 7).
 Nothing here can confirm anything: the DM7's OSC is write-only, so the console
 is the only display. Read it.
 
-    python -m tacet.verify_dm7 --host 10.0.0.5 --dca 3 --granularity
+    tacet-verify-dm7 --host 10.0.0.5 --dca 3 --granularity
 
 `--nudge` opens at unity and then nudges to -1, -2, -1 and 0 dB through the
 same code the page's Down 1 dB and Up 1 dB use (#242). Read the DCA after each
@@ -20,7 +20,7 @@ instead, as `console.host`, `console.port`, `console.dca` and
 `console.quantized`. With a `tacet.toml` in the working directory -- or named
 by `--config PATH` or `$TACET_CONFIG` -- that shortens to:
 
-    python -m tacet.verify_dm7 --granularity
+    tacet-verify-dm7 --granularity
 
 `--granularity`, `--fade`, `--level` and `--nudge` are deliberately NOT config keys. They
 choose what this tool does to a console, and a file able to select one of them
