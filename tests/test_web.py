@@ -80,8 +80,7 @@ class TestPage(WebTestCase):
     async def test_the_page_does_not_load_anything_off_the_network(self):
         # Resilience, not routing: the control VLAN has a route to the internet
         # (#187), but a request to another server over the game-day uplink is a
-        # single point of failure, and a game is not the time to discover a CDN
-        # was it.
+        # single point of failure, and a game is not the time to find that out.
         body = await (await self.client.get("/")).text()
         for scheme in ("http://", "https://", "//cdn"):
             self.assertNotIn(scheme, body)

@@ -37,11 +37,11 @@ nobody wrote it down, not that nobody knows.
 | Control adapter MAC (`en7`), also the scoreboard's | `8c:ae:4c:b9:a0:70` | `interfaces.control`, and the `mac` of `interfaces.scoring`. One adapter carries the control VLAN and the scoreboard VLAN, so it is the same MAC in both |
 | Scoreboard VLAN tag | `4` | The `vlan` of `interfaces.scoring`: the VLAN interface (`vlan0`) macOS made on the control adapter. System Settings > Network, Manage Virtual Interfaces |
 | Spare adapter MAC | `8c:ae:4c:dd:5f:18` | Not in `tacet.toml`: the box checks one MAC per role. To swap it in, see "Network" below |
-| Internet route from the control VLAN | Yes (maintainer, 2026-10-08) | Neither the box nor the page uses it: the page loads nothing from other servers, so a dead uplink changes nothing on the day. The rows below say how far it could be trusted if something ever did depend on it (#187) |
+| Internet route from the control VLAN | `yes` (maintainer, 2026-10-08) | Neither the box nor the page uses it: the page loads nothing from other servers, so a dead uplink changes nothing on the day. The rows below say how far it could be trusted if something ever did depend on it (#187) |
 | Uplink the route leaves by | `__________` | Whose connection: the venue's own network, a separate circuit, cellular, or other |
 | Shared with the stadium | `yes / no` | Whether game-day traffic (public wifi, ticketing, press, broadcast) shares it |
 | How it holds on a game day | `__________` | Whether it has dropped or slowed during a game, and when. The box does not measure it |
-| Filtering and DNS | `__________` | Whether outbound traffic is filtered or proxied, and whether the resolver DHCP hands out answers public names. Coarse is enough: this repo is public |
+| Filtering and DNS | `__________` | Whether outbound traffic is filtered or proxied, and whether the DNS server that DHCP hands out resolves public names. Coarse is enough: this repo is public |
 | Target levels offered | `[3.0, 0.0, -3.0, -6.0]` dB | `fader.presets`, in the order the page lists them. Ordered loudest first so the page reads like a fader; the default is the row below, not the first entry |
 | Default target | `0.0` dB | `fader.default_target_db`. Where every open goes and what Ready's hold level is measured down from. 0 dB suits most games; +3 dB is one tap away on the page for a very loud crowd |
 | Target cap | `+3.0` dB | `fader.max_target_db`. A preset above it refuses to start. From the on-site ring-out, which rang a hair over +3 dB in the current configuration. **Not the console's limit** - see below |
