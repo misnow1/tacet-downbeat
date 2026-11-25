@@ -78,8 +78,10 @@ class TestPage(WebTestCase):
         self.assertIn("text/html", response.headers["Content-Type"])
 
     async def test_the_page_does_not_load_anything_off_the_network(self):
-        # The control VLAN has no route to the internet, and a game is not the
-        # time to discover a CDN was the single point of failure.
+        # Resilience, not routing: the control VLAN has a route to the internet
+        # (#187), but a request to another server over the game-day uplink is a
+        # single point of failure, and a game is not the time to discover a CDN
+        # was it.
         body = await (await self.client.get("/")).text()
         for scheme in ("http://", "https://", "//cdn"):
             self.assertNotIn(scheme, body)
@@ -1667,9 +1669,9 @@ class TestLinkIndicator(WebTestCase):
 
 class TestWakeAdvice(WebTestCase):
     """The Screen Wake Lock API needs a secure context and the page is served
-    over plain HTTP on a VLAN with no route to a certificate authority. An iPad
-    that locks its screen stops being an operator interface, so when the API is
-    missing the page has to say the thing that does work.
+    over plain HTTP (app.js says why it stays that way). An iPad that locks its
+    screen stops being an operator interface, so when the API is missing the
+    page has to say the thing that does work.
     """
 
     async def test_the_page_carries_somewhere_to_say_it(self):

@@ -5,8 +5,10 @@ into method calls and pushes snapshots down a websocket. Keeping it thin is what
 lets the operator flow be tested without a server.
 
 The page is served as one self-contained string. It fetches nothing off the
-network: the control VLAN has no route to the internet, and a game is not the
-time to discover that a CDN was a single point of failure. A test asserts it.
+network. The control VLAN does have a route to the internet (#187), but a
+request to another server over the game-day uplink would be a single point of
+failure for the page, and a game is not the time to discover it. A test asserts
+that the page fetches nothing.
 
 There is no stop route, and a test asserts that too (design.md 5.9).
 """
@@ -557,11 +559,12 @@ def create_app(
     return server
 
 
-#: The page inlines its script rather than linking it. The control VLAN has no
-#: route to the internet and a game is not the time to discover that a second
-#: request was a single point of failure; `test_the_page_does_not_load_anything
-#: _off_the_network` holds that line. The script lives in its own file anyway,
-#: so node can test it - see `tests/test_app_js.mjs`.
+#: The page inlines its script rather than linking it. The control VLAN has a
+#: route to the internet (#187), but a game is not the time to discover that a
+#: request to another server over the game-day uplink was a single point of
+#: failure; `test_the_page_does_not_load_anything_off_the_network` holds that
+#: line. The script lives in its own file anyway, so node can test it - see
+#: `tests/test_app_js.mjs`.
 _SCRIPT_PLACEHOLDER = "__TACET_SCRIPT__"
 _SCRIPT = (Path(__file__).parent / "static" / "app.js").read_text(encoding="utf-8").rstrip("\n")
 

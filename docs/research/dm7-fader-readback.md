@@ -3,6 +3,8 @@
 **Status:** Research note. No code, no design.md change, nothing sent to a
 console.
 **Last updated:** 2026-09-20 (every source below was read on this date)
+**Corrected:** 2026-11-25 for #187. The control VLAN has an internet route; see
+Licence and the assessment of Mixing Station.
 **Question:** Can the DM7 report its DCA fader level back to a controller?
 
 Conventions: **Documented** means a vendor-owned document or page that says it.
@@ -346,9 +348,11 @@ for the App"). Read 2026-09-20.
   devices. "One license can be activated on up to 4 devices of the same
   platform."
 - Subscription renewal "you'll need to connect to the internet once the next
-  billing period started - with a grace period of 1 week." The control VLAN has
-  no internet route, so a subscription would need a periodic other-network
-  visit; a one-time licence does not expire.
+  billing period started - with a grace period of 1 week." This note first said
+  the control VLAN has no internet route. It has one (maintainer, 2026-10-08,
+  #187), so the check could be made in place and does not rule a subscription
+  out. A one-time licence still has the edge: it does not expire, so there is
+  no check to miss.
 - Desktop page: "Please make sure the app is working in offline mode before
   purchasing any licenses!" iOS page: "You can use all features of the app in
   the offline mode for free. As soon as you want to connect to a mixer you must
@@ -431,14 +435,15 @@ support for every customer." Relevant for a Saturday dependency.
 it is a closed, paid, GUI-first desktop application (Java, OpenGL ES) that
 would have to stay connected to the console in the press box; its DCA
 addressing is not public; the manual ties support to a single developer; a
-subscription needs an internet visit the control VLAN cannot make; it consumes
-a console connection slot (FoH 3). It breaks "nothing undocumented" and "no
-extra moving parts". Two roles are conceivable and both sit outside the control
-path: a Phase 1 *observer* that logs subscribed DCA fader values as extra
-ground-truth labels for operator moves (design.md 9 currently derives those
-from the post-DCA reference channel), and a research aid. Both are optional
-dependencies, may take dependencies under CLAUDE.md ("Everything else may take
-dependencies"), and would be the maintainer's call.
+subscription needs a periodic internet check, which a one-time licence avoids;
+it consumes a console connection slot (FoH 3). It breaks "nothing undocumented"
+and "no extra moving parts". The renewal point was corrected for #187 (see
+Licence); the conclusion stands on the rest. Two roles are conceivable and both
+sit outside the control path: a Phase 1 *observer* that logs subscribed DCA
+fader values as extra ground-truth labels for operator moves (design.md 9
+currently derives those from the post-DCA reference channel), and a research
+aid. Both are optional dependencies, may take dependencies under CLAUDE.md
+("Everything else may take dependencies"), and would be the maintainer's call.
 
 (b) **As a packet-capture aid.** Yes, but it is not the cheapest one. Mixing
 Station runs on macOS, so Wireshark on the same laptop sees its console
