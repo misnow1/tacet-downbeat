@@ -4,7 +4,7 @@ This page gives the build order: what to build next, and why. The issues hold
 the detail and the decisions. This page holds only the order. Without it, the
 order lives only in the last conversation.
 
-Last updated 2026-11-20. Game 5 was played and reviewed (`game-5.md`). The
+Last updated 2026-11-25. Game 5 was played and reviewed (`game-5.md`). The
 Game 6 order below comes from that review.
 
 ## Before Game 3
@@ -353,7 +353,7 @@ thumb meets, then the display, then the rows that Game 5 did not reach.
 | ~~6~~ | ~~[#42](https://github.com/misnow1/tacet-downbeat/issues/42) Constraint tests that would still pass with the constraint broken~~ | Done (#258). Every route is swept against both senders, with an allow-list for Reaper (`/record` and the refresh) and level writes only for the console, nudges included. The close lands at its configured length and the open within the designed 10-20 ms. A tap moves the fader before it is logged. The control path is also checked by importing it in a fresh interpreter. The mirror script's ReaScript calls are pinned to a list. `ReaperClient` keeps play, pause and run_action by decision (#257), with its command surface pinned |
 | ~~7~~ | ~~[#132](https://github.com/misnow1/tacet-downbeat/issues/132), [#136](https://github.com/misnow1/tacet-downbeat/issues/136), [#134](https://github.com/misnow1/tacet-downbeat/issues/134), [#201](https://github.com/misnow1/tacet-downbeat/issues/201) Docs: CLAUDE.md and design.md wording, and the named commands~~ | Done (#259). CLAUDE.md has a new hard constraint: nothing but a person puts the fader up before the band plays. It also has READY in the state machine, and the pilot tone gives the fader-state labels, not the training target. design.md 5.3 says the one OSC `get` is for the scene number, and points at both readback notes. Each principle number now says whose list it cites. The docs name each tool by its `tacet-*` command, and a test fails on the `python -m` module form or on a command that `[project.scripts]` does not declare |
 | 8 | [#187](https://github.com/misnow1/tacet-downbeat/issues/187) Docs: the control VLAN has an internet route | From Game 5 row 13 |
-| 9 | [#252](https://github.com/misnow1/tacet-downbeat/issues/252) A refused Start recording can hide every later refusal on the page | Added 2026-11-18 from the #242 review. Into Game 6 by the maintainer's decision |
+| ~~9~~ | ~~[#252](https://github.com/misnow1/tacet-downbeat/issues/252) A refused Start recording can hide every later refusal on the page~~ | Done (#NNN). The page still drops a refused Start recording once Reaper would take a start, but only while that refusal is still the last one: the box keeps the text the button was refused with, not a flag beside it, so a refusal from anywhere else is shown whatever Reaper says. A stale fader tap, an unknown level, a nudge limit or a target that is not a preset now reaches the page after a cleared record refusal, and a fader refusal no longer vanishes when Reaper stops |
 
 Nice to have for Game 6. These land only if the rows above are done:
 
