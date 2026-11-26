@@ -356,3 +356,20 @@ This is a process convention, not a hard constraint from `docs/design.md`.
   a quiet room do not survive 60,000 people.
 - Ask before adding dependencies. This has to run reliably in a press box on a
   Saturday with no one available to fix it.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `misnow1/tacet-downbeat`, via `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage roles (`needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`), on top of the `area:*` / `phase:*` labels, never
+instead of them. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. `docs/design.md` is the domain doc until a `GLOSSARY.md` or ADR
+exists. See `docs/agents/domain.md`.
