@@ -2,15 +2,16 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
-## This repo: `docs/design.md` comes first
+## This repo: `GLOSSARY.md` for words, `docs/design.md` for reasons
 
-There is no `GLOSSARY.md` or `docs/adr/` yet. Until there is, **`docs/design.md` is the authoritative domain doc**, and CLAUDE.md requires reading it before proposing anything. It holds the reasoning behind every hard constraint in CLAUDE.md; without it they look arbitrary, and several contradict what would otherwise be sensible defaults.
+**`GLOSSARY.md`** at the repo root owns the vocabulary. Where design.md or CLAUDE.md still use a word the glossary lists under _Avoid_ ("band PA", "conductor", "trim"), the glossary wins; the older docs have not all been swept yet.
+
+**`docs/design.md`** owns the reasoning, and CLAUDE.md requires reading it before proposing anything. It holds the reasoning behind every hard constraint in CLAUDE.md; without it they look arbitrary, and several contradict what would otherwise be sensible defaults. There is no `docs/adr/` yet.
 
 - Treat design.md sections and CLAUDE.md's **Hard constraints** the way the rules below treat ADRs. If your output contradicts one, say so and stop; never work around it.
-- Use the vocabulary CLAUDE.md and design.md already use: the states (STANDING DOWN, IDLE, READY, OPEN, RELEASING), *commanded* vs *confirmed*, *band-present* vs *fader-state labels*, *trigger*, *consensus*. Don't coin synonyms.
 - Issues labelled `hard-constraint` touch one of these; read design.md before touching them.
 
-The "proceed silently" rule below covers the missing glossary and ADR files only. It never excuses skipping design.md.
+The "proceed silently" rule below covers the missing ADR files only. It never excuses skipping design.md.
 
 ## Before exploring, read these
 

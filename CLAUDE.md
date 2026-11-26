@@ -371,5 +371,5 @@ instead of them. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context. `docs/design.md` is the domain doc until a `GLOSSARY.md` or ADR
-exists. See `docs/agents/domain.md`.
+Single-context. `GLOSSARY.md` owns the vocabulary and wins over older wording
+in the docs; `docs/design.md` owns the reasoning. See `docs/agents/domain.md`.
