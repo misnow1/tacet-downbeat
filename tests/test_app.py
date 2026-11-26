@@ -4835,6 +4835,122 @@ class TestStaleFaderTapsAreNotExecuted(AppTestCase):
         self.assertIsNone(snapshot["refusal"])
 
 
+class TestARecordRefusalHidesOnlyItself(AppTestCase):
+    """#252: the page drops a refused Start recording once Reaper would take a
+    start, and drops nothing else. A refused fader tap the page does not show
+    is a silent failure, which fail safe and fail visible rules out."""
+
+    STALE = late(taps.DEFAULT_STALE_TAP_SECONDS + 1.0)
+
+    async def refuse_a_start_while_rolling(self, app):
+        self.reaper_parked(app)
+        await app.start_recording()
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        self.assertEqual(app.snapshot()["refusal"], reaper.RECORD_REFUSED_ROLLING)
+
+    def reaper_stops(self, app):
+        app.handle_recorder_packet(osc.encode_message("/record", 0.0))
+
+    async def test_a_stale_fader_tap_after_a_cleared_record_refusal_is_shown(self):
+        app = self.build()
+        await self.refuse_a_start_while_rolling(app)
+        self.reaper_stops(app)
+        self.assertIsNone(app.snapshot()["refusal"])
+        outcome = await app.trigger(tap=self.STALE)
+        snap = app.snapshot()
+        self.assertIsNotNone(outcome.refusal)
+        self.assertEqual(snap["refusal"], outcome.refusal)
+        self.assertIn("not done", snap["refusal"])
+        self.assertIsNotNone(snap["stale_tap"])
+
+    async def test_an_unknown_level_refusal_after_a_cleared_record_refusal_is_shown(self):
+        app = self.build(level_known=False)
+        await self.refuse_a_start_while_rolling(app)
+        self.reaper_stops(app)
+        outcome = await app.release()
+        self.assertEqual(outcome.refusal, state.UNKNOWN_LEVEL_MOVE)
+        self.assertEqual(app.snapshot()["refusal"], state.UNKNOWN_LEVEL_MOVE)
+
+    async def test_a_nudge_limit_after_a_cleared_record_refusal_is_shown(self):
+        app = self.build()
+        await self.refuse_a_start_while_rolling(app)
+        self.reaper_stops(app)
+        app.machine = state.Machine(state=state.State.OPEN, level_known=True, stalled=True)
+        outcome = await app.nudge_down()
+        self.assertEqual(outcome.refusal, tacet_app.NUDGE_CLOSED)
+        self.assertEqual(app.snapshot()["refusal"], tacet_app.NUDGE_CLOSED)
+
+    async def test_a_target_refusal_after_a_cleared_record_refusal_is_shown(self):
+        app = self.build()
+        await self.refuse_a_start_while_rolling(app)
+        self.reaper_stops(app)
+        await app.set_target(-2.5)
+        prefix = tacet_app.TARGET_NOT_A_PRESET.partition("{")[0]
+        refusal = app.snapshot()["refusal"]
+        self.assertIsNotNone(refusal)
+        self.assertTrue(refusal.startswith(prefix))
+
+    async def test_a_fader_refusal_outlives_the_record_refusal_it_replaced(self):
+        app = self.build()
+        await self.refuse_a_start_while_rolling(app)
+        outcome = await app.trigger(tap=self.STALE)
+        self.assertIsNotNone(outcome.refusal)
+        self.assertEqual(app.snapshot()["refusal"], outcome.refusal)
+        self.reaper_stops(app)
+        self.assertEqual(app.snapshot()["refusal"], outcome.refusal)
+
+    async def test_a_cleared_record_refusal_does_not_bring_back_the_one_before_it(self):
+        app = self.build()
+        await app.nudge_down()
+        await self.refuse_a_start_while_rolling(app)
+        self.reaper_stops(app)
+        self.assertIsNone(app.snapshot()["refusal"])
+
+    async def test_a_second_record_refusal_is_hidden_again_once_reaper_stops(self):
+        app = self.build()
+        await self.refuse_a_start_while_rolling(app)
+        self.reaper_stops(app)
+        outcome = await app.trigger(tap=self.STALE)
+        self.assertEqual(app.snapshot()["refusal"], outcome.refusal)
+        app.handle_recorder_packet(osc.encode_message("/record", 1.0))
+        await app.start_recording()
+        self.assertEqual(app.snapshot()["refusal"], reaper.RECORD_REFUSED_ROLLING)
+        self.reaper_stops(app)
+        self.assertIsNone(app.snapshot()["refusal"])
+
+
+class TestRefusalShown(unittest.TestCase):
+    """#252, the pure rule: only the record button's own refusal is dropped
+    when the recorder would take a start."""
+
+    ROLLING = reaper.RECORD_REFUSED_ROLLING
+
+    def test_a_record_refusal_is_hidden_once_a_start_would_be_taken(self):
+        shown = tacet_app.refusal_shown(self.ROLLING, record_tap_refusal=self.ROLLING, record_refused=None)
+        self.assertIsNone(shown)
+
+    def test_a_record_refusal_is_shown_while_reaper_still_refuses(self):
+        shown = tacet_app.refusal_shown(self.ROLLING, record_tap_refusal=self.ROLLING, record_refused=self.ROLLING)
+        self.assertEqual(shown, self.ROLLING)
+
+    def test_any_other_refusal_is_shown_whatever_reaper_says(self):
+        others = (state.UNKNOWN_LEVEL_MOVE, tacet_app.RECORD_SEND_FAILED.format(error="x"))
+        for record_refused in (None, self.ROLLING):
+            for last in others:
+                with self.subTest(last=last, record_refused=record_refused):
+                    shown = tacet_app.refusal_shown(
+                        last, record_tap_refusal=self.ROLLING, record_refused=record_refused
+                    )
+                    self.assertEqual(shown, last)
+
+    def test_no_refusal_is_no_refusal(self):
+        for record_tap_refusal in (None, self.ROLLING):
+            with self.subTest(record_tap_refusal=record_tap_refusal):
+                shown = tacet_app.refusal_shown(None, record_tap_refusal=record_tap_refusal, record_refused=None)
+                self.assertIsNone(shown)
+
+
 class PromptTestCase(AppTestCase):
     """#19: the box asks whether to arm or stand down, and only the operator's
     tap on the answer ever changes anything.
