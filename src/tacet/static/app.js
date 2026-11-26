@@ -1844,10 +1844,16 @@ function connect() {
 // a black slab in the middle of a drive.
 //
 // The Screen Wake Lock API is the right answer and is usually not available
-// here. It needs a secure context, and the page is served over plain HTTP on a
-// VLAN with no route to anything that issues certificates. So it is asked for,
-// in case that changes, and when it is missing the page says the thing that
-// does work today rather than letting the screen go out without comment.
+// here. It needs a secure context, and the page is served over plain HTTP. The
+// iPad opens it at the box's private IPv4 address, and public certificate
+// authorities do not certify private addresses. A public certificate would
+// need a DNS name, and then opening the page would wait on a name lookup that
+// depends on the game-day uplink: the single point of failure the page avoids
+// by loading nothing from other servers. A private authority would have to be
+// installed and trusted by hand on every operator device. Auto-Lock does the
+// job without either (#187). So the lock is asked for, in case that changes,
+// and when it is missing the page says the thing that does work today rather
+// than letting the screen go out without comment.
 const WAKE_HELD = "Screen held awake by this page.";
 const WAKE_ADVICE = "This page cannot hold the screen on. Set Auto-Lock to Never"
   + " (Settings > Display and Brightness) or the device will sleep mid-game.";

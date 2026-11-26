@@ -340,8 +340,10 @@ This is a process convention, not a hard constraint from `docs/design.md`.
   pretends. Install a Lua 5.4 to run it: `brew install lua`, `apt install
   lua5.4`.
 - `src/tacet/static/app.js` is the operator page's script. It is inlined into
-  the page at import - the control VLAN has no route to the internet, so the
-  page fetches nothing - but it lives in its own file so it can be tested:
+  the page at import, and the page fetches nothing from other servers. The
+  control VLAN does have a route to the internet (#187). The rule is for
+  resilience: a request over the game-day uplink is a single point of failure.
+  The script lives in its own file so it can be tested:
   `tests/test_app_js.mjs`, `make test-js`, against a stubbed DOM. Same bargain
   as the Lua: the logic is tested, the browser is not. Needs node. Mind the
   escaping - the file is inlined into a Python string, and a doubled backslash
