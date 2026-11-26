@@ -272,6 +272,16 @@ _CONFIRMED_BY_REAPER = {ann.ANCHOR_CONFIRMED_BY: ann.CONFIRMED_BY_REAPER}
 RECORD_SEND_FAILED = "Could not send the start to Reaper ({error}). Nothing started; tap again, or start it in Reaper."
 
 
+def refusal_shown(last: str | None, *, record_tap_refusal: str | None, record_refused: str | None) -> str | None:
+    """The refusal the page shows (#252): the last one, except a record-button
+    refusal once the recorder would take a start. That refusal is Reaper's state
+    read at the tap, so it goes when the state moves on; every other refusal
+    stays until a command replaces it. Keyed on the refusal itself, not a flag
+    beside it, so a refusal set anywhere else is shown whatever Reaper says."""
+    hidden = last == record_tap_refusal and record_refused is None
+    return None if hidden else last
+
+
 #: The tap being handled, while it is being handled (#11).
 #:
 #: A context variable rather than a parameter threaded through every private
@@ -470,11 +480,11 @@ class App:
         #: the move it is already drawing.
         self._move_seq = 0
         self._last_refusal: str | None = None
-        #: Whether `_last_refusal` came from the record button. That refusal is
-        #: derived from Reaper's state, so it has to clear itself when the
-        #: state moves on - otherwise the screen keeps saying "already
-        #: recording" at a recorder that has since stopped.
-        self._refused_recording = False
+        #: The refusal the record button was last refused with, or None. Derived from
+        #: Reaper's state, so the page drops it once a start would be taken - but only
+        #: while it is still `_last_refusal`. Any other refusal replaces it there and
+        #: is shown whatever the recorder says (#252). See `refusal_shown`.
+        self._record_tap_refusal: str | None = None
         #: A take found rolling whose entry waits for the first `/time` (#158).
         self._found_pending = False
         self._listeners: list[Callable[[], None]] = []
@@ -1796,7 +1806,7 @@ class App:
         refusal = self.record_refusal
         if refusal is not None:
             self._last_refusal = refusal
-            self._refused_recording = True
+            self._record_tap_refusal = refusal
             self._notify()
             return
         if self._recorder is not None:
@@ -1806,7 +1816,6 @@ class App:
                 # Nothing reached Reaper, so there is no start to log and
                 # nothing a second tap could stop: the button stays live.
                 self._last_refusal = RECORD_SEND_FAILED.format(error=exc)
-                self._refused_recording = False
                 self._notify()
                 return
         # The tap is a request, not a recording (#158): Reaper may never
@@ -1814,7 +1823,6 @@ class App:
         # entry, with the playhead when there is one.
         self._record(RECORDING_REQUESTED, project_seconds=self._playhead())
         self._last_refusal = None
-        self._refused_recording = False
         self._notify()
 
     @property
@@ -1891,9 +1899,9 @@ class App:
         # all Reaper ever does when parked. Believing it is safe: that reading
         # can only under-claim, never show a dead recorder as rolling.
         believed = liveness in (Liveness.LIVE, Liveness.QUIET)
-        refusal = self._last_refusal
-        if self._refused_recording and record_refused is None:
-            refusal = None
+        refusal = refusal_shown(
+            self._last_refusal, record_tap_refusal=self._record_tap_refusal, record_refused=record_refused
+        )
         move = self._move
         stopped = transport is not None and take_stopped(transport, now)
         return {
